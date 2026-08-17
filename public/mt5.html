@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MT5 Monitor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23020617'/%3E%3Cpath d='M6 22 L13 13 L18 18 L26 8' stroke='%2322C55E' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --color-background:#020617; --color-surface:#0E1223; --color-surface-2:#151B2E;
+  --color-muted:#1A1E2F; --color-foreground:#F8FAFC; --color-muted-fg:#94A3B8;
+  --color-border:#334155; --color-border-soft:#232C3D; --color-accent:#22C55E;
+  --color-on-accent:#0F172A; --color-info:#60A5FA; --color-warn:#FBBF24;
+  --color-destructive:#EF4444; --color-ring:#FFFFFF;
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-6:24px; --space-8:32px;
+  --radius-sm:4px; --radius:8px; --radius-lg:12px; --radius-full:999px;
+  --font-head:'Fira Code',ui-monospace,Consolas,monospace;
+  --font-body:'Fira Sans','Segoe UI',system-ui,sans-serif;
+  --shadow-1:0 1px 2px rgba(0,0,0,.5); --dur:200ms; --ease:cubic-bezier(.2,.6,.3,1);
+}
+@media (prefers-reduced-motion: reduce) { :root { --dur:1ms; } *,*::before,*::after { transition-duration:1ms !important; animation-duration:1ms !important; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--color-background); color:var(--color-foreground);
+  font:400 16px/1.55 var(--font-body); overflow-wrap:anywhere; }
+h1,h2,h3 { font-family:var(--font-head); font-weight:600; letter-spacing:-.01em; }
+a { color:var(--color-info); text-decoration:none; } a:hover { text-decoration:underline; }
+:focus-visible { outline:2px solid var(--color-ring); outline-offset:2px; border-radius:var(--radius-sm); }
+.num { font-family:var(--font-head); font-variant-numeric:tabular-nums; }
+.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+
+.appbar { position:sticky; top:0; z-index:40; background:color-mix(in srgb,var(--color-background) 92%,transparent);
+  backdrop-filter:blur(8px); border-bottom:1px solid var(--color-border-soft); }
+.appbar__row { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap;
+  padding:var(--space-3) var(--space-4); max-width:1400px; margin:0 auto; }
+.brand { display:flex; align-items:center; gap:var(--space-2); font-family:var(--font-head);
+  font-weight:700; font-size:15px; white-space:nowrap; }
+.brand svg { color:var(--color-accent); }
+.pill { display:inline-flex; align-items:center; gap:6px; padding:5px 10px; font-size:12px;
+  border:1px solid var(--color-border-soft); border-radius:var(--radius-full); color:var(--color-muted-fg); white-space:nowrap; }
+.pill .led { width:7px; height:7px; border-radius:50%; background:var(--color-accent); }
+.pill .led--bad { background:var(--color-destructive); }
+.pill .led--warn { background:var(--color-warn); }
+.pill--ro { border-color:color-mix(in srgb,var(--color-info) 50%,transparent); color:#BFDBFE; }
+.spacer { flex:1 1 auto; }
+.btn { display:inline-flex; align-items:center; gap:6px; min-height:34px; padding:6px 11px; cursor:pointer;
+  background:var(--color-surface); color:var(--color-foreground); border:1px solid var(--color-border);
+  border-radius:var(--radius); font:500 13px/1.2 var(--font-body); }
+.btn:hover { background:var(--color-surface-2); border-color:var(--color-muted-fg); }
+
+main { max-width:1400px; margin:0 auto; padding:var(--space-4); display:grid; gap:var(--space-4); }
+.tiles { display:grid; gap:var(--space-3); grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+.tile { padding:var(--space-3) var(--space-4); background:var(--color-surface);
+  border:1px solid var(--color-border-soft); border-radius:var(--radius-lg); box-shadow:var(--shadow-1); }
+.tile dt { font-size:11.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--color-muted-fg); }
+.tile dd { margin:4px 0 0; font-family:var(--font-head); font-variant-numeric:tabular-nums;
+  font-size:19px; font-weight:600; }
+.pos { color:var(--color-accent); } .neg { color:var(--color-destructive); }
+
+section h2 { margin:0 0 var(--space-2); font-size:13px; letter-spacing:.05em;
+  text-transform:uppercase; color:var(--color-muted-fg); }
+table { width:100%; border-collapse:collapse; background:var(--color-surface);
+  border:1px solid var(--color-border-soft); border-radius:var(--radius-lg); overflow:hidden; }
+thead th { text-align:left; padding:9px var(--space-3); background:var(--color-muted);
+  font:600 11px/1.4 var(--font-head); letter-spacing:.06em; text-transform:uppercase; color:var(--color-muted-fg); }
+tbody td { padding:9px var(--space-3); border-top:1px solid var(--color-border-soft); font-size:13px; }
+tbody tr:hover { background:var(--color-surface-2); }
+td.n, th.n { text-align:right; font-family:var(--font-head); font-variant-numeric:tabular-nums; }
+.badge { display:inline-flex; padding:2px 8px; border-radius:var(--radius-full);
+  border:1px solid var(--color-border-soft); background:var(--color-muted);
+  font:500 11.5px/1.5 var(--font-body); color:var(--color-muted-fg); }
+.badge--buy { border-color:color-mix(in srgb,var(--color-accent) 60%,transparent); color:#86EFAC; }
+.badge--sell { border-color:color-mix(in srgb,var(--color-destructive) 60%,transparent); color:#FCA5A5; }
+.wrap { overflow-x:auto; }
+.note { padding:var(--space-3) var(--space-4); border-radius:var(--radius); font-size:13px;
+  background:color-mix(in srgb,var(--color-warn) 10%,var(--color-background));
+  border:1px solid color-mix(in srgb,var(--color-warn) 40%,transparent); color:#FCD34D; }
+.note--bad { background:color-mix(in srgb,var(--color-destructive) 12%,var(--color-background));
+  border-color:color-mix(in srgb,var(--color-destructive) 45%,transparent); color:#FCA5A5; }
+.empty { padding:var(--space-6); text-align:center; color:var(--color-muted-fg); font-size:13px;
+  background:var(--color-surface); border:1px solid var(--color-border-soft); border-radius:var(--radius-lg); }
+footer { max-width:1400px; margin:0 auto; padding:0 var(--space-4) var(--space-8);
+  color:var(--color-muted-fg); font-size:12px; }
+</style>
+</head>
+<body>
+<header class="appbar">
+  <div class="appbar__row">
+    <span class="brand">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-7 4 4 6-8"/></svg>
+      MT5 MONITOR
+    </span>
+    <span class="pill pill--ro" title="This agent has no code path that can place, modify or close a trade">read-only</span>
+    <span class="pill" id="conn"><span class="led"></span><span>connecting…</span></span>
+    <span class="pill" id="autotrade" hidden></span>
+    <span class="spacer"></span>
+    <span class="pill" id="updated">—</span>
+    <button class="btn" id="refresh">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <p class="note" id="err" hidden></p>
+
+  <section>
+    <h2>Account</h2>
+    <dl class="tiles" id="tiles"></dl>
+  </section>
+
+  <section>
+    <h2>Open positions <span class="num" id="poscount"></span></h2>
+    <div class="wrap" id="positions"></div>
+  </section>
+
+  <section>
+    <h2>By EA <span class="num" id="eacount"></span></h2>
+    <div class="wrap" id="byea"></div>
+  </section>
+
+  <section>
+    <h2>Pending orders <span class="num" id="ordcount"></span></h2>
+    <div class="wrap" id="orders"></div>
+  </section>
+</main>
+<footer id="foot"></footer>
+
+<script>
+'use strict';
+const REFRESH_MS = 5000;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = (v, cur) => v == null ? '—' : `${Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}${cur ? ' ' + cur : ''}`;
+const cls = v => v == null ? '' : Number(v) > 0 ? 'pos' : Number(v) < 0 ? 'neg' : '';
+const ago = iso => {
+  if (!iso) return '—';
+  // clamp: a VPS clock a second ahead must not read "-2s ago"
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 10) return 'just now';
+  return s < 60 ? Math.round(s) + 's ago' : s < 3600 ? Math.round(s/60) + 'm ago' : Math.round(s/3600) + 'h ago';
+};
+
+let TOKEN = localStorage.getItem('mt5_token') || '';
+
+async function load() {
+  let d;
+  try {
+    const r = await fetch('/api/mt5', { headers: TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {} });
+    if (r.status === 401) {
+      const t = prompt('Agent token (MT5_TOKEN on the VPS):', '');
+      if (t) { TOKEN = t.trim(); localStorage.setItem('mt5_token', TOKEN); return load(); }
+      throw new Error('unauthorized');
+    }
+    d = await r.json();
+  } catch (e) {
+    return fail('Cannot reach the agent: ' + e.message);
+  }
+  if (!d.ok) return fail(d.error || 'agent reported an error');
+  render(d);
+}
+
+function fail(msg) {
+  const err = document.getElementById('err');
+  err.hidden = false;
+  err.classList.add('note--bad');
+  err.textContent = msg;
+  const conn = document.getElementById('conn');
+  conn.innerHTML = '<span class="led led--bad"></span><span>no data</span>';
+}
+
+function render(d) {
+  document.getElementById('err').hidden = true;
+  const a = d.account || {}, t = d.terminal || {}, cur = a.currency || '';
+
+  document.getElementById('conn').innerHTML =
+    `<span class="led ${t.connected ? '' : 'led--bad'}"></span><span>${t.connected ? 'broker connected' : 'terminal offline'}</span>`;
+
+  const at = document.getElementById('autotrade');
+  at.hidden = false;
+  at.innerHTML = `<span class="led ${t.trade_allowed ? '' : 'led--warn'}"></span><span>AutoTrading ${t.trade_allowed ? 'on' : 'off'}</span>`;
+
+  document.getElementById('updated').textContent = 'updated ' + ago(d.at);
+
+  const tiles = [
+    ['Equity', money(a.equity, cur), cls(null)],
+    ['Balance', money(a.balance, cur), ''],
+    ['Floating P&L', money(a.profit, cur), cls(a.profit)],
+    ['Margin used', money(a.margin, cur), ''],
+    ['Free margin', money(a.margin_free, cur), ''],
+    ['Margin level', a.margin_level == null ? '—' : Number(a.margin_level).toFixed(1) + '%', ''],
+  ];
+  document.getElementById('tiles').innerHTML = tiles.map(([k, v, c]) =>
+    `<div class="tile"><dt>${esc(k)}</dt><dd class="${c}">${esc(v)}</dd></div>`).join('');
+
+  const pos = d.positions || [];
+  document.getElementById('poscount').textContent = pos.length ? `(${pos.length}, ${money(d.totals.profit, cur)})` : '';
+  document.getElementById('positions').innerHTML = pos.length ? `<table>
+    <thead><tr><th>Symbol</th><th>Side</th><th class="n">Lots</th><th class="n">Entry</th>
+      <th class="n">Now</th><th class="n">SL</th><th class="n">TP</th><th class="n">P&amp;L</th>
+      <th class="n">Magic</th><th>Opened</th></tr></thead>
+    <tbody>${pos.map(p => `<tr>
+      <td>${esc(p.symbol)}</td>
+      <td><span class="badge badge--${p.type === 'buy' ? 'buy' : 'sell'}">${esc(p.type)}</span></td>
+      <td class="n">${esc(p.volume)}</td><td class="n">${esc(p.price_open)}</td>
+      <td class="n">${esc(p.price_current)}</td>
+      <td class="n">${p.sl ? esc(p.sl) : '—'}</td><td class="n">${p.tp ? esc(p.tp) : '—'}</td>
+      <td class="n ${cls(p.profit)}">${money(p.profit, '')}</td>
+      <td class="n">${esc(p.magic)}</td><td>${esc((p.opened_at || '').slice(0, 16).replace('T', ' '))}</td>
+    </tr>`).join('')}</tbody></table>` : '<div class="empty">No open positions.</div>';
+
+  const eas = d.by_ea || [];
+  document.getElementById('eacount').textContent = eas.length ? `(${eas.length})` : '';
+  document.getElementById('byea').innerHTML = eas.length ? `<table>
+    <thead><tr><th class="n">Magic</th><th>Symbols</th><th class="n">Positions</th>
+      <th class="n">Lots</th><th class="n">P&amp;L</th><th>Comment</th></tr></thead>
+    <tbody>${eas.map(e => `<tr>
+      <td class="n">${esc(e.magic)}</td><td>${esc((e.symbols || []).join(', '))}</td>
+      <td class="n">${esc(e.positions)}</td><td class="n">${esc(e.volume)}</td>
+      <td class="n ${cls(e.profit)}">${money(e.profit, '')}</td>
+      <td>${esc((e.comments || []).join(', '))}</td>
+    </tr>`).join('')}</tbody></table>`
+    : '<div class="empty">Nothing to group yet — EAs appear here once they hold a position.</div>';
+
+  const ords = d.orders || [];
+  document.getElementById('ordcount').textContent = ords.length ? `(${ords.length})` : '';
+  document.getElementById('orders').innerHTML = ords.length ? `<table>
+    <thead><tr><th>Symbol</th><th>Type</th><th class="n">Lots</th><th class="n">Price</th>
+      <th class="n">SL</th><th class="n">TP</th><th class="n">Magic</th><th>Placed</th></tr></thead>
+    <tbody>${ords.map(o => `<tr>
+      <td>${esc(o.symbol)}</td><td>${esc(o.type)}</td><td class="n">${esc(o.volume)}</td>
+      <td class="n">${esc(o.price_open)}</td><td class="n">${o.sl ? esc(o.sl) : '—'}</td>
+      <td class="n">${o.tp ? esc(o.tp) : '—'}</td><td class="n">${esc(o.magic)}</td>
+      <td>${esc((o.placed_at || '').slice(0, 16).replace('T', ' '))}</td>
+    </tr>`).join('')}</tbody></table>` : '<div class="empty">No pending orders.</div>';
+
+  document.getElementById('foot').textContent =
+    `${a.login ?? '—'} @ ${a.server ?? '—'} · ${a.is_demo === true ? 'DEMO' : a.is_demo === false ? 'LIVE' : 'account type unknown'}`
+    + ` · leverage 1:${a.leverage ?? '—'} · build ${t.build ?? '—'} · read-only agent, no trade commands exist`;
+}
+
+document.getElementById('refresh').onclick = load;
+load();
+setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>
