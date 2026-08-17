@@ -23,12 +23,18 @@ import argparse
 import hashlib
 import json
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import config
+
+# The MetaTrader5 package is NOT thread-safe: two threads calling into the
+# terminal at once can stall for a minute or more. Every IPC read goes through
+# this lock, which is also why the cache below matters - it keeps the lock free.
+_ipc_lock = threading.Lock()
 
 POLL_CACHE_SECONDS = 1          # collapse rapid refreshes into one IPC read
 STREAM_TICK_SECONDS = 1         # how often the stream re-reads the terminal
@@ -92,11 +98,31 @@ ORDER_TYPE = {0: "buy", 1: "sell", 2: "buy limit", 3: "sell limit", 4: "buy stop
 
 
 def read_state() -> dict:
-    """One read-only snapshot: account, positions, pending orders, per-EA rollup."""
+    """One read-only snapshot: account, positions, pending orders, per-EA rollup.
+
+    Serialised on _ipc_lock: concurrent calls into the terminal (SSE thread plus a
+    fallback poll) used to hang the bridge, which showed up in the UI as
+    "no data for 84s" right after placing an order.
+    """
     now = time.time()
     if _cache["data"] is not None and now - _cache["at"] < POLL_CACHE_SECONDS:
         return _cache["data"]
 
+    with _ipc_lock:
+        # another thread may have refreshed while we waited for the lock
+        now = time.time()
+        if _cache["data"] is not None and now - _cache["at"] < POLL_CACHE_SECONDS:
+            return _cache["data"]
+        try:
+            return _read_state_locked(now)
+        except Exception as exc:  # noqa: BLE001 - a broken pipe must not kill the agent
+            global _mt5, _init_error
+            _mt5 = None                                  # force a clean re-attach
+            _init_error = f"terminal read failed: {exc}"
+            return {"ok": False, "error": _init_error, "at": datetime.now(timezone.utc).isoformat()}
+
+
+def _read_state_locked(now: float) -> dict:
     mt5 = _connect()
     if mt5 is None:
         return {"ok": False, "error": _init_error, "at": datetime.now(timezone.utc).isoformat()}

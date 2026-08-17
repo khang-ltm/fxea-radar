@@ -1148,8 +1148,10 @@ async function syncMt5Transport() {
   }
   loadMt5();                                        // paint immediately
   const streamed = await startMt5Stream();          // resolves when the stream ends
-  if (!streamed) return;                            // polling timer covers it
-  if (TAB === 'mt5' && document.visibilityState === 'visible') syncMt5Transport();  // reconnect
+  if (TAB !== 'mt5' || document.visibilityState === 'hidden') return;
+  // Reconnect either way: on a clean end immediately, after a failure with a short
+  // delay. Without this a dropped stream left the page silent until the next poll.
+  setTimeout(syncMt5Transport, streamed ? 500 : 5000);
 }
 
 document.addEventListener('visibilitychange', () => {
