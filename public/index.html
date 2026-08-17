@@ -64,7 +64,8 @@ svg { flex: none; }
   font-weight: 700; font-size: 15px; letter-spacing: .02em; white-space: nowrap; }
 .brand svg { color: var(--color-accent); }
 
-.search { position: relative; flex: 1 1 260px; min-width: 180px; display: flex; align-items: center; }
+.search[hidden] { display: none; }   /* same [hidden] vs display:flex trap as .toolbar */
+.search:not([hidden]) { position: relative; flex: 1 1 260px; min-width: 180px; display: flex; align-items: center; }
 .search svg { position: absolute; left: 10px; color: var(--color-muted-fg); pointer-events: none; }
 input[type="search"] { width: 100%; padding: 8px 10px 8px 34px; background: var(--color-surface);
   color: var(--color-foreground); border: 1px solid var(--color-border);
@@ -101,7 +102,8 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .fgroup .chip + .chip { border-left: 1px solid var(--color-border-soft); }
 .fdiv { width: 1px; height: 22px; background: var(--color-border-soft); }
 
-.chip { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; min-height: 30px;
+.chip[hidden] { display: none; }   /* [hidden] must beat display:inline-flex */
+.chip:not([hidden]) { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; min-height: 30px;
   padding: 4px 11px; background: var(--color-surface); color: var(--color-muted-fg);
   border: 1px solid var(--color-border-soft); border-radius: var(--radius-full);
   font: 500 12.5px/1.2 var(--font-body);
@@ -127,7 +129,8 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .tagopt[data-on="true"] { color: var(--color-foreground); }
 .tagopt .n { margin-left: auto; font-family: var(--font-head); font-size: 11px; opacity: .7; }
 
-.syncbox { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
+.syncbox[hidden] { display: none; }   /* [hidden] must beat display:inline-flex */
+.syncbox:not([hidden]) { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
   border: 1px solid var(--color-border-soft); border-radius: var(--radius-full);
   font-size: 12px; color: var(--color-muted-fg); white-space: nowrap; }
 .syncbox .led { width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent); flex: none; }
@@ -344,7 +347,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <button class="btn" id="tab-mt5" role="tab" aria-selected="false">My MT5</button>
     </div>
 
-    <label class="search">
+    <label class="search" id="search-box">
       <span class="sr-only">Search expert advisors</span>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
         <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
@@ -411,7 +414,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
         <span class="mt5bar__stats" id="mt5stats">not connected</span>
         <span class="toolbar__spacer"></span>
         <span class="mt5bar__stats" id="mt5age"></span>
-        <button class="chip" id="mt5conf">Connect</button>
+        <button class="chip" id="mt5conf" title="Change the agent URL or token">Connect</button>
       </div>
       <div class="mt5bar__grid" id="mt5grid" hidden></div>
     </section>
@@ -850,7 +853,7 @@ const STALE_BAD_H = 72;
 function renderStaleness() {
   const box = document.getElementById('stale');
   const last = STATE.last_sync;
-  if (!last) { box.hidden = true; return; }
+  if (!last || TAB !== 'eas') { box.hidden = true; return; }   // catalog-only notice
   const hours = (Date.now() - new Date(last).getTime()) / 3600000;
   if (hours < STALE_WARN_H) { box.hidden = true; return; }
 
@@ -933,6 +936,8 @@ async function loadMt5() {
   if (TAB !== 'mt5') return;          // only poll while the tab is open
   const stats = document.getElementById('mt5stats');
   const grid = document.getElementById('mt5grid');
+  // shown by default; hidden again only once a read actually succeeds
+  document.getElementById('mt5conf').hidden = false;
   if (!MT5?.url || !MT5?.token) {
     stats.textContent = 'not connected — press Connect, or open the setup link from install_public.ps1';
     grid.hidden = true;
@@ -968,6 +973,8 @@ async function loadMt5() {
   grid.hidden = false;
   grid.innerHTML = cells;
   document.getElementById('mt5age').textContent = 'updated ' + (ago(d.at) || 'just now');
+  // connected and reading fine: the button is only clutter now
+  document.getElementById('mt5conf').hidden = true;
 
   const pos = d.positions || [];
   document.getElementById('mt5poscount').textContent = pos.length ? `(${pos.length})` : '';
@@ -1017,7 +1024,14 @@ function showTab(name) {
   const isEas = name === 'eas';
   document.getElementById('view-eas').hidden = !isEas;
   document.getElementById('view-mt5').hidden = isEas;
-  document.getElementById('toolbar-eas').hidden = !isEas;   // EA filters are irrelevant on the MT5 tab
+  // Channel/sync footer and the EA staleness banner both describe the catalog,
+  // so they have no business on the MT5 tab.
+  document.getElementById('toolbar-eas').hidden = !isEas;
+  document.getElementById('foot').hidden = !isEas;
+  document.getElementById('search-box').hidden = !isEas;   // searches the catalog only
+  document.getElementById('sort').hidden = !isEas;
+  document.getElementById('syncbox').hidden = !isEas;      // catalog sync clock, not MT5's
+  if (!isEas) document.getElementById('stale').hidden = true;
   document.getElementById('tab-eas').setAttribute('aria-selected', String(isEas));
   document.getElementById('tab-mt5').setAttribute('aria-selected', String(!isEas));
   document.getElementById('tab-eas').setAttribute('aria-pressed', String(isEas));
