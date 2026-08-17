@@ -89,7 +89,10 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .segmented .btn { border: 0; border-radius: 0; min-height: 34px; }
 .segmented .btn + .btn { border-left: 1px solid var(--color-border); }
 
-.toolbar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+/* [hidden] must win: a bare `display:flex` on the class outranks the UA rule,
+   which is what kept the EA filter bar visible on the MT5 tab. */
+.toolbar[hidden] { display: none; }
+.toolbar:not([hidden]) { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   padding: 0 var(--space-4) var(--space-3); max-width: 1600px; margin: 0 auto; }
 .toolbar__spacer { flex: 1 1 auto; }
 .fgroup { display: inline-flex; align-items: center; border: 1px solid var(--color-border-soft);
@@ -289,6 +292,18 @@ body.modal-open { overflow: hidden; }
 .mt5cell dd { margin: 2px 0 0; font-family: var(--font-head); font-variant-numeric: tabular-nums; font-size: 14px; }
 .mt5cell dd.pos { color: var(--color-accent); }
 .mt5cell dd.neg { color: var(--color-destructive); }
+.mt5sect { margin-top: var(--space-4); }
+.mt5sect .empty { padding: var(--space-6) var(--space-4); }   /* not the 64px of the EA grid */
+.mt5sect h2 { margin: 0 0 var(--space-2); font-size: 12px; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--color-muted-fg); }
+.wrap { overflow-x: auto; }
+table.mt5 { width: 100%; border-collapse: collapse; background: var(--color-surface);
+  border: 1px solid var(--color-border-soft); border-radius: var(--radius-lg); overflow: hidden; }
+table.mt5 thead th { text-align: left; padding: 8px var(--space-3); background: var(--color-muted);
+  font: 600 11px/1.4 var(--font-head); letter-spacing: .06em; text-transform: uppercase; color: var(--color-muted-fg); }
+table.mt5 tbody td { padding: 8px var(--space-3); border-top: 1px solid var(--color-border-soft); font-size: 13px; }
+table.mt5 tbody tr:hover { background: var(--color-surface-2); }
+table.mt5 td.n, table.mt5 th.n { text-align: right; font-family: var(--font-head); font-variant-numeric: tabular-nums; }
 .mt5rows { grid-column: 1 / -1; display: grid; gap: var(--space-1); }
 .mt5row { display: flex; align-items: center; gap: var(--space-2); padding: 5px 9px; font-size: 12px;
   background: var(--color-muted); border: 1px solid var(--color-border-soft); border-radius: var(--radius-sm); }
@@ -324,6 +339,11 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       FX EA RADAR
     </span>
 
+    <div class="segmented" role="tablist" aria-label="View">
+      <button class="btn" id="tab-eas" role="tab" aria-selected="true">EA catalog</button>
+      <button class="btn" id="tab-mt5" role="tab" aria-selected="false">My MT5</button>
+    </div>
+
     <label class="search">
       <span class="sr-only">Search expert advisors</span>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
@@ -345,7 +365,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 
   </div>
 
-  <div class="toolbar">
+  <div class="toolbar" id="toolbar-eas">
     <div class="fgroup" role="group" aria-label="Quick filters">
       <button class="chip" id="f-pass" aria-pressed="false" title="#bestea - the channel's test made money">Passed test</button>
       <button class="chip" id="f-noloss" aria-pressed="false" title="hide EAs their own test lost money on">Hide losers</button>
@@ -374,24 +394,35 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 
 <p class="stale" id="stale" hidden></p>
 
-<section class="mt5bar" id="mt5bar">
-  <div class="mt5bar__head">
-    <span class="mt5bar__title">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-7 4 4 6-8"/></svg>
-      My MT5
-    </span>
-    <span class="mt5bar__stats" id="mt5stats">not connected</span>
-    <span class="toolbar__spacer"></span>
-    <a class="chip" id="mt5open" href="#" target="_blank" rel="noopener" hidden>Full panel</a>
-    <button class="chip" id="mt5conf">Connect</button>
-  </div>
-  <div class="mt5bar__grid" id="mt5grid" hidden></div>
-</section>
-
 <main>
-  <div class="grid grid--list" id="grid"></div>
-  <div class="more" id="more"></div>
+  <div id="view-eas">
+    <div class="grid grid--list" id="grid"></div>
+    <div class="more" id="more"></div>
+  </div>
+
+  <div id="view-mt5" hidden>
+    <section class="mt5bar">
+      <div class="mt5bar__head">
+        <span class="mt5bar__title">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-7 4 4 6-8"/></svg>
+          Account
+        </span>
+        <span class="mt5bar__stats" id="mt5stats">not connected</span>
+        <span class="toolbar__spacer"></span>
+        <span class="mt5bar__stats" id="mt5age"></span>
+        <button class="chip" id="mt5conf">Connect</button>
+      </div>
+      <div class="mt5bar__grid" id="mt5grid" hidden></div>
+    </section>
+
+    <section class="mt5sect"><h2>Open positions <span class="num" id="mt5poscount"></span></h2>
+      <div class="wrap" id="mt5positions"></div></section>
+    <section class="mt5sect"><h2>By EA (magic number) <span class="num" id="mt5eacount"></span></h2>
+      <div class="wrap" id="mt5byea"></div></section>
+    <section class="mt5sect"><h2>Pending orders <span class="num" id="mt5ordcount"></span></h2>
+      <div class="wrap" id="mt5orders"></div></section>
+  </div>
 </main>
 <footer id="foot"></footer>
 
@@ -414,6 +445,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 'use strict';
 const PAGE = 60;                     // render in batches; hundreds of rows at once is not viable
 const urlParams = new URLSearchParams(location.search);
+const oneOf = (v, allowed, fallback) => (allowed.includes(v) ? v : fallback);
 
 let POSTS = [], SUMMARY = {}, STATE = {}, SYNC = {};
 let LOADED = { matched: 0, truncated: false, collapsed: 0 };
@@ -898,17 +930,14 @@ document.getElementById('mt5conf').onclick = () => {
 };
 
 async function loadMt5() {
+  if (TAB !== 'mt5') return;          // only poll while the tab is open
   const stats = document.getElementById('mt5stats');
   const grid = document.getElementById('mt5grid');
-  const open = document.getElementById('mt5open');
   if (!MT5?.url || !MT5?.token) {
-    stats.textContent = 'not connected — press Connect and paste your agent URL + token';
+    stats.textContent = 'not connected — press Connect, or open the setup link from install_public.ps1';
     grid.hidden = true;
-    open.hidden = true;
     return;
   }
-  open.hidden = false;
-  open.href = MT5.url;
 
   let d;
   try {
@@ -936,22 +965,71 @@ async function loadMt5() {
     ['Pending', String(d.totals.orders), ''],
   ].map(([k, v, c]) => `<dl class="mt5cell"><dt>${k}</dt><dd class="${c}">${esc(v)}</dd></dl>`).join('');
 
-  const rows = [...(d.positions || []), ...(d.orders || [])].slice(0, 8).map(x => `<div class="mt5row">
-      <span>${esc(x.symbol)}</span>
-      <span class="badge">${esc(x.type)}</span>
-      <span class="num">${esc(x.volume)} @ ${esc(x.price_open)}</span>
-      <span class="sp"></span>
-      ${x.profit != null ? `<span class="num ${mt5Cls(x.profit)}">${mt5Money(x.profit, '')}</span>` : ''}
-      <span class="num">magic ${esc(x.magic)}</span>
-      ${x.comment ? `<span>${esc(x.comment)}</span>` : ''}
-    </div>`).join('');
-
   grid.hidden = false;
-  grid.innerHTML = cells + (rows ? `<div class="mt5rows">${rows}</div>` : '');
+  grid.innerHTML = cells;
+  document.getElementById('mt5age').textContent = 'updated ' + (ago(d.at) || 'just now');
+
+  const pos = d.positions || [];
+  document.getElementById('mt5poscount').textContent = pos.length ? `(${pos.length})` : '';
+  document.getElementById('mt5positions').innerHTML = pos.length ? `<table class="mt5">
+    <thead><tr><th>Symbol</th><th>Side</th><th class="n">Lots</th><th class="n">Entry</th><th class="n">Now</th>
+      <th class="n">SL</th><th class="n">TP</th><th class="n">P&amp;L</th><th class="n">Magic</th><th>Comment</th></tr></thead>
+    <tbody>${pos.map(p => `<tr>
+      <td>${esc(p.symbol)}</td>
+      <td><span class="badge ${p.type === 'buy' ? 'badge--pass' : 'badge--loss'}">${esc(p.type)}</span></td>
+      <td class="n">${esc(p.volume)}</td><td class="n">${esc(p.price_open)}</td><td class="n">${esc(p.price_current)}</td>
+      <td class="n">${p.sl ? esc(p.sl) : '—'}</td><td class="n">${p.tp ? esc(p.tp) : '—'}</td>
+      <td class="n ${mt5Cls(p.profit)}">${mt5Money(p.profit, '')}</td>
+      <td class="n">${esc(p.magic)}</td><td>${esc(p.comment || '')}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">No open positions.</div>';
+
+  const eas = d.by_ea || [];
+  document.getElementById('mt5eacount').textContent = eas.length ? `(${eas.length})` : '';
+  document.getElementById('mt5byea').innerHTML = eas.length ? `<table class="mt5">
+    <thead><tr><th class="n">Magic</th><th>Symbols</th><th class="n">Positions</th><th class="n">Lots</th>
+      <th class="n">P&amp;L</th><th>Comment</th></tr></thead>
+    <tbody>${eas.map(e => `<tr><td class="n">${esc(e.magic)}</td><td>${esc((e.symbols || []).join(', '))}</td>
+      <td class="n">${esc(e.positions)}</td><td class="n">${esc(e.volume)}</td>
+      <td class="n ${mt5Cls(e.profit)}">${mt5Money(e.profit, '')}</td>
+      <td>${esc((e.comments || []).join(', '))}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">EAs appear here once they hold a position.</div>';
+
+  const ords = d.orders || [];
+  document.getElementById('mt5ordcount').textContent = ords.length ? `(${ords.length})` : '';
+  document.getElementById('mt5orders').innerHTML = ords.length ? `<table class="mt5">
+    <thead><tr><th>Symbol</th><th>Type</th><th class="n">Lots</th><th class="n">Price</th><th class="n">SL</th>
+      <th class="n">TP</th><th class="n">Magic</th><th>Comment</th><th>Placed</th></tr></thead>
+    <tbody>${ords.map(o => `<tr><td>${esc(o.symbol)}</td><td>${esc(o.type)}</td><td class="n">${esc(o.volume)}</td>
+      <td class="n">${esc(o.price_open)}</td><td class="n">${o.sl ? esc(o.sl) : '—'}</td>
+      <td class="n">${o.tp ? esc(o.tp) : '—'}</td><td class="n">${esc(o.magic)}</td>
+      <td>${esc(o.comment || '')}</td>
+      <td>${esc((o.placed_at || '').slice(0, 16).replace('T', ' '))}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">No pending orders.</div>';
 }
 
+/* ── tabs ──────────────────────────────────────────────────────────────── */
+const TAB_KEY = 'fxea_tab';
+let TAB = oneOf(urlParams.get('tab'), ['eas', 'mt5'], localStorage.getItem(TAB_KEY) || 'eas');
+
+function showTab(name) {
+  TAB = name;
+  localStorage.setItem(TAB_KEY, name);
+  const isEas = name === 'eas';
+  document.getElementById('view-eas').hidden = !isEas;
+  document.getElementById('view-mt5').hidden = isEas;
+  document.getElementById('toolbar-eas').hidden = !isEas;   // EA filters are irrelevant on the MT5 tab
+  document.getElementById('tab-eas').setAttribute('aria-selected', String(isEas));
+  document.getElementById('tab-mt5').setAttribute('aria-selected', String(!isEas));
+  document.getElementById('tab-eas').setAttribute('aria-pressed', String(isEas));
+  document.getElementById('tab-mt5').setAttribute('aria-pressed', String(!isEas));
+  if (!isEas) loadMt5();
+}
+document.getElementById('tab-eas').onclick = () => showTab('eas');
+document.getElementById('tab-mt5').onclick = () => showTab('mt5');
+showTab(TAB);
+
 loadMt5();
-setInterval(loadMt5, 10000);
+setInterval(loadMt5, 10000);     // no-op unless the MT5 tab is open
 
 load();
 setInterval(load, 120000);       // pick up background auto-syncs
