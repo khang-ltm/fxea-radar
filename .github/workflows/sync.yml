@@ -68,8 +68,10 @@ jobs:
       - name: Sync messages
         run: python -m app.sync
 
+      # --since all on purpose: a test is usually posted BEFORE the EA is dropped,
+      # so limiting this to SINCE_DATE finds only ~14 tests instead of ~231.
       - name: Refresh test verdicts
-        run: python -m app.sync_shots
+        run: python -m app.sync_shots --since all
         continue-on-error: true   # a verdict hiccup must not block publishing
 
       - name: Build static site
