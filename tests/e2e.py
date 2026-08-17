@@ -324,6 +324,10 @@ def run_once(run_no: int, port: int) -> None:
               "dashboard reports verdict-index freshness")
         check("renderStaleness" in html and "STALE_WARN_H" in html,
               "dashboard warns when the data goes stale")
+        check(".stale[hidden]" in html and ".stale:not([hidden])" in html,
+              "stale banner respects [hidden] (a bare display:flex leaves an empty bar)")
+        check("dialog.sheet[open]" in html and "\ndialog.sheet {" in html.replace("\r", ""),
+              "sheet display is scoped to [open] for the same reason")
         check("VERDICT_RANK" in html and 'value="verdict"' in html,
               "dashboard can sort by test verdict")
 
