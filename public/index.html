@@ -869,6 +869,20 @@ function renderSync() {
 const MT5_KEY = 'mt5_conf';
 let MT5 = JSON.parse(localStorage.getItem(MT5_KEY) || 'null');
 
+// One-shot setup from the address bar: ?mt5=<agent-url>&mt5token=<token>
+// Saved to localStorage, then stripped from the URL so the token is not left in
+// the address bar or in history.
+(() => {
+  const u = urlParams.get('mt5'), t = urlParams.get('mt5token');
+  if (!u) return;
+  MT5 = { url: u.trim().replace(/\/+$/, ''), token: (t || MT5?.token || '').trim() };
+  localStorage.setItem(MT5_KEY, JSON.stringify(MT5));
+  const clean = new URL(location.href);
+  clean.searchParams.delete('mt5');
+  clean.searchParams.delete('mt5token');
+  history.replaceState({}, '', clean);
+})();
+
 const mt5Money = (v, c) => v == null ? '—'
   : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (c ? ' ' + c : '');
 const mt5Cls = v => v == null || Number(v) === 0 ? '' : Number(v) > 0 ? 'pos' : 'neg';
