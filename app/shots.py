@@ -24,16 +24,16 @@ SHOTS_FILE = config.DATA_DIR / "shots.json"
 
 
 def load_shots() -> list[dict]:
-    try:
-        data = json.loads(SHOTS_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except (OSError, json.JSONDecodeError):
-        return []
+    from .store import _read
+
+    data = _read(SHOTS_FILE, [])
+    return data if isinstance(data, list) else []
 
 
 def save_shots(shots: list[dict]) -> None:
-    SHOTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SHOTS_FILE.write_text(json.dumps(shots, ensure_ascii=False, indent=1), encoding="utf-8")
+    from .store import _write
+
+    _write(SHOTS_FILE, shots)
 
 
 def _own_photo(group: dict) -> dict | None:

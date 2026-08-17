@@ -1,6 +1,12 @@
-"""JSON-file store. Small dataset (a few thousand posts), no DB dependency."""
+"""Gzipped-JSON store. A few thousand posts, no DB dependency.
+
+Gzip because the text compresses ~13x (4.5 MB -> 0.33 MB), which matters for the
+Actions cache and for how long a sync takes to read/write. Plain .json files from
+older versions are still read, then replaced by the .gz on the next save.
+"""
 from __future__ import annotations
 
+import gzip
 import json
 import os
 from pathlib import Path
@@ -8,18 +14,35 @@ from pathlib import Path
 from . import config
 
 
+def _gz(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".gz")
+
+
 def _read(path: Path, fallback):
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return fallback
+    for candidate in (_gz(path), path):          # prefer .gz, fall back to legacy .json
+        try:
+            if candidate.suffix == ".gz":
+                with gzip.open(candidate, "rt", encoding="utf-8") as fh:
+                    return json.load(fh)
+            return json.loads(candidate.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue
+        except (OSError, json.JSONDecodeError, EOFError):
+            continue
+    return fallback
 
 
 def _write(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.replace(tmp, path)
+    """Atomic: write a temp file, then replace. A killed sync never truncates the store."""
+    target = _gz(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".tmp")
+    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    with gzip.open(tmp, "wb", compresslevel=6) as fh:
+        fh.write(payload)
+    os.replace(tmp, target)
+    if path.exists():
+        path.unlink()                            # drop the superseded plain file
 
 
 def load_posts() -> list[dict]:
