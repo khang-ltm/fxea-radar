@@ -1,4 +1,4 @@
-name: sync and publish
+﻿name: sync and publish
 
 # Runs on GitHub's machines, so the site stays current while your PC is off.
 on:
@@ -42,13 +42,13 @@ jobs:
       CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The store lives in the Actions cache, not in git: the repo is public and
       # posts.json holds thousands of raw group messages from other people.
       # Cache miss just means one slower sync back to SINCE_DATE.
       - name: Restore store
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             data/posts.json.gz
@@ -58,7 +58,7 @@ jobs:
           restore-keys: |
             fxea-store-
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -80,7 +80,7 @@ jobs:
         run: python -m app.export_static
 
       - name: Save store
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             data/posts.json.gz
@@ -106,7 +106,7 @@ jobs:
 
       # Always downloadable from the run page, whatever hosting is set up.
       - name: Upload site artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fxea-site
           path: site
@@ -127,12 +127,12 @@ jobs:
       # setting repo variable ENABLE_GH_PAGES=true (Settings -> Variables).
       - name: Configure GitHub Pages
         if: ${{ vars.ENABLE_GH_PAGES == 'true' }}
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
         with:
           enablement: true          # turn Pages on for the repo if it is not yet
       - name: Upload Pages artifact
         if: ${{ vars.ENABLE_GH_PAGES == 'true' }}
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -145,4 +145,5 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
+

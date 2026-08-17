@@ -40,6 +40,16 @@ def _tokens(key: str) -> set[str]:
     return {t for t in re.split(r"\s+", key) if t}
 
 
+def squash(key: str) -> str:
+    """Key with all separators removed: '3x combo ai' and '3xcomboai' collapse.
+
+    Used for EXACT equality only - the channel writes the same product both ways.
+    Never for similarity, which would merge different products (see the audit:
+    'Ultimate Breakout' vs 'Ultimatum Breakout' score 0.76 and are unrelated).
+    """
+    return re.sub(r"[^a-z0-9]", "", key.lower())
+
+
 def _contained(a: set[str], b: set[str]) -> bool:
     """True if one token set sits inside the other, with enough real signal."""
     small, big = (a, b) if len(a) <= len(b) else (b, a)
@@ -83,6 +93,16 @@ def build_families(posts: list[dict]) -> dict[str, str]:
             uf.union(k, "file:" + stem)      # same attachment name -> same product
 
     uniq = sorted(set(keys))
+
+    # same product written with different spacing: "3XComboAI" vs "3X COMBO AI"
+    by_squash: dict[str, str] = {}
+    for k in uniq:
+        s = squash(k)
+        if s in by_squash:
+            uf.union(by_squash[s], k)
+        else:
+            by_squash[s] = k
+
     token_map = {k: _tokens(k) for k in uniq}
     for i, a in enumerate(uniq):
         for b in uniq[i + 1:]:

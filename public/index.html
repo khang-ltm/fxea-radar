@@ -222,8 +222,9 @@ pre.raw { margin: var(--space-2) 0 0; padding: var(--space-3); background: var(-
 .row__num { font-family: var(--font-head); font-variant-numeric: tabular-nums;
   font-size: 12.5px; color: var(--color-muted-fg); }
 .row__act { display: flex; justify-content: flex-end; gap: 6px; }
-@media (max-width: 1100px) { .row { grid-template-columns: minmax(0, 1fr) 96px 92px 132px; } .row__hide2 { display: none; } }
-@media (max-width: 720px)  { .row { grid-template-columns: minmax(0, 1fr) 132px; } .row__hide { display: none; } }
+/* Verdict stays visible at every width - on a phone it is the column that matters. */
+@media (max-width: 1100px) { .row { grid-template-columns: minmax(0, 1fr) 78px 96px 92px 132px; } .row__hide2 { display: none; } }
+@media (max-width: 720px)  { .row { grid-template-columns: minmax(0, 1fr) 74px 124px; } .row__hide { display: none; } }
 
 /* ── detail sheet ──────────────────────────────────────────────────────── */
 .row__open { all: unset; cursor: pointer; overflow: hidden; text-overflow: ellipsis;
@@ -256,6 +257,16 @@ body.modal-open { overflow: hidden; }
 .kvcell dt { font-size: 11px; color: var(--color-muted-fg); }
 .kvcell dd { margin: 2px 0 0; font-family: var(--font-head); font-variant-numeric: tabular-nums; font-size: 13px; }
 .hint { font-size: 12px; color: var(--color-muted-fg); }
+
+/* Silent staleness is the worst failure mode: a broken sync still serves a
+   perfectly normal-looking page. Say it out loud instead. */
+.stale { display: flex; align-items: center; gap: var(--space-2); max-width: 1600px;
+  margin: var(--space-3) auto 0; padding: var(--space-3) var(--space-4);
+  background: color-mix(in srgb, var(--color-warn) 12%, var(--color-background));
+  border: 1px solid color-mix(in srgb, var(--color-warn) 45%, transparent);
+  border-radius: var(--radius); color: #FCD34D; font-size: 13px; }
+.stale--bad { background: color-mix(in srgb, var(--color-destructive) 14%, var(--color-background));
+  border-color: color-mix(in srgb, var(--color-destructive) 50%, transparent); color: #FCA5A5; }
 
 .empty { padding: 64px var(--space-4); text-align: center; color: var(--color-muted-fg); }
 .empty h2 { margin: 0 0 var(--space-2); font-size: 16px; color: var(--color-foreground); }
@@ -297,6 +308,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <label class="sr-only" for="sort">Sort order</label>
     <select id="sort">
       <option value="new">Newest first</option>
+      <option value="verdict">Best tested first</option>
       <option value="old">Oldest first</option>
       <option value="versions">Most versions</option>
       <option value="name">Name A–Z</option>
@@ -332,6 +344,8 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <span class="status" id="status" role="status" aria-live="polite"></span>
   </div>
 </header>
+
+<p class="stale" id="stale" hidden></p>
 
 <main>
   <div class="grid grid--list" id="grid"></div>
@@ -430,9 +444,14 @@ function matches(p) {
   return true;
 }
 
+// passed > still testing > untested > no trades > lost > scam
+const VERDICT_RANK = { pass: 5, undefined: 3, 'no-trade': 2, loss: 1, scam: 0 };
+const verdictScore = p => (p.shot ? (VERDICT_RANK[p.shot.verdict] ?? 4) : 3);
+
 const sorters = {
   new:      (a, b) => b.date - a.date,
   old:      (a, b) => a.date - b.date,
+  verdict:  (a, b) => (verdictScore(b) - verdictScore(a)) || (b.date - a.date),
   versions: (a, b) => ((b.version_count || 1) - (a.version_count || 1)) || (b.date - a.date),
   name:     (a, b) => String(a.name).localeCompare(String(b.name)),
 };
@@ -588,7 +607,7 @@ function row(p) {
         title="${esc(p.name)} - click for full details">${esc(p.name)}</button>
       ${p.version ? `<span class="badge badge--ver">${esc(p.version)}</span>` : ''}
     </div>
-    <div class="row__hide2">${verdictBadge(p) || '<span class="shot-none">—</span>'}</div>
+    <div>${verdictBadge(p) || '<span class="shot-none">—</span>'}</div>
     <div class="row__hide">${testLinks(p, true)}</div>
     <div class="badges row__hide2">${chips}</div>
     <div class="row__num row__hide2">${esc(p.deposit || '—')}</div>
@@ -605,7 +624,7 @@ function render() {
 
   grid.innerHTML = !page.length ? emptyState()
     : `<div class="row row--head">
-        <div>Name</div><div class="row__hide2">Test</div><div class="row__hide">Myfxbook</div>
+        <div>Name</div><div>Test</div><div class="row__hide">Myfxbook</div>
         <div class="row__hide2">Pairs / TF</div><div class="row__hide2">Deposit</div>
         <div class="row__hide2">Versions</div><div class="row__hide">Posted</div>
         <div style="text-align:right">File</div>
@@ -629,6 +648,7 @@ function render() {
     + (LOADED.truncated ? ` · <span class="warn">newest 3000 loaded</span>` : '');
   syncFilterUi();
   renderSync();
+  renderStaleness();
 
   const chans = (SUMMARY.channels || []).join(', ') || '—';
   const last = STATE.last_sync ? new Date(STATE.last_sync).toLocaleString() : 'never';
@@ -746,6 +766,29 @@ function until(iso) {
   const mins = (new Date(iso).getTime() - Date.now()) / 60000;
   if (mins <= 0) return 'due';
   return mins < 60 ? 'in ' + Math.round(mins) + 'm' : 'in ' + Math.round(mins / 60) + 'h';
+}
+
+/* The sync runs twice a day, so ~30h without one means something is broken:
+   an expired Telegram session, a disabled cron, or a failing workflow. */
+const STALE_WARN_H = 30;
+const STALE_BAD_H = 72;
+
+function renderStaleness() {
+  const box = document.getElementById('stale');
+  const last = STATE.last_sync;
+  if (!last) { box.hidden = true; return; }
+  const hours = (Date.now() - new Date(last).getTime()) / 3600000;
+  if (hours < STALE_WARN_H) { box.hidden = true; return; }
+
+  const bad = hours >= STALE_BAD_H;
+  box.hidden = false;
+  box.classList.toggle('stale--bad', bad);
+  const age = hours < 48 ? `${Math.round(hours)} hours` : `${Math.round(hours / 24)} days`;
+  box.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/>
+      <path d="M12 7v5l3 2"/></svg>
+    <span><b>Data is ${esc(age)} old.</b> The sync normally runs twice a day, so it is probably failing
+    — check the Actions tab, or the Telegram session may need renewing. New EAs are missing from this list.</span>`;
 }
 
 function renderSync() {

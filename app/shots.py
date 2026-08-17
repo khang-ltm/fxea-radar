@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 
 from . import config
-from .grouping import _contained, _tokens
+from .grouping import _contained, _tokens, squash
 
 SHOTS_FILE = config.DATA_DIR / "shots.json"
 
@@ -67,6 +67,10 @@ def attach_shots(groups: list[dict], shots: list[dict] | None = None) -> None:
         if not fam:
             continue
         hit = by_key.get(fam)
+        if not hit:
+            # spacing variant of the same product name
+            fam_sq = squash(fam)
+            hit = next((v for k, v in by_key.items() if squash(k) == fam_sq), None)
         if not hit:
             ftok = _tokens(fam)
             best = None

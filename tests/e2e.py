@@ -222,6 +222,14 @@ def run_once(run_no: int, port: int) -> None:
           "same product, different watermark -> same key")
     check(dedupe_key("Vision v2 MT5") != dedupe_key("Vision v3 MT5"), "different versions stay distinct")
 
+    # spacing variants are the same product; look-alikes are not
+    from app.grouping import _contained, _tokens, squash
+    check(squash("3x combo ai") == squash("3xcomboai"), "spacing variants squash to the same key")
+    check(squash("ultimate breakout system") != squash("ultimatum breakout"),
+          "look-alike names do NOT squash together")
+    check(not _contained(_tokens("ultimate breakout system"), _tokens("ultimatum breakout")),
+          "containment guard rejects unrelated look-alikes")
+
     from app.server import dedupe as dedupe_posts
     newest_first = sorted(posts, key=lambda p: -p["date"])
     uniq = dedupe_posts([p for p in newest_first if p["is_ea"]])
@@ -314,6 +322,10 @@ def run_once(run_no: int, port: int) -> None:
         check("prefers-reduced-motion" in html, "dashboard respects reduced motion")
         check("verdicts refreshed" in html or "verdicts not refreshed" in html,
               "dashboard reports verdict-index freshness")
+        check("renderStaleness" in html and "STALE_WARN_H" in html,
+              "dashboard warns when the data goes stale")
+        check("VERDICT_RANK" in html and 'value="verdict"' in html,
+              "dashboard can sort by test verdict")
 
         # static export must work off the SAME page, with data inlined and no polling
         from app.export_static import render
