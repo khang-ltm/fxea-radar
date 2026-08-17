@@ -73,6 +73,10 @@ jobs:
         continue-on-error: true   # a verdict hiccup must not block publishing
 
       - name: Build static site
+        env:
+          # set repo variable PAGES_DOMAIN (e.g. fxea-radar.linkpc.net) AFTER the
+          # DNS record exists - Pages redirects the github.io URL once it is set
+          PAGES_DOMAIN: ${{ vars.PAGES_DOMAIN }}
         run: python -m app.export_static
 
       - name: Save store

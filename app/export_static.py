@@ -88,11 +88,20 @@ window.fetch = (url) => Promise.resolve({{
 
 
 def main() -> None:
+    import os
+
     payload = build_payload()
     SITE_DIR.mkdir(parents=True, exist_ok=True)
     out = SITE_DIR / "index.html"
     out.write_text(render(payload), encoding="utf-8")
     (SITE_DIR / ".nojekyll").write_text("", encoding="utf-8")   # GitHub Pages: serve as-is
+
+    # PAGES_DOMAIN -> a CNAME file in the artifact, which is what tells Pages the
+    # custom hostname. Left unset, Pages keeps serving the github.io URL.
+    domain = (os.environ.get("PAGES_DOMAIN") or "").strip()
+    if domain:
+        (SITE_DIR / "CNAME").write_text(domain + "\n", encoding="utf-8")
+        print(f"  CNAME -> {domain}")
 
     with_test = sum(1 for p in payload["posts"] if p.get("shot"))
     kb = out.stat().st_size / 1024
