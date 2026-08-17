@@ -94,20 +94,29 @@ if (-not (Test-Path $py)) {
     Say 'creating venv'
     & cmd /c "$pyCmd -m venv `"$(Join-Path $InstallDir '.venv')`""
 }
+# cmd /c throughout: PowerShell turns a native exe's stderr into NativeCommandError
+# noise, which hid the real pip failure last time.
+$venvVer = (& cmd /c "`"$py`" -V 2>&1") -join ' '
+Say "venv interpreter: $venvVer"
+
+$pipLog = Join-Path $InstallDir 'pip-mt5.log'
 Say 'installing MetaTrader5 package'
-& $py -m pip install --quiet --upgrade pip
-& $py -m pip install MetaTrader5 2>&1 | Where-Object { $_ -match 'ERROR|error:|Successfully|Requirement already' } |
+& cmd /c "`"$py`" -m pip install --upgrade pip >nul 2>&1"
+& cmd /c "`"$py`" -m pip install MetaTrader5 > `"$pipLog`" 2>&1"
+Get-Content $pipLog -ErrorAction SilentlyContinue |
+    Where-Object { $_ -match 'ERROR|error:|Successfully|already satisfied|no matching distribution' } |
     ForEach-Object { Say $_ }
 
-# Verify rather than assume: a failed wheel build used to leave the agent running
+# Verify rather than assume: a failed install previously left the agent running
 # with no package, reporting "MetaTrader5 package not installed" over the tunnel.
-$check = & $py -c "import MetaTrader5, sys; print(MetaTrader5.__version__)" 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Say "MetaTrader5 did NOT install into the venv:" 'Red'
-    Say "  $check" 'Red'
-    $ver = & $py -V
-    Say "  venv is $ver - MetaTrader5 needs 3.8-3.12 (64-bit)" 'Red'
-    Say "  fix: install Python 3.12, delete $InstallDir\.venv, re-run this script" 'Yellow'
+$check = (& cmd /c "`"$py`" -c `"import MetaTrader5;print(MetaTrader5.__version__)`" 2>&1") -join ' '
+if ($check -notmatch '^\s*\d+\.\d+') {
+    Say 'MetaTrader5 is NOT importable in the venv.' 'Red'
+    Say "  interpreter: $venvVer" 'Red'
+    Say "  import said: $check" 'Red'
+    Say "  full pip log: $pipLog" 'Yellow'
+    Say '  MetaTrader5 needs 64-bit Python 3.8-3.12.' 'Yellow'
+    Say "  fix: rmdir /s /q `"$InstallDir\.venv`"  then re-run this installer" 'Yellow'
     exit 1
 }
 Say "MetaTrader5 $check ready" 'Green'
