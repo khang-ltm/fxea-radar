@@ -102,7 +102,10 @@ Say "venv interpreter: $venvVer"
 $pipLog = Join-Path $InstallDir 'pip-mt5.log'
 Say 'installing MetaTrader5 package'
 & cmd /c "`"$py`" -m pip install --upgrade pip >nul 2>&1"
-& cmd /c "`"$py`" -m pip install MetaTrader5 > `"$pipLog`" 2>&1"
+# numpy pinned to 1.26.4: numpy 2.x is built for the x86-64-v2 CPU baseline and
+# raises "your machine doesn't support (X86_V2)" on older VPS CPUs, which breaks
+# MetaTrader5 too since it imports numpy.
+& cmd /c "`"$py`" -m pip install `"numpy==1.26.4`" MetaTrader5 > `"$pipLog`" 2>&1"
 Get-Content $pipLog -ErrorAction SilentlyContinue |
     Where-Object { $_ -match 'ERROR|error:|Successfully|already satisfied|no matching distribution' } |
     ForEach-Object { Say $_ }
