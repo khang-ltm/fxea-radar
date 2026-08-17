@@ -44,7 +44,7 @@
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--color-background); color: var(--color-foreground);
-  font: 400 16px/1.55 var(--font-body); overflow-wrap: anywhere; }
+  font: 400 16px/1.55 var(--font-body); overflow-wrap: anywhere; overflow-x: hidden; }
 h1, h2, h3 { font-family: var(--font-head); font-weight: 600; letter-spacing: -.01em; }
 a { color: var(--color-info); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -279,8 +279,9 @@ body.modal-open { overflow: hidden; }
 
 /* live account panel - the agent URL and token live in this browser's
    localStorage only, never in the repo or the published page */
-.mt5bar { max-width: 1600px; margin: var(--space-3) auto 0; padding: var(--space-3) var(--space-4);
-  background: var(--color-surface); border: 1px solid var(--color-border-soft); border-radius: var(--radius-lg); }
+.mt5bar { max-width: 100%; margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4);
+  background: var(--color-surface); border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-lg); overflow: hidden; }   /* was overflowing the viewport on a phone */
 .mt5bar__head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .mt5bar__title { display: flex; align-items: center; gap: 6px; font-family: var(--font-head);
   font-weight: 600; font-size: 13px; }
@@ -290,8 +291,11 @@ body.modal-open { overflow: hidden; }
 #mt5age { display: inline-flex; align-items: center; gap: 5px; }
 #mt5age .led { width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent); }
 #mt5age .led--old { background: var(--color-muted-fg); }
+/* 150px floor: a "5,949.64 USD" tile needs ~120px of text, and three columns on a
+   430px phone overflowed the panel and clipped the third one. */
 .mt5bar__grid { display: grid; gap: var(--space-2); margin-top: var(--space-3);
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.mt5cell dd { overflow-wrap: normal; }
 .mt5cell { padding: 7px 10px; background: var(--color-muted); border: 1px solid var(--color-border-soft);
   border-radius: var(--radius); }
 .mt5cell dt { font-size: 11px; color: var(--color-muted-fg); }
@@ -299,12 +303,17 @@ body.modal-open { overflow: hidden; }
 .mt5cell dd.pos { color: var(--color-accent); }
 .mt5cell dd.neg { color: var(--color-destructive); }
 .mt5sect { margin-top: var(--space-4); }
-.mt5sect .empty { padding: var(--space-6) var(--space-4); }   /* not the 64px of the EA grid */
+/* card look, so an empty section reads as "nothing here" instead of broken text */
+.mt5sect .empty { padding: var(--space-6) var(--space-4); background: var(--color-surface);
+  border: 1px solid var(--color-border-soft); border-radius: var(--radius-lg); font-size: 13px; }
 .mt5sect h2 { margin: 0 0 var(--space-2); font-size: 12px; letter-spacing: .05em;
   text-transform: uppercase; color: var(--color-muted-fg); }
-.wrap { overflow-x: auto; }
-table.mt5 { width: 100%; border-collapse: collapse; background: var(--color-surface);
+.wrap { overflow-x: auto; max-width: 100%; }
+/* min-width makes .wrap scroll on a phone instead of squashing headers into
+   one letter per line */
+table.mt5 { width: 100%; min-width: 760px; border-collapse: collapse; background: var(--color-surface);
   border: 1px solid var(--color-border-soft); border-radius: var(--radius-lg); overflow: hidden; }
+table.mt5 th, table.mt5 td { white-space: nowrap; overflow-wrap: normal; }
 table.mt5 thead th { text-align: left; padding: 8px var(--space-3); background: var(--color-muted);
   font: 600 11px/1.4 var(--font-head); letter-spacing: .06em; text-transform: uppercase; color: var(--color-muted-fg); }
 table.mt5 tbody td { padding: 8px var(--space-3); border-top: 1px solid var(--color-border-soft); font-size: 13px; }
@@ -406,7 +415,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div class="more" id="more"></div>
   </div>
 
-  <div id="view-mt5" hidden>
+  <div id="view-mt5" hidden style="min-width: 0">
     <section class="mt5bar">
       <div class="mt5bar__head">
         <span class="mt5bar__title">
@@ -960,6 +969,17 @@ const mt5Money = (v, c) => v == null ? '—'
   : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (c ? ' ' + c : '');
 const mt5Cls = v => v == null || Number(v) === 0 ? '' : Number(v) > 0 ? 'pos' : 'neg';
 
+/* Prices: use the instrument's own digit count when the agent supplies it, and
+   otherwise strip float noise - raw MT5 values arrive as 1.6069200000000001. */
+const mt5Px = (v, digits) => {
+  if (v == null || v === '' || Number(v) === 0) return '—';
+  const n = Number(v);
+  return Number.isFinite(digits) ? n.toFixed(digits) : String(parseFloat(n.toPrecision(12)));
+};
+const mt5Lots = v => (v == null ? '—' : Number(v).toFixed(2));
+// MT5 stamps EA orders with a magic number; anything placed by hand carries 0.
+const mt5Magic = v => (!Number(v) ? '<span class="badge">manual</span>' : esc(String(v)));
+
 document.getElementById('mt5conf').onclick = () => {
   const url = prompt('Agent URL (from cloudflared on the VPS):', MT5?.url || 'https://xxx.trycloudflare.com');
   if (url === null) return;
@@ -1016,6 +1036,13 @@ async function loadMt5() {
   renderMt5(d);
 }
 
+/* Writing innerHTML on every frame flickered and lost text selection, so each
+   block is only touched when its markup actually differs. */
+function setHtml(id, html) {
+  const el = document.getElementById(id);
+  if (el && el.innerHTML !== html) el.innerHTML = html;
+}
+
 function renderMt5(d) {
   const stats = document.getElementById('mt5stats');
   const grid = document.getElementById('mt5grid');
@@ -1036,7 +1063,7 @@ function renderMt5(d) {
   ].map(([k, v, c]) => `<dl class="mt5cell"><dt>${k}</dt><dd class="${c}">${esc(v)}</dd></dl>`).join('');
 
   grid.hidden = false;
-  grid.innerHTML = cells;
+  setHtml('mt5grid', cells);
   mt5LastActivity = mt5LastData = Date.now();
   renderMt5Freshness();
   // connected and reading fine: the button is only clutter now
@@ -1044,40 +1071,41 @@ function renderMt5(d) {
 
   const pos = d.positions || [];
   document.getElementById('mt5poscount').textContent = pos.length ? `(${pos.length})` : '';
-  document.getElementById('mt5positions').innerHTML = pos.length ? `<table class="mt5">
+  setHtml('mt5positions', pos.length ? `<table class="mt5">
     <thead><tr><th>Symbol</th><th>Side</th><th class="n">Lots</th><th class="n">Entry</th><th class="n">Now</th>
       <th class="n">SL</th><th class="n">TP</th><th class="n">P&amp;L</th><th class="n">Magic</th><th>Comment</th></tr></thead>
     <tbody>${pos.map(p => `<tr>
       <td>${esc(p.symbol)}</td>
       <td><span class="badge ${p.type === 'buy' ? 'badge--pass' : 'badge--loss'}">${esc(p.type)}</span></td>
-      <td class="n">${esc(p.volume)}</td><td class="n">${esc(p.price_open)}</td><td class="n">${esc(p.price_current)}</td>
-      <td class="n">${p.sl ? esc(p.sl) : '—'}</td><td class="n">${p.tp ? esc(p.tp) : '—'}</td>
+      <td class="n">${mt5Lots(p.volume)}</td>
+      <td class="n">${mt5Px(p.price_open, p.digits)}</td><td class="n">${mt5Px(p.price_current, p.digits)}</td>
+      <td class="n">${mt5Px(p.sl, p.digits)}</td><td class="n">${mt5Px(p.tp, p.digits)}</td>
       <td class="n ${mt5Cls(p.profit)}">${mt5Money(p.profit, '')}</td>
-      <td class="n">${esc(p.magic)}</td><td>${esc(p.comment || '')}</td></tr>`).join('')}</tbody></table>`
-    : '<div class="empty">No open positions.</div>';
+      <td class="n">${mt5Magic(p.magic)}</td><td>${esc(p.comment || '')}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">No open positions.</div>');
 
   const eas = d.by_ea || [];
   document.getElementById('mt5eacount').textContent = eas.length ? `(${eas.length})` : '';
-  document.getElementById('mt5byea').innerHTML = eas.length ? `<table class="mt5">
+  setHtml('mt5byea', eas.length ? `<table class="mt5">
     <thead><tr><th class="n">Magic</th><th>Symbols</th><th class="n">Positions</th><th class="n">Lots</th>
       <th class="n">P&amp;L</th><th>Comment</th></tr></thead>
-    <tbody>${eas.map(e => `<tr><td class="n">${esc(e.magic)}</td><td>${esc((e.symbols || []).join(', '))}</td>
+    <tbody>${eas.map(e => `<tr><td class="n">${mt5Magic(e.magic)}</td><td>${esc((e.symbols || []).join(', '))}</td>
       <td class="n">${esc(e.positions)}</td><td class="n">${esc(e.volume)}</td>
       <td class="n ${mt5Cls(e.profit)}">${mt5Money(e.profit, '')}</td>
       <td>${esc((e.comments || []).join(', '))}</td></tr>`).join('')}</tbody></table>`
-    : '<div class="empty">EAs appear here once they hold a position.</div>';
+    : '<div class="empty">EAs appear here once they hold a position.</div>');
 
   const ords = d.orders || [];
   document.getElementById('mt5ordcount').textContent = ords.length ? `(${ords.length})` : '';
-  document.getElementById('mt5orders').innerHTML = ords.length ? `<table class="mt5">
+  setHtml('mt5orders', ords.length ? `<table class="mt5">
     <thead><tr><th>Symbol</th><th>Type</th><th class="n">Lots</th><th class="n">Price</th><th class="n">SL</th>
       <th class="n">TP</th><th class="n">Magic</th><th>Comment</th><th>Placed</th></tr></thead>
-    <tbody>${ords.map(o => `<tr><td>${esc(o.symbol)}</td><td>${esc(o.type)}</td><td class="n">${esc(o.volume)}</td>
-      <td class="n">${esc(o.price_open)}</td><td class="n">${o.sl ? esc(o.sl) : '—'}</td>
-      <td class="n">${o.tp ? esc(o.tp) : '—'}</td><td class="n">${esc(o.magic)}</td>
+    <tbody>${ords.map(o => `<tr><td>${esc(o.symbol)}</td><td>${esc(o.type)}</td><td class="n">${mt5Lots(o.volume)}</td>
+      <td class="n">${mt5Px(o.price_open, o.digits)}</td><td class="n">${mt5Px(o.sl, o.digits)}</td>
+      <td class="n">${mt5Px(o.tp, o.digits)}</td><td class="n">${mt5Magic(o.magic)}</td>
       <td>${esc(o.comment || '')}</td>
       <td>${esc((o.placed_at || '').slice(0, 16).replace('T', ' '))}</td></tr>`).join('')}</tbody></table>`
-    : '<div class="empty">No pending orders.</div>';
+    : '<div class="empty">No pending orders.</div>');
 }
 
 /* ── tabs ──────────────────────────────────────────────────────────────── */

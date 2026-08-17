@@ -93,6 +93,25 @@ def _iso(ts) -> str | None:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
 
 
+_digits_cache: dict[str, int] = {}
+
+
+def _digits(mt5, symbol: str) -> int:
+    """Price precision for a symbol, cached. Raw floats arrive as 1.6069200000000001,
+    so values are rounded to the instrument's own digits before leaving the agent."""
+    if symbol not in _digits_cache:
+        try:
+            info = mt5.symbol_info(symbol)
+            _digits_cache[symbol] = int(getattr(info, "digits", 5)) if info else 5
+        except Exception:  # noqa: BLE001 - unknown symbol must not break the read
+            _digits_cache[symbol] = 5
+    return _digits_cache[symbol]
+
+
+def _px(value, digits: int):
+    return None if value is None else round(float(value), digits)
+
+
 POSITION_TYPE = {0: "buy", 1: "sell"}
 ORDER_TYPE = {0: "buy", 1: "sell", 2: "buy limit", 3: "sell limit", 4: "buy stop", 5: "sell stop"}
 
@@ -135,17 +154,19 @@ def _read_state_locked(now: float) -> dict:
     pos = []
     for p in positions:
         d = _as_dict(p)
+        dg = _digits(mt5, d.get("symbol", ""))
         pos.append({
             "ticket": d.get("ticket"),
             "symbol": d.get("symbol"),
+            "digits": dg,
             "type": POSITION_TYPE.get(d.get("type"), str(d.get("type"))),
-            "volume": d.get("volume"),
-            "price_open": d.get("price_open"),
-            "price_current": d.get("price_current"),
-            "sl": d.get("sl"),
-            "tp": d.get("tp"),
-            "profit": d.get("profit"),
-            "swap": d.get("swap"),
+            "volume": round(float(d.get("volume") or 0), 2),
+            "price_open": _px(d.get("price_open"), dg),
+            "price_current": _px(d.get("price_current"), dg),
+            "sl": _px(d.get("sl"), dg),
+            "tp": _px(d.get("tp"), dg),
+            "profit": _px(d.get("profit"), 2),
+            "swap": _px(d.get("swap"), 2),
             "magic": d.get("magic"),
             "comment": d.get("comment"),
             "opened_at": _iso(d.get("time")),
@@ -154,14 +175,16 @@ def _read_state_locked(now: float) -> dict:
     pend = []
     for o in orders:
         d = _as_dict(o)
+        dg = _digits(mt5, d.get("symbol", ""))
         pend.append({
             "ticket": d.get("ticket"),
             "symbol": d.get("symbol"),
+            "digits": dg,
             "type": ORDER_TYPE.get(d.get("type"), str(d.get("type"))),
-            "volume": d.get("volume_current"),
-            "price_open": d.get("price_open"),
-            "sl": d.get("sl"),
-            "tp": d.get("tp"),
+            "volume": round(float(d.get("volume_current") or 0), 2),
+            "price_open": _px(d.get("price_open"), dg),
+            "sl": _px(d.get("sl"), dg),
+            "tp": _px(d.get("tp"), dg),
             "magic": d.get("magic"),
             "comment": d.get("comment"),
             "placed_at": _iso(d.get("time_setup")),
