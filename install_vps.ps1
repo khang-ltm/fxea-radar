@@ -61,11 +61,14 @@ Set-Location $InstallDir
 
 # --- python: install if absent ----------------------------------------------
 function Resolve-Python {
-    foreach ($c in @('py -3.12 -V', 'python -V')) {
-        $exe, $rest = $c -split ' ', 2
+    # MetaTrader5 ships wheels for 3.8-3.12 only; a 3.13+ interpreter installs the
+    # venv fine and then fails on the package, so prefer an explicit 3.12/3.11/3.10.
+    foreach ($c in @('py -3.12 -V', 'py -3.11 -V', 'py -3.10 -V', 'python -V')) {
+        $exe = ($c -split ' ')[0]
         if (Get-Command $exe -ErrorAction SilentlyContinue) {
             $out = & cmd /c "$c 2>&1"
-            if ($out -match 'Python 3\.(1[0-9]|[89])') { return $c -replace ' -V', '' }
+            if ($out -match 'Python 3\.(8|9|10|11|12)\b') { return ($c -replace ' -V', '') }
+            Say "skipping '$exe' -> $out (needs Python 3.8-3.12 for MetaTrader5)" 'Yellow'
         }
     }
     return $null
@@ -93,7 +96,21 @@ if (-not (Test-Path $py)) {
 }
 Say 'installing MetaTrader5 package'
 & $py -m pip install --quiet --upgrade pip
-& $py -m pip install --quiet MetaTrader5
+& $py -m pip install MetaTrader5 2>&1 | Where-Object { $_ -match 'ERROR|error:|Successfully|Requirement already' } |
+    ForEach-Object { Say $_ }
+
+# Verify rather than assume: a failed wheel build used to leave the agent running
+# with no package, reporting "MetaTrader5 package not installed" over the tunnel.
+$check = & $py -c "import MetaTrader5, sys; print(MetaTrader5.__version__)" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Say "MetaTrader5 did NOT install into the venv:" 'Red'
+    Say "  $check" 'Red'
+    $ver = & $py -V
+    Say "  venv is $ver - MetaTrader5 needs 3.8-3.12 (64-bit)" 'Red'
+    Say "  fix: install Python 3.12, delete $InstallDir\.venv, re-run this script" 'Yellow'
+    exit 1
+}
+Say "MetaTrader5 $check ready" 'Green'
 
 # --- token -------------------------------------------------------------------
 $envFile = Join-Path $InstallDir '.env.mt5'
