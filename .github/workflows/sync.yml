@@ -5,6 +5,14 @@ on:
   schedule:
     - cron: "0 1,13 * * *"     # 08:00 and 20:00 Vietnam time (UTC+7)
   workflow_dispatch:            # manual run button in the Actions tab
+  push:                         # code change -> rebuild and republish right away
+    branches: [main]
+    paths:
+      - "app/**"
+      - "public/**"
+      - "requirements.txt"
+      - ".github/workflows/sync.yml"
+      # not last-sync.txt: the heartbeat commit must not trigger another run
 
 permissions:
   contents: write               # commit the refreshed store back
@@ -75,6 +83,22 @@ jobs:
             data/shots.json.gz
             data/state.json.gz
           key: fxea-store-${{ github.run_id }}
+
+      # GitHub disables scheduled workflows after 60 days of repository inactivity.
+      # The store lives in the cache now, so runs commit nothing on their own -
+      # this pushes a dated marker only when the last commit is over 25 days old.
+      - name: Keep the schedule alive
+        run: |
+          age_days=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "last commit ${age_days}d ago"
+          if [ "$age_days" -ge 25 ]; then
+            date -u +%Y-%m-%dT%H:%MZ > .github/last-sync.txt
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/last-sync.txt
+            git commit -m "chore: heartbeat so the cron stays enabled"
+            git push
+          fi
 
       # Always downloadable from the run page, whatever hosting is set up.
       - name: Upload site artifact
