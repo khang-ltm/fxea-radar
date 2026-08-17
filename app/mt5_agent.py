@@ -20,16 +20,20 @@ be exposed by accident.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 from . import config
 
-POLL_CACHE_SECONDS = 2          # collapse rapid refreshes into one IPC read
+POLL_CACHE_SECONDS = 1          # collapse rapid refreshes into one IPC read
+STREAM_TICK_SECONDS = 1         # how often the stream re-reads the terminal
+STREAM_HEARTBEAT_SECONDS = 20   # keeps proxies from dropping an idle connection
+STREAM_MAX_SECONDS = 3600       # close after an hour; the browser reconnects
 _cache: dict = {"at": 0.0, "data": None}
 _mt5 = None
 _init_error: str | None = None
@@ -237,8 +241,60 @@ class Handler(BaseHTTPRequestHandler):
         sent = (self.headers.get("Authorization") or "").strip()
         return sent == f"Bearer {self.token}"
 
+    def _stream(self):
+        """Server-Sent Events: push a snapshot only when something changed.
+
+        Cheaper than polling and closer to real time - one connection instead of a
+        request every few seconds, and silence while nothing moves.
+        """
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")     # ask proxies not to buffer
+        self._cors()
+        self.end_headers()
+
+        started = time.time()
+        last_sig = None
+        last_sent = 0.0
+        try:
+            while time.time() - started < STREAM_MAX_SECONDS:
+                state = read_state()
+                # signature over the fields worth waking the UI for
+                sig = hashlib.sha1(json.dumps({
+                    "a": state.get("account"),
+                    "p": state.get("positions"),
+                    "o": state.get("orders"),
+                    "t": state.get("terminal"),
+                    "e": state.get("error"),
+                }, sort_keys=True, default=str).encode()).hexdigest()
+
+                now = time.time()
+                if sig != last_sig:
+                    payload = json.dumps(state, ensure_ascii=False, default=str)
+                    self.wfile.write(f"event: state\ndata: {payload}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                    last_sig, last_sent = sig, now
+                elif now - last_sent >= STREAM_HEARTBEAT_SECONDS:
+                    self.wfile.write(b": ping\n\n")     # comment frame, ignored by clients
+                    self.wfile.flush()
+                    last_sent = now
+                time.sleep(STREAM_TICK_SECONDS)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass                                        # client closed the tab; normal
+
     def do_GET(self):  # noqa: N802
         path = urlparse(self.path).path
+        if path == "/api/stream":
+            # EventSource cannot set headers, so a token in the query is accepted
+            # here as well as the Authorization header.
+            qs = parse_qs(urlparse(self.path).query)
+            if self.token and not (self._authorized() or qs.get("token", [""])[0] == self.token):
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            self._stream()
+            return
         if path in ("/api/mt5", "/api/state"):
             if not self._authorized():
                 self._json({"ok": False, "error": "unauthorized"}, 401)
@@ -295,7 +351,9 @@ def main() -> None:
         print("  (the agent keeps serving and will attach as soon as the terminal is up)")
 
     try:
-        HTTPServer((host, args.port), Handler).serve_forever()
+        # Threading matters: one SSE connection would otherwise block every other
+        # request on a single-threaded server.
+        ThreadingHTTPServer((host, args.port), Handler).serve_forever()
     except KeyboardInterrupt:
         print("\nstopping agent (the terminal is untouched)")
     finally:

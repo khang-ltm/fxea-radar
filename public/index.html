@@ -947,6 +947,7 @@ async function loadMt5() {
   if (TAB !== 'mt5') return;
   if (document.visibilityState === 'hidden') return;
   if (mt5Backoff.until > Date.now()) return;
+  if (mt5Stream) return;              // a live stream already delivers updates
 
   const stats = document.getElementById('mt5stats');
   const grid = document.getElementById('mt5grid');
@@ -972,6 +973,13 @@ async function loadMt5() {
   }
   if (!d.ok) { stats.textContent = 'agent: ' + (d.error || 'unknown error'); grid.hidden = true; mt5Fail(); return; }
   mt5Ok();
+  renderMt5(d);
+}
+
+function renderMt5(d) {
+  const stats = document.getElementById('mt5stats');
+  const grid = document.getElementById('mt5grid');
+  if (!d.ok) { stats.textContent = 'agent: ' + (d.error || 'unknown error'); grid.hidden = true; return; }
 
   const a = d.account, t = d.terminal, cur = a.currency || '';
   stats.innerHTML = `<b>${esc(String(a.login))}</b> @ ${esc(a.server)} · ${a.is_demo ? 'demo' : 'live'}`
@@ -1059,13 +1067,76 @@ document.getElementById('tab-eas').onclick = () => showTab('eas');
 document.getElementById('tab-mt5').onclick = () => showTab('mt5');
 showTab(TAB);
 
-// Poll on a timer, but refresh immediately when you come back to the page -
-// so it feels live without paying for polls nobody is watching.
+/* ── real-time stream ──────────────────────────────────────────────────────
+   One SSE connection instead of a request every 10s: the agent pushes a snapshot
+   only when the account actually changes, so updates arrive in about a second and
+   idle costs a heartbeat every 20s. Falls back to polling if streaming fails. */
+let mt5Stream = null;
+
+function stopMt5Stream() {
+  if (mt5Stream) { mt5Stream.abort(); mt5Stream = null; }
+}
+
+async function startMt5Stream() {
+  stopMt5Stream();
+  if (TAB !== 'mt5' || !MT5?.url || !MT5?.token) return false;
+
+  const ctl = new AbortController();
+  mt5Stream = ctl;
+  try {
+    const r = await fetch(MT5.url + '/api/stream', {
+      headers: { Authorization: 'Bearer ' + MT5.token },
+      signal: ctl.signal,
+    });
+    if (!r.ok || !r.body) throw new Error('stream unavailable (' + r.status + ')');
+
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    mt5Ok();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      // frames are separated by a blank line
+      let i;
+      while ((i = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const line = frame.split('\n').find(l => l.startsWith('data: '));
+        if (!line) continue;                       // ": ping" heartbeat
+        try { renderMt5(JSON.parse(line.slice(6))); } catch { /* partial frame */ }
+      }
+    }
+    return true;
+  } catch (e) {
+    if (ctl.signal.aborted) return true;           // we closed it on purpose
+    console.warn('MT5 stream failed, falling back to polling:', e.message);
+    return false;
+  } finally {
+    if (mt5Stream === ctl) mt5Stream = null;
+  }
+}
+
+// Keep the connection only while the tab is open and the page visible.
+async function syncMt5Transport() {
+  if (TAB !== 'mt5' || document.visibilityState === 'hidden') {
+    stopMt5Stream();
+    return;
+  }
+  loadMt5();                                        // paint immediately
+  const streamed = await startMt5Stream();          // resolves when the stream ends
+  if (!streamed) return;                            // polling timer covers it
+  if (TAB === 'mt5' && document.visibilityState === 'visible') syncMt5Transport();  // reconnect
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') { mt5Ok(); loadMt5(); }
+  if (document.visibilityState === 'visible') { mt5Ok(); syncMt5Transport(); }
+  else stopMt5Stream();
 });
-loadMt5();
-setInterval(loadMt5, 10000);     // skipped when hidden, wrong tab, or backing off
+
+syncMt5Transport();
+setInterval(loadMt5, 10000);     // fallback only: skipped while a stream is live
 
 load();
 // The catalog is rebuilt twice a day, so re-fetching every 2 min was pointless
