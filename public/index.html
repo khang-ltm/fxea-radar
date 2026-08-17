@@ -919,18 +919,26 @@ const mt5Ok = () => { mt5Backoff.fails = 0; mt5Backoff.until = 0; };
 /* "updated just now" was noise once streaming landed - it always said that. What
    still matters is whether data is flowing, so this shows a live dot instead and
    only turns wordy when frames stop arriving. */
-let mt5LastFrame = 0;
+/* Two different clocks, and conflating them was a bug:
+   - mt5LastActivity: any byte from the agent, INCLUDING the 20s heartbeat. This is
+     what "live" means. A silent stream is healthy - it only speaks when something
+     changes - so counting data frames alone showed "no data for 53s" while fine.
+   - mt5LastData: last actual snapshot, used to age the numbers on screen. */
+let mt5LastActivity = 0;
+let mt5LastData = 0;
+
 function renderMt5Freshness() {
   const el = document.getElementById('mt5age');
-  if (!mt5LastFrame) { el.textContent = ''; return; }
-  const secs = (Date.now() - mt5LastFrame) / 1000;
-  const live = mt5Stream && secs < 45;              // heartbeat is every 20s
-  if (live) {
-    el.innerHTML = '<span class="led"></span>live';
-  } else if (secs < 45) {
-    el.innerHTML = '<span class="led"></span>polling';
+  if (!mt5LastActivity) { el.textContent = ''; return; }
+  const quiet = (Date.now() - mt5LastActivity) / 1000;
+  const dataAge = (Date.now() - mt5LastData) / 1000;
+  const fmt = s => (s < 120 ? Math.round(s) + 's' : Math.round(s / 60) + 'm');
+
+  if (quiet < 45) {
+    el.innerHTML = `<span class="led"></span>${mt5Stream ? 'live' : 'polling'}`
+      + (dataAge > 90 ? ` · unchanged ${fmt(dataAge)}` : '');
   } else {
-    el.innerHTML = `<span class="led led--old"></span>no data for ${secs < 120 ? Math.round(secs) + 's' : Math.round(secs / 60) + 'm'}`;
+    el.innerHTML = `<span class="led led--old"></span>agent quiet ${fmt(quiet)}`;
   }
 }
 
@@ -968,7 +976,9 @@ async function loadMt5() {
   if (TAB !== 'mt5') return;
   if (document.visibilityState === 'hidden') return;
   if (mt5Backoff.until > Date.now()) return;
-  if (mt5Stream) return;              // a live stream already delivers updates
+  // While streaming, still take a snapshot occasionally: an open-but-silent stream
+  // must never be able to hide a change (a new order appearing, for instance).
+  if (mt5Stream && Date.now() - mt5LastData < 30000) return;
 
   const stats = document.getElementById('mt5stats');
   const grid = document.getElementById('mt5grid');
@@ -1018,7 +1028,7 @@ function renderMt5(d) {
 
   grid.hidden = false;
   grid.innerHTML = cells;
-  mt5LastFrame = Date.now();
+  mt5LastActivity = mt5LastData = Date.now();
   renderMt5Freshness();
   // connected and reading fine: the button is only clutter now
   document.getElementById('mt5conf').hidden = true;
@@ -1120,6 +1130,8 @@ async function startMt5Stream() {
       const { value, done } = await reader.read();
       if (done) break;
       buf += dec.decode(value, { stream: true });
+      mt5LastActivity = Date.now();                // heartbeats count as alive
+      renderMt5Freshness();
       // frames are separated by a blank line
       let i;
       while ((i = buf.indexOf('\n\n')) !== -1) {
