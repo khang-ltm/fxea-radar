@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FX EA Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ── design tokens (Dark Mode OLED, dense dashboard) ───────────────────── */
+:root {
+  --color-background: #020617;
+  --color-surface:    #0E1223;
+  --color-surface-2:  #151B2E;
+  --color-muted:      #1A1E2F;
+  --color-foreground: #F8FAFC;
+  --color-muted-fg:   #94A3B8;
+  --color-border:     #334155;
+  --color-border-soft:#232C3D;
+  --color-accent:     #22C55E;
+  --color-on-accent:  #0F172A;
+  --color-info:       #60A5FA;
+  --color-warn:       #FBBF24;
+  --color-destructive:#EF4444;
+  --color-ring:       #FFFFFF;
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px;
+  --radius-sm: 4px; --radius: 8px; --radius-lg: 12px; --radius-full: 999px;
+  --font-head: 'Fira Code', ui-monospace, Consolas, monospace;
+  --font-body: 'Fira Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --shadow-1: 0 1px 2px rgba(0,0,0,.5);
+  --shadow-2: 0 4px 16px rgba(0,0,0,.45);
+  --dur: 200ms; --ease: cubic-bezier(.2,.6,.3,1);
+  --z-sticky: 40; --z-modal: 100;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur: 1ms; }
+  *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--color-background); color: var(--color-foreground);
+  font: 400 16px/1.55 var(--font-body); overflow-wrap: anywhere; }
+h1, h2, h3 { font-family: var(--font-head); font-weight: 600; letter-spacing: -.01em; }
+a { color: var(--color-info); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+.num { font-family: var(--font-head); font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+svg { flex: none; }
+
+/* ── app bar ───────────────────────────────────────────────────────────── */
+.appbar { position: sticky; top: 0; z-index: var(--z-sticky);
+  background: color-mix(in srgb, var(--color-background) 92%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--color-border-soft); }
+.appbar__row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4); max-width: 1600px; margin: 0 auto; }
+.brand { display: flex; align-items: center; gap: var(--space-2); font-family: var(--font-head);
+  font-weight: 700; font-size: 15px; letter-spacing: .02em; white-space: nowrap; }
+.brand svg { color: var(--color-accent); }
+
+.search { position: relative; flex: 1 1 260px; min-width: 180px; display: flex; align-items: center; }
+.search svg { position: absolute; left: 10px; color: var(--color-muted-fg); pointer-events: none; }
+input[type="search"] { width: 100%; padding: 8px 10px 8px 34px; background: var(--color-surface);
+  color: var(--color-foreground); border: 1px solid var(--color-border);
+  border-radius: var(--radius); font: 400 14px/1.4 var(--font-body); }
+input[type="search"]::placeholder { color: var(--color-muted-fg); }
+select { padding: 8px 10px; background: var(--color-surface); color: var(--color-foreground);
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  font: 400 13px/1.3 var(--font-body); cursor: pointer; }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 7px 12px;
+  cursor: pointer; background: var(--color-surface); color: var(--color-foreground);
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  font: 500 13px/1.2 var(--font-body);
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.btn:hover { background: var(--color-surface-2); border-color: var(--color-muted-fg); }
+.btn[aria-pressed="true"] { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
+.btn--primary { background: var(--color-accent); color: var(--color-on-accent);
+  border-color: var(--color-accent); font-weight: 600; }
+.btn--primary:hover { background: color-mix(in srgb, var(--color-accent) 85%, #fff); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.segmented { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius); overflow: hidden; }
+.segmented .btn { border: 0; border-radius: 0; min-height: 34px; }
+.segmented .btn + .btn { border-left: 1px solid var(--color-border); }
+
+.toolbar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  padding: 0 var(--space-4) var(--space-3); max-width: 1600px; margin: 0 auto; }
+.toolbar__spacer { flex: 1 1 auto; }
+.fgroup { display: inline-flex; align-items: center; border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-full); overflow: hidden; }
+.fgroup .chip { border: 0; border-radius: 0; }
+.fgroup .chip + .chip { border-left: 1px solid var(--color-border-soft); }
+.fdiv { width: 1px; height: 22px; background: var(--color-border-soft); }
+
+.chip { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; min-height: 30px;
+  padding: 4px 11px; background: var(--color-surface); color: var(--color-muted-fg);
+  border: 1px solid var(--color-border-soft); border-radius: var(--radius-full);
+  font: 500 12.5px/1.2 var(--font-body);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.chip:hover { color: var(--color-foreground); border-color: var(--color-muted-fg); }
+.chip[aria-pressed="true"] { background: color-mix(in srgb, var(--color-info) 18%, var(--color-surface));
+  border-color: var(--color-info); color: var(--color-foreground); }
+
+.popover { position: relative; }
+.popover > summary { list-style: none; cursor: pointer; }
+.popover > summary::-webkit-details-marker { display: none; }
+.popover > summary::after { content: ''; width: 0; height: 0; margin-left: 2px;
+  border: 4px solid transparent; border-top-color: currentColor; translate: 0 2px; }
+.popover[open] > summary { border-color: var(--color-info); color: var(--color-foreground); }
+.popover__panel { position: absolute; z-index: var(--z-modal); top: calc(100% + 6px); left: 0;
+  width: 260px; max-height: 320px; overflow: auto; padding: var(--space-2); display: grid; gap: 2px;
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius); box-shadow: var(--shadow-2); }
+.tagopt { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; padding: 5px 8px;
+  border-radius: var(--radius-sm); font-size: 13px; color: var(--color-muted-fg); }
+.tagopt:hover { background: var(--color-surface-2); color: var(--color-foreground); }
+.tagopt input { accent-color: var(--color-accent); width: 15px; height: 15px; cursor: pointer; }
+.tagopt[data-on="true"] { color: var(--color-foreground); }
+.tagopt .n { margin-left: auto; font-family: var(--font-head); font-size: 11px; opacity: .7; }
+
+.syncbox { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
+  border: 1px solid var(--color-border-soft); border-radius: var(--radius-full);
+  font-size: 12px; color: var(--color-muted-fg); white-space: nowrap; }
+.syncbox .led { width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent); flex: none; }
+.syncbox .led--run { background: var(--color-warn); animation: pulse 1.4s ease-in-out infinite; }
+.syncbox .led--err { background: var(--color-destructive); }
+.syncbox .led--old { background: var(--color-muted-fg); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+.status { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  font-size: 12.5px; color: var(--color-muted-fg); }
+.status b { color: var(--color-foreground); font-family: var(--font-head); font-variant-numeric: tabular-nums; }
+.status .warn { color: var(--color-warn); }
+
+/* ── grid + cards ──────────────────────────────────────────────────────── */
+main { max-width: 1600px; margin: 0 auto; padding: var(--space-4); }
+.grid { columns: 340px; column-gap: var(--space-3); }   /* masonry: equal rows leave gaps */
+.grid > * { break-inside: avoid; margin-bottom: var(--space-3); }
+.grid--list { columns: auto; }
+
+.card { display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4); background: var(--color-surface);
+  border: 1px solid var(--color-border-soft); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); }
+.card__head { display: flex; align-items: flex-start; gap: var(--space-2); }
+.card__title { flex: 1; margin: 0; font-size: 14px; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card__meta { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 0;
+  font-size: 11.5px; color: var(--color-muted-fg); }
+.card__meta .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--color-border); }
+.actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.spec-inline { display: flex; gap: var(--space-3); flex-wrap: wrap; font-size: 12px; color: var(--color-muted-fg); }
+.spec-inline b { color: var(--color-foreground); font-family: var(--font-head);
+  font-variant-numeric: tabular-nums; font-weight: 500; }
+
+.badges { display: flex; gap: 5px; flex-wrap: wrap; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
+  border-radius: var(--radius-full); border: 1px solid var(--color-border-soft);
+  background: var(--color-muted); font: 500 11.5px/1.5 var(--font-body);
+  color: var(--color-muted-fg); white-space: nowrap; }
+.badge--ver  { border-color: var(--color-accent); color: #86EFAC; font-family: var(--font-head); }
+.badge--pair { border-color: color-mix(in srgb, var(--color-info) 60%, transparent); color: #BFDBFE; font-family: var(--font-head); }
+.badge--tf   { border-color: color-mix(in srgb, var(--color-warn) 55%, transparent); color: #FDE68A; font-family: var(--font-head); }
+.badge--risk { border-color: var(--color-destructive); color: #FCA5A5; }
+.badge--pass { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 18%, var(--color-muted)); color: #86EFAC; }
+.badge--loss { border-color: var(--color-destructive); background: color-mix(in srgb, var(--color-destructive) 16%, var(--color-muted)); color: #FCA5A5; }
+.badge--scam { border-color: var(--color-destructive); background: color-mix(in srgb, var(--color-destructive) 32%, var(--color-muted)); color: #FEE2E2; }
+.badge--none { border-color: var(--color-border); color: var(--color-muted-fg); }
+.badge--run  { border-color: var(--color-warn); color: #FDE68A; }
+
+.shot-none { color: var(--color-border); font-size: 12px; }
+.tlinks { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.tlink { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; min-height: 26px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  color: var(--color-info); font: 500 11.5px/1.2 var(--font-body); white-space: nowrap; }
+.tlink:hover { background: var(--color-surface-2); border-color: var(--color-info); text-decoration: none; }
+
+/* no blanket `details` border - the Tags popover is a <details> and would draw a
+   stray rule above the chip */
+summary { display: flex; align-items: center; gap: 6px; cursor: pointer;
+  font: 500 12.5px/1.3 var(--font-body); color: var(--color-muted-fg); list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary:hover { color: var(--color-foreground); }
+summary svg { transition: transform var(--dur) var(--ease); }
+details[open] > summary svg { transform: rotate(90deg); }
+.rules { margin: var(--space-2) 0 0; padding-left: 18px; font-size: 12.5px; color: #CBD5E1; }
+.rules li { margin-bottom: 3px; }
+pre.raw { margin: var(--space-2) 0 0; padding: var(--space-3); background: var(--color-background);
+  border: 1px solid var(--color-border-soft); border-radius: var(--radius); color: #CBD5E1;
+  font: 400 12px/1.55 var(--font-head); white-space: pre-wrap; max-height: 320px; overflow: auto; }
+
+.vlist { margin: var(--space-2) 0 0; display: grid; gap: var(--space-1); }
+.vrow { display: flex; align-items: center; gap: var(--space-2); padding: 5px 8px;
+  background: var(--color-muted); border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm); font-size: 12px; }
+.vrow__ver { font-family: var(--font-head); color: var(--color-foreground); min-width: 52px; }
+.vrow__date { font-family: var(--font-head); color: var(--color-muted-fg); }
+.vrow__sp { flex: 1 1 auto; }
+
+.file__dl { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; min-height: 26px;
+  border: 1px solid var(--color-accent); border-radius: var(--radius-sm); color: var(--color-accent);
+  font: 600 11.5px/1.2 var(--font-body); white-space: nowrap; }
+.file__dl:hover { background: color-mix(in srgb, var(--color-accent) 18%, transparent); text-decoration: none; }
+.file__pending { color: var(--color-muted-fg); font-size: 11.5px; white-space: nowrap; }
+.links { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+
+/* ── list view ─────────────────────────────────────────────────────────── */
+.row { display: grid; align-items: center; gap: var(--space-3);
+  grid-template-columns: minmax(0, 3fr) 78px 96px minmax(0, 1.4fr) 78px 70px 92px 132px;
+  padding: 8px var(--space-4); border-bottom: 1px solid var(--color-border-soft); }
+.row:hover { background: var(--color-surface); }
+.row--head { position: sticky; top: 0; background: var(--color-background);
+  border-bottom: 1px solid var(--color-border); font: 600 11px/1.4 var(--font-head);
+  letter-spacing: .06em; text-transform: uppercase; color: var(--color-muted-fg); }
+.row__name { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.row__name span.txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.row__num { font-family: var(--font-head); font-variant-numeric: tabular-nums;
+  font-size: 12.5px; color: var(--color-muted-fg); }
+.row__act { display: flex; justify-content: flex-end; gap: 6px; }
+@media (max-width: 1100px) { .row { grid-template-columns: minmax(0, 1fr) 96px 92px 132px; } .row__hide2 { display: none; } }
+@media (max-width: 720px)  { .row { grid-template-columns: minmax(0, 1fr) 132px; } .row__hide { display: none; } }
+
+/* ── detail sheet ──────────────────────────────────────────────────────── */
+.row__open { all: unset; cursor: pointer; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font: 400 13.5px/1.4 var(--font-body); color: var(--color-foreground); }
+.row__open:hover { color: var(--color-info); text-decoration: underline; }
+.row__open:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+
+dialog.sheet { width: min(94vw, 820px); max-height: 90vh; padding: 0; overflow: hidden;
+  border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  background: var(--color-surface); color: var(--color-foreground); box-shadow: var(--shadow-2); }
+/* only style the OPEN state as flex - a bare `display:flex` beats the UA's
+   `dialog:not([open]) { display: none }` and leaves the sheet stuck on screen */
+dialog.sheet[open] { display: flex; flex-direction: column; }
+dialog.sheet::backdrop { background: rgba(2,6,23,.8); backdrop-filter: blur(3px); }
+.sheet__bar { display: flex; align-items: center; gap: var(--space-3); flex: none;
+  padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border-soft); }
+.sheet__bar h2 { flex: 1; margin: 0; font-size: 15px; line-height: 1.3; }
+.sheet__body { padding: var(--space-4); overflow: auto; display: grid; gap: var(--space-4);
+  overscroll-behavior: contain; }   /* don't hand the scroll back to the page at the edges */
+/* freeze the page behind the sheet, keeping the scroll position */
+body.modal-open { overflow: hidden; }
+.sect { display: grid; gap: var(--space-2); }
+.sect > h3 { margin: 0; font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--color-muted-fg); }
+.sect ol, .sect ul { margin: 0; padding-left: 20px; font-size: 13px; color: #CBD5E1; }
+.sect ol li, .sect ul li { margin-bottom: 4px; }
+.kvgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-2); }
+.kvcell { padding: 7px 10px; background: var(--color-muted); border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius); }
+.kvcell dt { font-size: 11px; color: var(--color-muted-fg); }
+.kvcell dd { margin: 2px 0 0; font-family: var(--font-head); font-variant-numeric: tabular-nums; font-size: 13px; }
+.hint { font-size: 12px; color: var(--color-muted-fg); }
+
+.empty { padding: 64px var(--space-4); text-align: center; color: var(--color-muted-fg); }
+.empty h2 { margin: 0 0 var(--space-2); font-size: 16px; color: var(--color-foreground); }
+.empty code { padding: 2px 6px; background: var(--color-muted); border-radius: var(--radius-sm);
+  color: var(--color-foreground); font-family: var(--font-head); font-size: 12.5px; }
+.more { display: flex; justify-content: center; padding: var(--space-6) 0 var(--space-8); }
+
+footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--space-8);
+  color: var(--color-muted-fg); font-size: 12px; }
+@media (max-width: 640px) {
+  .appbar__row, .toolbar { padding-inline: var(--space-3); }
+  main { padding: var(--space-3); }
+  .card { padding: var(--space-3); }
+}
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <div class="appbar__row">
+    <span class="brand">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 17l6-6 4 4 8-8"/><path d="M21 7v6h-6"/>
+      </svg>
+      FX EA RADAR
+    </span>
+
+    <label class="search">
+      <span class="sr-only">Search expert advisors</span>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+      </svg>
+      <input id="q" type="search" placeholder="Search name, rules, filename, pair…" autocomplete="off">
+    </label>
+
+    <label class="sr-only" for="sort">Sort order</label>
+    <select id="sort">
+      <option value="new">Newest first</option>
+      <option value="old">Oldest first</option>
+      <option value="versions">Most versions</option>
+      <option value="name">Name A–Z</option>
+    </select>
+
+    <span class="syncbox" id="syncbox" role="status" aria-live="polite"></span>
+
+  </div>
+
+  <div class="toolbar">
+    <div class="fgroup" role="group" aria-label="Quick filters">
+      <button class="chip" id="f-pass" aria-pressed="false" title="#bestea - the channel's test made money">Passed test</button>
+      <button class="chip" id="f-noloss" aria-pressed="false" title="hide EAs their own test lost money on">Hide losers</button>
+      <button class="chip" id="f-img" aria-pressed="false">Has test</button>
+      <button class="chip" id="f-fx" aria-pressed="false" title="only EAs with a Myfxbook account link">Myfxbook</button>
+      <button class="chip" id="f-multi" aria-pressed="false">Multi-version</button>
+    </div>
+
+    <span class="fdiv" aria-hidden="true"></span>
+
+    <label class="sr-only" for="pair">Filter by pair</label>
+    <select id="pair"><option value="">All pairs</option></select>
+    <label class="sr-only" for="tf">Filter by timeframe</label>
+    <select id="tf"><option value="">All timeframes</option></select>
+
+    <details class="popover" id="tagpop">
+      <summary class="chip" id="tagsummary" aria-label="Filter by tag">Tags</summary>
+      <div class="popover__panel" id="tagpanel"></div>
+    </details>
+
+    <button class="chip" id="clear" hidden>Clear filters</button>
+    <span class="toolbar__spacer"></span>
+    <span class="status" id="status" role="status" aria-live="polite"></span>
+  </div>
+</header>
+
+<main>
+  <div class="grid grid--list" id="grid"></div>
+  <div class="more" id="more"></div>
+</main>
+<footer id="foot"></footer>
+
+<dialog class="sheet" id="detail" aria-labelledby="detail-title">
+  <div class="sheet__bar">
+    <h2 id="detail-title">EA</h2>
+    <button class="btn" id="detail-close" aria-label="Close details">Close</button>
+  </div>
+  <div class="sheet__body" id="detail-body"></div>
+</dialog>
+
+<script>
+'use strict';
+const PAGE = 60;                     // render in batches; hundreds of rows at once is not viable
+const urlParams = new URLSearchParams(location.search);
+
+let POSTS = [], SUMMARY = {}, STATE = {}, SYNC = {};
+let LOADED = { matched: 0, truncated: false, collapsed: 0 };
+let visible = PAGE;
+
+const filters = {
+  q: urlParams.get('q') || '',
+  pass: false, noloss: false, img: false, fx: false, multi: false,
+  pair: '', tf: '', tags: new Set(), sort: 'new',
+};
+
+const ICON = {
+  chevron: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
+  download: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 12l5 5 5-5"/><path d="M4 21h16"/></svg>',
+  link: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7L11 7"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 1 0 11 18.7L13 17"/></svg>',
+  chart: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
+};
+const RISKY = new Set(['cracked', 'martingale', 'grid']);
+/* plumbing tags: they drive filters but are noise as badges */
+const HIDDEN_TAGS = new Set(['has-archive', 'has-ea-file', 'has-set-file', 'template-ea', 'indicator', 'course']);
+const visibleTags = p => (p.tags || []).filter(t => !HIDDEN_TAGS.has(t));
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtSize = b => !b ? '' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+const when = ts => {
+  const days = (Date.now() / 1000 - ts) / 86400;
+  return days < 1 ? Math.round(days * 24) + 'h ago' : days < 30 ? Math.round(days) + 'd ago' : Math.round(days / 30) + 'mo ago';
+};
+
+/* ── data ──────────────────────────────────────────────────────────────── */
+const query = () => new URLSearchParams({ ea: '1', kind: 'ea', group: '1', limit: '3000' }).toString();
+
+async function load() {
+  const d = await (await fetch('/api/posts?' + query())).json();
+  POSTS = d.posts || [];
+  SUMMARY = d.summary || {};
+  STATE = d.state || {};
+  SYNC = d.sync || {};
+  LOADED = { matched: d.matched ?? POSTS.length, truncated: !!d.truncated, collapsed: d.collapsed || 0 };
+  fillSelect('pair', SUMMARY.pairs || []);
+  fillSelect('tf', SUMMARY.timeframes || []);
+  renderTagChips(SUMMARY.tags || []);
+  visible = PAGE;
+  render();
+}
+
+function fillSelect(id, values) {
+  const el = document.getElementById(id), keep = el.value;
+  el.length = 1;
+  for (const v of values) el.add(new Option(v, v));
+  el.value = values.includes(keep) ? keep : '';
+}
+
+/* ── filtering ─────────────────────────────────────────────────────────── */
+function matches(p) {
+  if (filters.pass && p.shot?.verdict !== 'pass') return false;
+  if (filters.noloss && ['loss', 'scam'].includes(p.shot?.verdict)) return false;
+  if (filters.img && !p.shot) return false;
+  if (filters.fx && !p.shot?.myfxbook) return false;
+  if (filters.multi && !((p.version_count || 1) > 1)) return false;
+  if (filters.pair && !(p.pairs || []).includes(filters.pair)) return false;
+  if (filters.tf && !(p.timeframes || []).includes(filters.tf)) return false;
+  for (const t of filters.tags) if (!(p.tags || []).includes(t)) return false;
+  if (filters.q) {
+    const hay = [p.name, p.text_clean || p.text, (p.rules || []).join(' '),
+      (p.files || []).map(f => f.name).join(' '), (p.versions || []).map(v => v.name).join(' '),
+      (p.pairs || []).join(' '), (p.timeframes || []).join(' '), (p.tags || []).join(' ')].join(' ').toLowerCase();
+    if (!filters.q.split(/\s+/).filter(Boolean).every(w => hay.includes(w))) return false;
+  }
+  return true;
+}
+
+const sorters = {
+  new:      (a, b) => b.date - a.date,
+  old:      (a, b) => a.date - b.date,
+  versions: (a, b) => ((b.version_count || 1) - (a.version_count || 1)) || (b.date - a.date),
+  name:     (a, b) => String(a.name).localeCompare(String(b.name)),
+};
+
+/* ── shared pieces ─────────────────────────────────────────────────────── */
+const fileOf = p => (p.files || [])[0];
+const extOf = f => (f?.name.match(/\.([a-z0-9]{2,4})$/i)?.[1] || 'file').toLowerCase();
+
+function downloadBtn(p) {
+  const f = fileOf(p);
+  if (!f) return '<span class="file__pending">no file</span>';
+  if (f.local_path) {
+    return `<a class="file__dl" href="/files/${encodeURI(f.local_path)}" download title="${esc(f.name)}">
+      ${ICON.download} .${extOf(f)} · ${fmtSize(f.size_bytes)}</a>`;
+  }
+  // static build (or not downloaded yet): send the user to the post itself
+  if (f.tg_url) {
+    return `<a class="file__dl" href="${esc(f.tg_url)}" target="_blank" rel="noopener" title="${esc(f.name)}">
+      ${ICON.link} .${extOf(f)} · ${fmtSize(f.size_bytes)}</a>`;
+  }
+  return `<span class="file__pending" title="${esc(f.name)}">.${extOf(f)} · ${fmtSize(f.size_bytes)} · pending</span>`;
+}
+
+/* Live-account links from the test post. Myfxbook first - it is the verifiable one. */
+function testLinks(p, compact) {
+  const s = p.shot;
+  if (!s) return '<span class="shot-none">—</span>';
+  const out = [];
+  if (s.myfxbook) out.push(`<a class="tlink" href="${esc(s.myfxbook)}" target="_blank" rel="noopener noreferrer"
+      title="Myfxbook account for ${esc(s.source_name || p.name)}">${ICON.chart} Myfxbook</a>`);
+  if (!compact && s.mystatea) out.push(`<a class="tlink" href="${esc(s.mystatea)}" target="_blank" rel="noopener noreferrer">${ICON.link} MyStatEA</a>`);
+  if (!compact && s.report) out.push(`<a class="tlink" href="${esc(s.report)}" target="_blank" rel="noopener noreferrer">${ICON.link} Report</a>`);
+  if (!out.length) {
+    return s.url
+      ? `<a class="tlink" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${ICON.link} test post</a>`
+      : '<span class="shot-none">—</span>';
+  }
+  return out.join(compact ? '' : ' ');
+}
+
+/* ROBOTEST verdict, stated as a hashtag on the test post */
+const VERDICT = {
+  pass:       { cls: 'badge--pass', label: 'passed',   title: '#bestea - the channel\'s own test made money' },
+  loss:       { cls: 'badge--loss', label: 'lost',     title: '#lossea - the test lost money' },
+  scam:       { cls: 'badge--scam', label: 'scam',     title: '#scamea - flagged as a scam' },
+  'no-trade': { cls: 'badge--none', label: 'no trades', title: '#notradeea - the EA never opened a trade' },
+};
+function verdictBadge(p) {
+  if (!p.shot) return '';
+  const v = VERDICT[p.shot.verdict];
+  if (v) return `<span class="badge ${v.cls}" title="${esc(v.title)}">${v.label}</span>`;
+  return `<span class="badge badge--run" title="test still running${p.shot.test_until ? ', until ' + esc(p.shot.test_until) : ''}">testing</span>`;
+}
+
+
+/* ── detail sheet + list row ────────────────────────────────────────────── */
+
+function detailHtml(p) {
+  const vs = p.versions || [];
+  const specs = [['Pairs', (p.pairs || []).join(', ')], ['Timeframe', (p.timeframes || []).join(', ')],
+    ['Min deposit', p.deposit], ['Leverage', p.leverage], ['Lot', p.lot], ['Risk', p.risk],
+    ['Account', p.account_type], ['Password', p.password],
+    ['Platform', (p.tags || []).filter(t => t === 'mt4' || t === 'mt5').join(' / ')],
+  ].filter(([, v]) => v && String(v).trim());
+
+  const ownSteps = p.install || [];
+  const s = p.shot;
+
+  return `
+    ${specs.length ? `<section class="sect"><h3>Specification</h3>
+      <div class="kvgrid">${specs.map(([k, v]) => `<dl class="kvcell"><dt>${k}</dt><dd>${esc(v)}</dd></dl>`).join('')}</div>
+    </section>` : ''}
+
+    <section class="sect"><h3>Download</h3>
+      <div class="tlinks">${(p.files || []).map(f => f.local_path
+        ? `<a class="file__dl" href="/files/${encodeURI(f.local_path)}" download>${ICON.download} ${esc(f.name)} · ${fmtSize(f.size_bytes)}</a>`
+        : f.tg_url
+          ? `<a class="file__dl" href="${esc(f.tg_url)}" target="_blank" rel="noopener">${ICON.link} ${esc(f.name)} · ${fmtSize(f.size_bytes)} · on Telegram</a>`
+          : `<span class="file__pending">${esc(f.name)} · ${fmtSize(f.size_bytes)} · not downloaded</span>`).join('')
+        || '<span class="hint">No attachment on this post.</span>'}</div>
+    </section>
+
+    ${ownSteps.length ? `<section class="sect"><h3>Setup notes from the post</h3>
+      <ul>${ownSteps.map(x => `<li>${esc(x)}</li>`).join('')}</ul></section>` : ''}
+
+    ${visibleTags(p).length ? `<section class="sect"><h3>Tags</h3>
+      <div class="badges">${visibleTags(p).map(t => `<span class="badge${RISKY.has(t) ? ' badge--risk' : ''}">${esc(t)}</span>`).join('')}</div>
+    </section>` : ''}
+
+    ${(p.rules || []).length ? `<section class="sect"><h3>Rules &amp; settings from the post</h3>
+      <ul>${p.rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></section>` : ''}
+
+    ${s ? `<section class="sect"><h3>Channel test</h3>
+      <p class="hint">${s.status === 'completed' ? 'Completed' : 'Still running'}${s.source_name ? ' · tested as ' + esc(s.source_name) : ''}${s.test_until ? ' · until ' + esc(s.test_until) : ''}${s.same_version === false ? ' · a different version than this download' : ''}</p>
+      <div class="tlinks">${testLinks(p, false)}</div>
+    </section>` : ''}
+
+    ${vs.length > 1 ? `<section class="sect"><h3>Versions (${vs.length})</h3>
+      <div class="vlist">${vs.map(v => {
+        const f = (v.files || [])[0];
+        return `<div class="vrow">
+          <span class="vrow__ver">${esc(v.version || '—')}</span>
+          <span class="vrow__date">${esc(v.date_iso)}</span>
+          <span class="vrow__sp"></span>
+          ${f?.local_path ? `<a class="file__dl" href="/files/${encodeURI(f.local_path)}" download>${ICON.download} ${fmtSize(f.size_bytes)}</a>` : '<span class="file__pending">no file</span>'}
+          ${v.url ? `<a href="${esc(v.url)}" target="_blank" rel="noopener">post</a>` : ''}
+        </div>`;
+      }).join('')}</div></section>` : ''}
+
+    ${(() => {
+      // Links already surfaced elsewhere (test post, report) are noise here. What is
+      // left is nearly always a URL the EA calls and needs allowed in MetaTrader.
+      const shown = (p.links || []).filter(l => !/t\.me|myfxbook|mystatea|pro-fx\.cc/i.test(l));
+      if (!shown.length) return '';
+      return `<section class="sect"><h3>URLs the EA calls</h3>
+        <p class="hint">Add these under Tools → Options → Expert Advisors → Allow WebRequest, or the EA
+        may refuse to trade. They also mean it phones home.</p>
+        <div class="links">${shown.map(l => `<a href="${esc(l)}" target="_blank" rel="noopener noreferrer">${ICON.link} ${esc(l)}</a>`).join('')}</div>
+      </section>`;
+    })()}
+
+    <section class="sect"><h3>Original message</h3>
+      <pre class="raw">${esc(p.text_clean || p.text || '(no text)')}</pre>
+      ${p.url ? `<p class="hint"><a href="${esc(p.url)}" target="_blank" rel="noopener">Open in Telegram</a> · posted ${esc(p.date_iso.slice(0, 10))}</p>` : ''}
+    </section>`;
+}
+
+const detailDlg = document.getElementById('detail');
+function openDetail(key) {
+  const p = POSTS.find(x => (x.family || x.dedupe_key || x.key) === key);
+  if (!p) return;
+  document.getElementById('detail-title').textContent = p.name + (p.version ? ' · ' + p.version : '');
+  document.getElementById('detail-body').innerHTML = detailHtml(p);
+  detailDlg.showModal();
+  document.getElementById('detail-body').scrollTop = 0;
+  document.body.classList.add('modal-open');
+}
+document.getElementById('detail-close').onclick = () => detailDlg.close();
+detailDlg.addEventListener('click', e => { if (e.target === detailDlg) detailDlg.close(); });
+// 'close' also fires on Esc, so the lock is released on every exit path
+detailDlg.addEventListener('close', () => document.body.classList.remove('modal-open'));
+
+function row(p) {
+  const n = p.version_count || 1;
+  const chips = (p.pairs || []).slice(0, 2).map(x => `<span class="badge badge--pair">${esc(x)}</span>`).join('')
+    + (p.timeframes || []).slice(0, 1).map(x => `<span class="badge badge--tf">${esc(x)}</span>`).join('');
+  return `<div class="row">
+    <div class="row__name">
+      <button class="row__open" data-key="${esc(p.family || p.dedupe_key || p.key)}"
+        title="${esc(p.name)} - click for full details">${esc(p.name)}</button>
+      ${p.version ? `<span class="badge badge--ver">${esc(p.version)}</span>` : ''}
+    </div>
+    <div class="row__hide2">${verdictBadge(p) || '<span class="shot-none">—</span>'}</div>
+    <div class="row__hide">${testLinks(p, true)}</div>
+    <div class="badges row__hide2">${chips}</div>
+    <div class="row__num row__hide2">${esc(p.deposit || '—')}</div>
+    <div class="row__num row__hide2">${n > 1 ? n + ' vers' : '—'}</div>
+    <div class="row__num row__hide">${esc(p.date_iso.slice(0, 10))}</div>
+    <div class="row__act">${downloadBtn(p)}</div>
+  </div>`;
+}
+
+function render() {
+  const list = POSTS.filter(matches).sort(sorters[filters.sort] || sorters.new);
+  const page = list.slice(0, visible);
+  const grid = document.getElementById('grid');
+
+  grid.innerHTML = !page.length ? emptyState()
+    : `<div class="row row--head">
+        <div>Name</div><div class="row__hide2">Test</div><div class="row__hide">Myfxbook</div>
+        <div class="row__hide2">Pairs / TF</div><div class="row__hide2">Deposit</div>
+        <div class="row__hide2">Versions</div><div class="row__hide">Posted</div>
+        <div style="text-align:right">File</div>
+      </div>` + page.map(row).join('');
+  wireCards();
+
+  const moreBox = document.getElementById('more');
+  moreBox.innerHTML = list.length > page.length
+    ? `<button class="btn" id="load-more">Show ${Math.min(PAGE, list.length - page.length)} more
+         <span class="num">(${page.length}/${list.length})</span></button>` : '';
+  const btn = document.getElementById('load-more');
+  if (btn) btn.onclick = () => { visible += PAGE; render(); };
+
+  const passed = POSTS.filter(p => p.shot?.verdict === 'pass').length;
+  const lost = POSTS.filter(p => ['loss', 'scam'].includes(p.shot?.verdict)).length;
+  const testing = POSTS.filter(p => p.shot && !p.shot.verdict).length;
+  document.getElementById('status').innerHTML =
+    `<b>${list.length}</b> EAs`
+    + (LOADED.collapsed ? ` · <b>${LOADED.collapsed}</b> grouped` : '')
+    + ` · <b>${passed}</b> passed · <b>${lost}</b> lost · <b>${testing}</b> testing`
+    + (LOADED.truncated ? ` · <span class="warn">newest 3000 loaded</span>` : '');
+  syncFilterUi();
+  renderSync();
+
+  const chans = (SUMMARY.channels || []).join(', ') || '—';
+  const last = STATE.last_sync ? new Date(STATE.last_sync).toLocaleString() : 'never';
+  const shots = SYNC.shots_result;
+  const shotsPart = SYNC.shots_at
+    ? ` · verdicts refreshed ${ago(SYNC.shots_at)}${shots?.total ? ` (${shots.total} tests)` : ''}`
+    : ' · verdicts not refreshed yet this run';
+  document.getElementById('foot').textContent =
+    `Channel: ${chans} · last sync ${last} · ${SUMMARY.total || 0} messages stored${shotsPart}`
+    + (SYNC.shots_error ? ` · verdict refresh error: ${SYNC.shots_error}` : '')
+    + ((STATE.errors || []).length ? ` · errors: ${STATE.errors.join(' | ')}` : '');
+}
+
+function emptyState() {
+  if (!SUMMARY.total) {
+    return `<div class="empty"><h2>Nothing collected yet</h2>
+      <p>Run <code>.\\run.ps1 login</code> then <code>.\\run.ps1 sync</code>, or press <b>Sync</b> above.</p></div>`;
+  }
+  return `<div class="empty"><h2>No match</h2>
+    <p>No EA matches these filters. Clear the search box or switch off a chip.</p></div>`;
+}
+
+function wireCards() {
+  document.querySelectorAll('.row__open').forEach(b => b.onclick = () => openDetail(b.dataset.key));
+}
+
+/* ── tag dropdown ──────────────────────────────────────────────────────── */
+function renderTagChips(tags) {
+  const useful = tags.filter(t => !HIDDEN_TAGS.has(t));
+  const counts = {};
+  for (const p of POSTS) for (const t of p.tags || []) counts[t] = (counts[t] || 0) + 1;
+  const present = useful.filter(t => counts[t]);
+
+  document.getElementById('tagpanel').innerHTML = present.length
+    ? present.map(t => `<label class="tagopt" data-on="${filters.tags.has(t)}">
+        <input type="checkbox" data-tag="${esc(t)}" ${filters.tags.has(t) ? 'checked' : ''}>
+        <span>${esc(t)}</span><span class="n">${counts[t]}</span></label>`).join('')
+    : '<p class="tagopt">No tags in this view</p>';
+
+  document.querySelectorAll('#tagpanel input[data-tag]').forEach(cb => cb.onchange = () => {
+    const t = cb.dataset.tag;
+    cb.checked ? filters.tags.add(t) : filters.tags.delete(t);
+    cb.closest('.tagopt').dataset.on = String(cb.checked);
+    visible = PAGE;
+    render();
+  });
+  syncFilterUi();
+}
+
+const activeFilterCount = () => filters.tags.size + (filters.pair ? 1 : 0) + (filters.tf ? 1 : 0)
+  + (filters.pass ? 1 : 0) + (filters.noloss ? 1 : 0) + (filters.img ? 1 : 0)
+  + (filters.fx ? 1 : 0) + (filters.multi ? 1 : 0) + (filters.q ? 1 : 0);
+
+function syncFilterUi() {
+  const n = filters.tags.size;
+  const sum = document.getElementById('tagsummary');
+  sum.textContent = n ? `Tags · ${n}` : 'Tags';
+  sum.setAttribute('aria-pressed', String(n > 0));
+  document.getElementById('clear').hidden = activeFilterCount() === 0;
+}
+
+function clearFilters() {
+  filters.tags.clear();
+  filters.pair = filters.tf = filters.q = '';
+  filters.pass = filters.noloss = filters.img = filters.fx = filters.multi = false;
+  document.getElementById('q').value = '';
+  document.getElementById('pair').value = '';
+  document.getElementById('tf').value = '';
+  for (const id of ['f-pass', 'f-noloss', 'f-img', 'f-fx', 'f-multi']) document.getElementById(id).setAttribute('aria-pressed', 'false');
+  document.querySelectorAll('#tagpanel input[data-tag]').forEach(cb => { cb.checked = false; cb.closest('.tagopt').dataset.on = 'false'; });
+  visible = PAGE;
+  render();
+}
+
+/* ── controls ──────────────────────────────────────────────────────────── */
+document.getElementById('q').oninput = e => { filters.q = e.target.value.trim().toLowerCase(); visible = PAGE; render(); };
+document.getElementById('sort').onchange = e => { filters.sort = e.target.value; render(); };
+document.getElementById('pair').onchange = e => { filters.pair = e.target.value; visible = PAGE; render(); };
+document.getElementById('tf').onchange = e => { filters.tf = e.target.value; visible = PAGE; render(); };
+
+for (const [id, key] of [['f-pass', 'pass'], ['f-noloss', 'noloss'], ['f-img', 'img'], ['f-fx', 'fx'], ['f-multi', 'multi']]) {
+  document.getElementById(id).onclick = e => {
+    filters[key] = !filters[key];
+    e.currentTarget.setAttribute('aria-pressed', String(filters[key]));
+    visible = PAGE;
+    render();
+  };
+}
+
+if (filters.q) document.getElementById('q').value = filters.q;
+
+document.getElementById('clear').onclick = clearFilters;
+
+document.addEventListener('click', e => {
+  const pop = document.getElementById('tagpop');
+  if (pop.open && !pop.contains(e.target)) pop.open = false;
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const pop = document.getElementById('tagpop');
+  if (pop.open) { pop.open = false; document.getElementById('tagsummary').focus(); }
+});
+
+/* ── sync status (auto-sync only; there is no manual trigger) ───────────── */
+function ago(iso) {
+  if (!iso) return null;
+  const mins = (Date.now() - new Date(iso).getTime()) / 60000;
+  if (mins < 1) return 'just now';
+  if (mins < 60) return Math.round(mins) + 'm ago';
+  if (mins < 48 * 60) return Math.round(mins / 60) + 'h ago';
+  return Math.round(mins / 1440) + 'd ago';
+}
+function until(iso) {
+  if (!iso) return null;
+  const mins = (new Date(iso).getTime() - Date.now()) / 60000;
+  if (mins <= 0) return 'due';
+  return mins < 60 ? 'in ' + Math.round(mins) + 'm' : 'in ' + Math.round(mins / 60) + 'h';
+}
+
+function renderSync() {
+  const s = SYNC || {};
+  const box = document.getElementById('syncbox');
+  const last = STATE.last_sync;
+  const lastAge = (Date.now() - new Date(last || 0).getTime()) / 3600000;
+
+  let led = 'led', text;
+  if (s.running) {
+    led = 'led led--run';
+    text = 'Syncing…';
+  } else if (s.last_error) {
+    led = 'led led--err';
+    text = 'Sync failed';
+  } else if (!last) {
+    led = 'led led--old';
+    text = 'Never synced';
+  } else {
+    if (lastAge > 26) led = 'led led--old';
+    text = `Synced ${ago(last)}`;
+    const nxt = until(s.next_at);
+    if (nxt) text += ` · next ${nxt}`;
+  }
+  const tip = s.last_error ? s.last_error
+    : last ? `last sync ${new Date(last).toLocaleString()}` + (s.next_at ? `, next ${new Date(s.next_at).toLocaleString()}` : '')
+    : 'the server syncs on start and every SYNC_INTERVAL_MIN minutes';
+  box.innerHTML = `<span class="${led}"></span><span>${esc(text)}</span>`;
+  box.title = tip;
+}
+
+load();
+setInterval(load, 120000);       // pick up background auto-syncs
+setInterval(renderSync, 30000);  // keep the "x ago / next in" text honest
+</script>
+</body>
+</html>

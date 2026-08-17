@@ -1,0 +1,21 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+site/
+tests/_tmp/
+.claude/
+
+# Nothing from data/ is tracked. The repo is public, and posts.json holds thousands
+# of raw group messages written by other people. CI keeps its own copy of the store
+# in the Actions cache instead.
+data/*
+
+# tg.session IS a logged-in Telegram account - it never goes in git.
+# CI gets a StringSession through an encrypted Actions secret instead.
+data/tg.session
+data/tg.session-journal
+*.session
+*.session-journal
+data/files/
+data/login_pending.json

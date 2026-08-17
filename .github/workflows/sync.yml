@@ -1,0 +1,120 @@
+name: sync and publish
+
+# Runs on GitHub's machines, so the site stays current while your PC is off.
+on:
+  schedule:
+    - cron: "0 1,13 * * *"     # 08:00 and 20:00 Vietnam time (UTC+7)
+  workflow_dispatch:            # manual run button in the Actions tab
+
+permissions:
+  contents: write               # commit the refreshed store back
+  pages: write
+  id-token: write
+
+concurrency:
+  group: fxea-sync
+  cancel-in-progress: false     # never let two syncs write the store at once
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      TG_API_ID: ${{ secrets.TG_API_ID }}
+      TG_API_HASH: ${{ secrets.TG_API_HASH }}
+      TG_SESSION: ${{ secrets.TG_SESSION }}
+      TG_CHANNELS: free_fx_pro_chat
+      TG_IMAGE_CHANNELS: free_fx_pro_robotest
+      SINCE_DATE: "2026-07-01"
+      EXCLUDE_KEYWORDS: "money box"
+      DOWNLOAD_FILES: "false"   # a static site cannot serve binaries anyway
+      DOWNLOAD_PHOTOS: "false"
+      FIRST_SYNC_LIMIT: "0"
+      # `secrets` cannot be read inside an `if:`, so mirror them into env here
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The store lives in the Actions cache, not in git: the repo is public and
+      # posts.json holds thousands of raw group messages from other people.
+      # Cache miss just means one slower sync back to SINCE_DATE.
+      - name: Restore store
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/posts.json
+            data/shots.json
+            data/state.json
+          key: fxea-store-${{ github.run_id }}
+          restore-keys: |
+            fxea-store-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Sync messages
+        run: python -m app.sync
+
+      - name: Refresh test verdicts
+        run: python -m app.sync_shots
+        continue-on-error: true   # a verdict hiccup must not block publishing
+
+      - name: Build static site
+        run: python -m app.export_static
+
+      - name: Save store
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/posts.json
+            data/shots.json
+            data/state.json
+          key: fxea-store-${{ github.run_id }}
+
+      # Always downloadable from the run page, whatever hosting is set up.
+      - name: Upload site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fxea-site
+          path: site
+          retention-days: 30
+
+      # Option 1 - Cloudflare Pages: free, works with a PRIVATE repo, and can be
+      # locked to your email with Cloudflare Access. Runs only once the two
+      # secrets exist, so it stays inert until you set them up.
+      - name: Publish to Cloudflare Pages
+        if: ${{ env.CF_TOKEN != '' && env.CF_ACCOUNT != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site --project-name=fxea-radar --branch=main
+
+      # Option 2 - GitHub Pages: needs a PUBLIC repo on the free plan. Enable by
+      # setting repo variable ENABLE_GH_PAGES=true (Settings -> Variables).
+      - name: Configure GitHub Pages
+        if: ${{ vars.ENABLE_GH_PAGES == 'true' }}
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true          # turn Pages on for the repo if it is not yet
+      - name: Upload Pages artifact
+        if: ${{ vars.ENABLE_GH_PAGES == 'true' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: sync
+    if: ${{ vars.ENABLE_GH_PAGES == 'true' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
