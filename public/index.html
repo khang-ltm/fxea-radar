@@ -993,8 +993,17 @@ async function loadMt5() {
   let d;
   try {
     const r = await fetch(MT5.url + '/api/mt5', { headers: { Authorization: 'Bearer ' + MT5.token } });
-    d = await r.json();
     if (r.status === 401) { stats.textContent = 'token rejected by the agent'; grid.hidden = true; mt5Fail(); return; }
+    // A web page instead of JSON almost always means the dashboard URL was pasted
+    // where the agent URL belongs - say that instead of a parser error.
+    if (!(r.headers.get('content-type') || '').includes('json')) {
+      mt5Fail();
+      stats.textContent = `that URL returned a web page, not the agent (HTTP ${r.status}). `
+        + 'Press Connect and use the agent address, e.g. https://mt5.<your-domain>';
+      grid.hidden = true;
+      return;
+    }
+    d = await r.json();
   } catch (e) {
     mt5Fail();
     const wait = Math.round((mt5Backoff.until - Date.now()) / 1000);
