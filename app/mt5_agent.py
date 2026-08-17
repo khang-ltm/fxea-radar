@@ -206,14 +206,30 @@ class Handler(BaseHTTPRequestHandler):
         if "/api/" in (self.path or ""):
             super().log_message(fmt, *args)
 
+    def _cors(self):
+        # The dashboard is served from another origin (GitHub Pages), so it needs
+        # CORS to read this. Safe here: every /api/ read still requires the bearer
+        # token, and the agent has no state-changing endpoint at all.
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Max-Age", "600")
+
     def _json(self, payload, status=200):
         body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self._cors()
         self.end_headers()
         self.wfile.write(body)
+
+    def do_OPTIONS(self):  # noqa: N802 - preflight for the Authorization header
+        self.send_response(204)
+        self._cors()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _authorized(self) -> bool:
         if not self.token:

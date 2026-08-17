@@ -271,6 +271,30 @@ body.modal-open { overflow: hidden; }
 .stale--bad { background: color-mix(in srgb, var(--color-destructive) 14%, var(--color-background));
   border-color: color-mix(in srgb, var(--color-destructive) 50%, transparent); color: #FCA5A5; }
 
+/* live account panel - the agent URL and token live in this browser's
+   localStorage only, never in the repo or the published page */
+.mt5bar { max-width: 1600px; margin: var(--space-3) auto 0; padding: var(--space-3) var(--space-4);
+  background: var(--color-surface); border: 1px solid var(--color-border-soft); border-radius: var(--radius-lg); }
+.mt5bar__head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.mt5bar__title { display: flex; align-items: center; gap: 6px; font-family: var(--font-head);
+  font-weight: 600; font-size: 13px; }
+.mt5bar__title svg { color: var(--color-accent); }
+.mt5bar__stats { font-size: 12.5px; color: var(--color-muted-fg); }
+.mt5bar__stats b { color: var(--color-foreground); font-family: var(--font-head); font-variant-numeric: tabular-nums; }
+.mt5bar__grid { display: grid; gap: var(--space-2); margin-top: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.mt5cell { padding: 7px 10px; background: var(--color-muted); border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius); }
+.mt5cell dt { font-size: 11px; color: var(--color-muted-fg); }
+.mt5cell dd { margin: 2px 0 0; font-family: var(--font-head); font-variant-numeric: tabular-nums; font-size: 14px; }
+.mt5cell dd.pos { color: var(--color-accent); }
+.mt5cell dd.neg { color: var(--color-destructive); }
+.mt5rows { grid-column: 1 / -1; display: grid; gap: var(--space-1); }
+.mt5row { display: flex; align-items: center; gap: var(--space-2); padding: 5px 9px; font-size: 12px;
+  background: var(--color-muted); border: 1px solid var(--color-border-soft); border-radius: var(--radius-sm); }
+.mt5row .sp { flex: 1 1 auto; }
+.mt5row .num { color: var(--color-muted-fg); }
+
 .empty { padding: 64px var(--space-4); text-align: center; color: var(--color-muted-fg); }
 .empty h2 { margin: 0 0 var(--space-2); font-size: 16px; color: var(--color-foreground); }
 .empty code { padding: 2px 6px; background: var(--color-muted); border-radius: var(--radius-sm);
@@ -349,6 +373,21 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 </header>
 
 <p class="stale" id="stale" hidden></p>
+
+<section class="mt5bar" id="mt5bar">
+  <div class="mt5bar__head">
+    <span class="mt5bar__title">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-7 4 4 6-8"/></svg>
+      My MT5
+    </span>
+    <span class="mt5bar__stats" id="mt5stats">not connected</span>
+    <span class="toolbar__spacer"></span>
+    <a class="chip" id="mt5open" href="#" target="_blank" rel="noopener" hidden>Full panel</a>
+    <button class="chip" id="mt5conf">Connect</button>
+  </div>
+  <div class="mt5bar__grid" id="mt5grid" hidden></div>
+</section>
 
 <main>
   <div class="grid grid--list" id="grid"></div>
@@ -822,6 +861,83 @@ function renderSync() {
   box.innerHTML = `<span class="${led}"></span><span>${esc(text)}</span>`;
   box.title = tip;
 }
+
+/* ── live MT5 panel ────────────────────────────────────────────────────────
+   Talks straight from your browser to the agent on your VPS. The URL and token
+   are kept in localStorage, so the published page never carries them and your
+   account data never passes through GitHub.                                  */
+const MT5_KEY = 'mt5_conf';
+let MT5 = JSON.parse(localStorage.getItem(MT5_KEY) || 'null');
+
+const mt5Money = (v, c) => v == null ? '—'
+  : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (c ? ' ' + c : '');
+const mt5Cls = v => v == null || Number(v) === 0 ? '' : Number(v) > 0 ? 'pos' : 'neg';
+
+document.getElementById('mt5conf').onclick = () => {
+  const url = prompt('Agent URL (from cloudflared on the VPS):', MT5?.url || 'https://xxx.trycloudflare.com');
+  if (url === null) return;
+  const token = prompt('Access token (MT5_TOKEN on the VPS):', MT5?.token || '');
+  if (token === null) return;
+  MT5 = { url: url.trim().replace(/\/+$/, ''), token: token.trim() };
+  localStorage.setItem(MT5_KEY, JSON.stringify(MT5));
+  loadMt5();
+};
+
+async function loadMt5() {
+  const stats = document.getElementById('mt5stats');
+  const grid = document.getElementById('mt5grid');
+  const open = document.getElementById('mt5open');
+  if (!MT5?.url || !MT5?.token) {
+    stats.textContent = 'not connected — press Connect and paste your agent URL + token';
+    grid.hidden = true;
+    open.hidden = true;
+    return;
+  }
+  open.hidden = false;
+  open.href = MT5.url;
+
+  let d;
+  try {
+    const r = await fetch(MT5.url + '/api/mt5', { headers: { Authorization: 'Bearer ' + MT5.token } });
+    d = await r.json();
+    if (r.status === 401) { stats.textContent = 'token rejected by the agent'; grid.hidden = true; return; }
+  } catch (e) {
+    stats.textContent = 'agent unreachable (tunnel down?) — ' + e.message;
+    grid.hidden = true;
+    return;
+  }
+  if (!d.ok) { stats.textContent = 'agent: ' + (d.error || 'unknown error'); grid.hidden = true; return; }
+
+  const a = d.account, t = d.terminal, cur = a.currency || '';
+  stats.innerHTML = `<b>${esc(String(a.login))}</b> @ ${esc(a.server)} · ${a.is_demo ? 'demo' : 'live'}`
+    + ` · ${t.connected ? 'connected' : '<span style="color:var(--color-destructive)">disconnected</span>'}`
+    + ` · AutoTrading ${t.trade_allowed ? 'on' : '<span style="color:var(--color-warn)">off</span>'}`;
+
+  const cells = [
+    ['Equity', mt5Money(a.equity, cur), ''],
+    ['Balance', mt5Money(a.balance, cur), ''],
+    ['Floating', mt5Money(a.profit, cur), mt5Cls(a.profit)],
+    ['Free margin', mt5Money(a.margin_free, cur), ''],
+    ['Positions', String(d.totals.positions), ''],
+    ['Pending', String(d.totals.orders), ''],
+  ].map(([k, v, c]) => `<dl class="mt5cell"><dt>${k}</dt><dd class="${c}">${esc(v)}</dd></dl>`).join('');
+
+  const rows = [...(d.positions || []), ...(d.orders || [])].slice(0, 8).map(x => `<div class="mt5row">
+      <span>${esc(x.symbol)}</span>
+      <span class="badge">${esc(x.type)}</span>
+      <span class="num">${esc(x.volume)} @ ${esc(x.price_open)}</span>
+      <span class="sp"></span>
+      ${x.profit != null ? `<span class="num ${mt5Cls(x.profit)}">${mt5Money(x.profit, '')}</span>` : ''}
+      <span class="num">magic ${esc(x.magic)}</span>
+      ${x.comment ? `<span>${esc(x.comment)}</span>` : ''}
+    </div>`).join('');
+
+  grid.hidden = false;
+  grid.innerHTML = cells + (rows ? `<div class="mt5rows">${rows}</div>` : '');
+}
+
+loadMt5();
+setInterval(loadMt5, 10000);
 
 load();
 setInterval(load, 120000);       // pick up background auto-syncs
