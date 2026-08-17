@@ -904,6 +904,15 @@ function renderSync() {
 const MT5_KEY = 'mt5_conf';
 let MT5 = JSON.parse(localStorage.getItem(MT5_KEY) || 'null');
 
+// Exponential backoff: when the agent is down, stop hammering it every 10s.
+// 20s, 40s, 80s ... capped at 5 min. Reset on the first success.
+const mt5Backoff = { fails: 0, until: 0 };
+const mt5Fail = () => {
+  mt5Backoff.fails++;
+  mt5Backoff.until = Date.now() + Math.min(300000, 10000 * 2 ** mt5Backoff.fails);
+};
+const mt5Ok = () => { mt5Backoff.fails = 0; mt5Backoff.until = 0; };
+
 // One-shot setup from the address bar: ?mt5=<agent-url>&mt5token=<token>
 // Saved to localStorage, then stripped from the URL so the token is not left in
 // the address bar or in history.
@@ -933,7 +942,12 @@ document.getElementById('mt5conf').onclick = () => {
 };
 
 async function loadMt5() {
-  if (TAB !== 'mt5') return;          // only poll while the tab is open
+  // Three reasons to skip a poll, all of them free: wrong tab, page not visible
+  // (phone in pocket, other browser tab), or backing off after failures.
+  if (TAB !== 'mt5') return;
+  if (document.visibilityState === 'hidden') return;
+  if (mt5Backoff.until > Date.now()) return;
+
   const stats = document.getElementById('mt5stats');
   const grid = document.getElementById('mt5grid');
   // shown by default; hidden again only once a read actually succeeds
@@ -948,13 +962,16 @@ async function loadMt5() {
   try {
     const r = await fetch(MT5.url + '/api/mt5', { headers: { Authorization: 'Bearer ' + MT5.token } });
     d = await r.json();
-    if (r.status === 401) { stats.textContent = 'token rejected by the agent'; grid.hidden = true; return; }
+    if (r.status === 401) { stats.textContent = 'token rejected by the agent'; grid.hidden = true; mt5Fail(); return; }
   } catch (e) {
-    stats.textContent = 'agent unreachable (tunnel down?) — ' + e.message;
+    mt5Fail();
+    const wait = Math.round((mt5Backoff.until - Date.now()) / 1000);
+    stats.textContent = `agent unreachable — ${e.message} (retrying in ${wait}s)`;
     grid.hidden = true;
     return;
   }
-  if (!d.ok) { stats.textContent = 'agent: ' + (d.error || 'unknown error'); grid.hidden = true; return; }
+  if (!d.ok) { stats.textContent = 'agent: ' + (d.error || 'unknown error'); grid.hidden = true; mt5Fail(); return; }
+  mt5Ok();
 
   const a = d.account, t = d.terminal, cur = a.currency || '';
   stats.innerHTML = `<b>${esc(String(a.login))}</b> @ ${esc(a.server)} · ${a.is_demo ? 'demo' : 'live'}`
@@ -1042,11 +1059,18 @@ document.getElementById('tab-eas').onclick = () => showTab('eas');
 document.getElementById('tab-mt5').onclick = () => showTab('mt5');
 showTab(TAB);
 
+// Poll on a timer, but refresh immediately when you come back to the page -
+// so it feels live without paying for polls nobody is watching.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { mt5Ok(); loadMt5(); }
+});
 loadMt5();
-setInterval(loadMt5, 10000);     // no-op unless the MT5 tab is open
+setInterval(loadMt5, 10000);     // skipped when hidden, wrong tab, or backing off
 
 load();
-setInterval(load, 120000);       // pick up background auto-syncs
+// The catalog is rebuilt twice a day, so re-fetching every 2 min was pointless
+// traffic; 10 min still shows a new sync well before you would notice.
+setInterval(() => { if (document.visibilityState === 'visible') load(); }, 600000);
 setInterval(renderSync, 30000);  // keep the "x ago / next in" text honest
 </script>
 </body>
