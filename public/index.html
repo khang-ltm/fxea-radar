@@ -287,6 +287,9 @@ body.modal-open { overflow: hidden; }
 .mt5bar__title svg { color: var(--color-accent); }
 .mt5bar__stats { font-size: 12.5px; color: var(--color-muted-fg); }
 .mt5bar__stats b { color: var(--color-foreground); font-family: var(--font-head); font-variant-numeric: tabular-nums; }
+#mt5age { display: inline-flex; align-items: center; gap: 5px; }
+#mt5age .led { width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent); }
+#mt5age .led--old { background: var(--color-muted-fg); }
 .mt5bar__grid { display: grid; gap: var(--space-2); margin-top: var(--space-3);
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
 .mt5cell { padding: 7px 10px; background: var(--color-muted); border: 1px solid var(--color-border-soft);
@@ -913,6 +916,24 @@ const mt5Fail = () => {
 };
 const mt5Ok = () => { mt5Backoff.fails = 0; mt5Backoff.until = 0; };
 
+/* "updated just now" was noise once streaming landed - it always said that. What
+   still matters is whether data is flowing, so this shows a live dot instead and
+   only turns wordy when frames stop arriving. */
+let mt5LastFrame = 0;
+function renderMt5Freshness() {
+  const el = document.getElementById('mt5age');
+  if (!mt5LastFrame) { el.textContent = ''; return; }
+  const secs = (Date.now() - mt5LastFrame) / 1000;
+  const live = mt5Stream && secs < 45;              // heartbeat is every 20s
+  if (live) {
+    el.innerHTML = '<span class="led"></span>live';
+  } else if (secs < 45) {
+    el.innerHTML = '<span class="led"></span>polling';
+  } else {
+    el.innerHTML = `<span class="led led--old"></span>no data for ${secs < 120 ? Math.round(secs) + 's' : Math.round(secs / 60) + 'm'}`;
+  }
+}
+
 // One-shot setup from the address bar: ?mt5=<agent-url>&mt5token=<token>
 // Saved to localStorage, then stripped from the URL so the token is not left in
 // the address bar or in history.
@@ -997,7 +1018,8 @@ function renderMt5(d) {
 
   grid.hidden = false;
   grid.innerHTML = cells;
-  document.getElementById('mt5age').textContent = 'updated ' + (ago(d.at) || 'just now');
+  mt5LastFrame = Date.now();
+  renderMt5Freshness();
   // connected and reading fine: the button is only clutter now
   document.getElementById('mt5conf').hidden = true;
 
@@ -1136,7 +1158,8 @@ document.addEventListener('visibilitychange', () => {
 });
 
 syncMt5Transport();
-setInterval(loadMt5, 10000);     // fallback only: skipped while a stream is live
+setInterval(loadMt5, 10000);       // fallback only: skipped while a stream is live
+setInterval(renderMt5Freshness, 5000);   // turns wordy only if frames stop
 
 load();
 // The catalog is rebuilt twice a day, so re-fetching every 2 min was pointless
