@@ -215,13 +215,15 @@ if (`$remote -ne `$local) {
     if (Test-Path `$tmp) { Remove-Item `$tmp -Recurse -Force }
     Expand-Archive -Path `$zip -DestinationPath `$tmp -Force
     `$src = (Get-ChildItem `$tmp -Directory | Select-Object -First 1).FullName
-    foreach (`$f in 'app', 'public') {
+    foreach (`$f in 'app', 'public', 'mql5') {
         if (Test-Path (Join-Path `$src `$f)) {
             Copy-Item (Join-Path `$src `$f) -Destination `$dir -Recurse -Force
         }
     }
     Remove-Item `$zip, `$tmp -Recurse -Force -ErrorAction SilentlyContinue
-    Set-Content -Path `$mark -Value `$remote -Encoding utf8
+    # the agent promotes this itself once it is actually running, so a
+    # restart that fails leaves the old value and this task tries again
+    Set-Content -Path (Join-Path `$dir 'data\.agent_pending') -Value `$remote -Encoding utf8
 }
 
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |

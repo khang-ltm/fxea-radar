@@ -72,9 +72,8 @@ async def _download(channel: str, message_id: int, into: pathlib.Path) -> tuple[
 def _unpack(archive: pathlib.Path, into: pathlib.Path) -> tuple[list[pathlib.Path], str]:
     """Extract what an archive holds, flat, keeping only EA files.
 
-    .zip is handled here; .rar needs an external tool, and Windows' own bsdtar
-    reads rar4 archives, so it is tried before 7-Zip rather than making 7-Zip a
-    hard dependency.
+    .zip is handled here; anything else goes to whichever external tool can read
+    it, see _extractor.
     """
     into.mkdir(parents=True, exist_ok=True)
     suffix = archive.suffix.lower()
@@ -100,10 +99,10 @@ def _unpack(archive: pathlib.Path, into: pathlib.Path) -> tuple[list[pathlib.Pat
             return [], f"could not read the zip: {exc}"
         return sorted(into.iterdir()), ""
 
-    tool = _extractor()
+    tool = _extractor(suffix)
     if tool is None:
-        return [], (f"{suffix or 'that archive'} needs 7-Zip, which is not installed on this machine."
-                    " Install 7-Zip, or extract it yourself and upload the .ex5")
+        return [], (f"nothing on this machine can unpack {suffix or 'that archive'}."
+                    " Install 7-Zip on the VPS")
     exe, args = tool
     try:
         subprocess.run([exe, *args, str(archive)], cwd=into, capture_output=True,
@@ -121,16 +120,28 @@ def _unpack(archive: pathlib.Path, into: pathlib.Path) -> tuple[list[pathlib.Pat
     return sorted(set(kept)), ""
 
 
-def _extractor() -> tuple[str, list[str]] | None:
-    """bsdtar first - it ships with Windows - then 7-Zip where it usually lives."""
-    tar = shutil.which("tar")
-    if tar:
-        return tar, ["-xf"]
+def _seven_zip() -> str | None:
     for cand in (r"C:\Program Files\7-Zip\7z.exe", r"C:\Program Files (x86)\7-Zip\7z.exe"):
         if pathlib.Path(cand).exists():
-            return cand, ["x", "-y"]
-    seven = shutil.which("7z")
-    return (seven, ["x", "-y"]) if seven else None
+            return cand
+    return shutil.which("7z")
+
+
+def _extractor(suffix: str = "") -> tuple[str, list[str]] | None:
+    """A tool that can actually read this kind of archive.
+
+    Windows ships bsdtar, which reads zip and rar4 but not rar5, and the channel
+    posts rar of unknown vintage. So 7-Zip goes first for .rar with bsdtar as the
+    fallback, and bsdtar goes first for everything else - which keeps 7-Zip from
+    being a hard requirement.
+    """
+    seven, tar = _seven_zip(), shutil.which("tar")
+    for tool in ([seven, tar] if suffix.lower() == ".rar" else [tar, seven]):
+        if not tool:
+            continue
+        is_tar = pathlib.Path(tool).stem.lower() == "tar"
+        return (tool, ["-xf"]) if is_tar else (tool, ["x", "-y"])
+    return None
 
 
 def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Path) -> dict:

@@ -1107,6 +1107,19 @@ def sync_manager_ea() -> str:
     return f"compile failed: {tail or 'see fxea_compile.log'}"
 
 
+def _promote_pending() -> str:
+    """Called at startup: this process IS the new version, so record it."""
+    pending = config.ROOT / "data" / ".agent_pending"
+    try:
+        sha = pending.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if sha:
+        (config.ROOT / "data" / ".agent_version").write_text(sha, encoding="utf-8")
+    pending.unlink(missing_ok=True)
+    return sha
+
+
 def _current_sha() -> str:
     f = config.ROOT / "data" / ".agent_version"
     try:
@@ -1146,7 +1159,10 @@ def _apply_update(sha: str) -> bool:
             if (src / folder).is_dir():
                 shutil.copytree(src / folder, config.ROOT / folder, dirs_exist_ok=True)
         shutil.rmtree(staged, ignore_errors=True)
-    (config.ROOT / "data" / ".agent_version").write_text(sha, encoding="utf-8")
+    # Staged, not promoted: if the restart below fails - a stale process still
+    # holding the port, for one - the marker must keep saying the old version, or
+    # the watchdog concludes everything is current and never retries.
+    (config.ROOT / "data" / ".agent_pending").write_text(sha, encoding="utf-8")
     return True
 
 
@@ -1273,6 +1289,9 @@ def main() -> None:
     args = ap.parse_args()
 
     log = _start_logging()
+    promoted = _promote_pending()
+    if promoted:
+        print(f"  running new code {promoted[:7]}")
 
     token = (os.environ.get("MT5_TOKEN") or "").strip()
     host = args.host
@@ -1302,10 +1321,21 @@ def main() -> None:
     print(f"  watchdog: {_ensure_watchdog()}")
     print(f"  manager EA: {sync_manager_ea()}")
 
+    print(f"  pid: {os.getpid()}")
     try:
         # Threading matters: one SSE connection would otherwise block every other
         # request on a single-threaded server.
-        ThreadingHTTPServer((host, args.port), Handler).serve_forever()
+        server = ThreadingHTTPServer((host, args.port), Handler)
+    except OSError as exc:
+        # Stopping the scheduled task kills the launcher, not this process, so a
+        # restart can leave the old agent holding the port while the new one dies
+        # here - which looks exactly like an agent that refuses to update.
+        print(f"cannot listen on {host}:{args.port} - {exc}", flush=True)
+        print("another agent is probably still running: stop the python.exe whose "
+              "command line contains app.mt5_agent, then start this again", flush=True)
+        raise SystemExit(1)
+    try:
+        server.serve_forever()
     except KeyboardInterrupt:
         print("\nstopping agent (the terminal is untouched)")
     finally:
