@@ -460,18 +460,67 @@ MANAGER_INPUTS = "fxea_inputs.txt"
 _INPUT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,63}$")
 
 
-def _stage_inputs(pairs) -> object:
+def _current_inputs(chart) -> dict:
+    """What that chart's EA is set to right now, as the manager last reported."""
+    status = read_charts()
+    for c in status.get("charts", []) if status.get("ok") else []:
+        if str(c.get("chart")) == str(chart):
+            return {i["k"]: i["v"] for i in c.get("inputs", []) if "k" in i}
+    return {}
+
+
+def _looks_bool(v: str) -> bool:
+    return v.strip().lower() in ("true", "false")
+
+
+def _looks_int(v: str) -> bool:
+    try:
+        int(v.strip())
+        return True
+    except ValueError:
+        return False
+
+
+def _looks_float(v: str) -> bool:
+    try:
+        float(v.strip())
+        return True
+    except ValueError:
+        return False
+
+
+def _typed_like(old: str, new: str) -> str:
+    """Refuse a value the EA cannot read as the kind of thing it had there.
+
+    An EA reads its inputs by declared type: write "abc" over a double and it
+    loads 0, which for a lot size or a stop distance is worse than an error.
+    The template does not say what the type is, so the value that is there now
+    is the evidence.
+    """
+    if _looks_bool(old):
+        return "" if _looks_bool(new) else "expects true or false"
+    if _looks_int(old):
+        return "" if _looks_int(new) else "expects a whole number"
+    if _looks_float(old):
+        return "" if _looks_float(new) else "expects a number"
+    return ""            # a string input: anything printable will load
+
+
+def _stage_inputs(pairs, chart) -> object:
     """Write the settings the manager should apply. Returns a message on refusal.
 
     Values go into the EA's own template, so anything that could break the file
     - newlines, over-long strings, odd keys - is rejected here rather than
-    corrupting a template that a live EA is about to reload.
+    corrupting a template that a live EA is about to reload. Names and types are
+    checked against what that EA currently has, so a typo cannot invent an input
+    or turn a lot size into text.
     """
     if not isinstance(pairs, dict) or not pairs:
         return "no settings given"
     if len(pairs) > 100:
         return "too many settings in one request"
 
+    have = _current_inputs(chart)
     lines = []
     for key, value in pairs.items():
         key = str(key)
@@ -484,6 +533,12 @@ def _stage_inputs(pairs) -> object:
             return f"{key} cannot be changed from here"
         if len(text) > 500 or chr(10) in text or chr(13) in text:
             return f"bad value for {key}"
+        if have and key not in have:
+            return f"{key} is not an input of this EA"
+        if have:
+            complaint = _typed_like(have[key], text)
+            if complaint:
+                return f"{key} {complaint} (currently {have[key]})"
         lines.append(f"{key}={text}")
 
     d = _mql5_files_dir()
@@ -734,7 +789,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if action == "setinputs":
-            written = _stage_inputs(body.get("inputs"))
+            written = _stage_inputs(body.get("inputs"), body.get("chart"))
             if isinstance(written, str):
                 self._json({"ok": False, "error": written}, 400)
                 return
@@ -826,6 +881,41 @@ def _self_update_loop() -> None:
             print(f"[self-update] skipped: {exc}", flush=True)
 
 
+WATCHDOG_TASK = "fxea-mt5-updater"
+
+
+def _ensure_watchdog() -> str:
+    """Register the restart task if it is missing, so a crash cannot go unnoticed.
+
+    The agent updates itself, but nothing brings it back if the process dies -
+    and the task had been silently absent for weeks because it was created with
+    a repetition interval Task Scheduler treats as one-shot. schtasks with
+    /SC MINUTE actually repeats, and doing it here means it cannot drift away
+    again: every boot checks.
+    """
+    import subprocess
+
+    updater = config.ROOT / "update_agent.ps1"
+    if os.name != "nt" or not updater.exists():
+        return "skipped (no updater script)"
+
+    def run(args):
+        return subprocess.run(args, capture_output=True, text=True,
+                              creationflags=0x08000000)      # no console window
+
+    if run(["schtasks", "/Query", "/TN", WATCHDOG_TASK]).returncode == 0:
+        return "already registered"
+
+    made = run([
+        "schtasks", "/Create", "/TN", WATCHDOG_TASK,
+        "/TR", f'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "{updater}"',
+        "/SC", "MINUTE", "/MO", str(max(5, UPDATE_EVERY_MINUTES)), "/RL", "HIGHEST", "/F",
+    ])
+    if made.returncode == 0:
+        return f"registered (every {max(5, UPDATE_EVERY_MINUTES)} min)"
+    return f"could not register: {(made.stderr or made.stdout).strip()[:120]}"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Read-only MT5 monitor")
     ap.add_argument("--host", default="127.0.0.1")
@@ -856,6 +946,7 @@ def main() -> None:
     threading.Thread(target=_self_update_loop, daemon=True).start()
     print(f"  self-update: every {UPDATE_EVERY_MINUTES} min from GitHub"
           if UPDATE_EVERY_MINUTES > 0 else "  self-update: off")
+    print(f"  watchdog: {_ensure_watchdog()}")
 
     try:
         # Threading matters: one SSE connection would otherwise block every other
