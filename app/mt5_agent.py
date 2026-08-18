@@ -955,10 +955,11 @@ class Handler(BaseHTTPRequestHandler):
                                  "no MT5_PIN set on the agent, so attaching is disabled",
                         "need_pin": bool(AGENT_PIN)}, 403)
             return
-        if action not in ("status", "pause", "run", "resume", "unload", "setinputs", "attach"):
+        if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
+                          "attach", "forget"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
-        if action in ("pause", "unload", "setinputs", "attach") and not body.get("confirm"):
+        if action in ("pause", "unload", "setinputs", "attach", "forget") and not body.get("confirm"):
             self._json({"ok": False, "error": f"{action} requires confirm: true"}, 400)
             return
 

@@ -2022,7 +2022,9 @@ async function loadCharts(quiet) {
     <tbody>${paused.map(x => `<tr>
       <td>${esc(x.expert || '—')}</td><td>${esc(x.symbol)}</td><td class="n">${esc(tfName(x.period))}</td>
       <td style="text-align:right"><button class="chip" data-run="${esc(String(x.key))}"
-        data-name="${esc(x.expert)} on ${esc(x.symbol)}">Run</button></td></tr>`).join('')}</tbody></table>`
+          data-name="${esc(x.expert)} on ${esc(x.symbol)}">Run</button>
+        <button class="chip ghost" data-forget="${esc(String(x.key))}"
+          data-name="${esc(x.expert)} on ${esc(x.symbol)}">Discard</button></td></tr>`).join('')}</tbody></table>`
     : '');
   document.getElementById('pausedwrap').hidden = paused.length === 0;
 
@@ -2038,17 +2040,23 @@ async function loadCharts(quiet) {
   for (const b of document.querySelectorAll('[data-link]')) {
     b.onclick = () => openLinkDialog(b.dataset.link, b.dataset.name, b.dataset.sym);
   }
+  for (const b of document.querySelectorAll('[data-forget]')) {
+    b.onclick = () => managerAction('forget', { key: b.dataset.forget }, b.dataset.name);
+  }
   for (const b of document.querySelectorAll('[data-run]')) {
     b.onclick = () => managerAction('run', { key: b.dataset.run }, b.dataset.name);
   }
 }
 
 async function managerAction(action, args, label) {
-  const verb = action === 'pause' ? 'Pause' : 'Run';
+  const verb = { pause: 'Pause', forget: 'Discard' }[action] || 'Run';
   const note = action === 'pause'
     ? 'The EA stops. Its settings are saved, so Run brings it back. '
       + 'Positions and orders it already placed stay open.'
-    : 'The chart reopens with the EA and its saved settings.';
+    : action === 'forget'
+      ? 'Drops it from this list along with the settings Run would have restored. '
+        + 'Nothing is running, so nothing stops. Any trades it left stay open.'
+      : 'The chart reopens with the EA and its saved settings.';
   if (!confirm(`${verb} ${label}?
 
 ${note}`)) return;

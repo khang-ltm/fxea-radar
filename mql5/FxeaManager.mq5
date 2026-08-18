@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.16"
+#property version   "1.17"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.16", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.17", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -304,7 +304,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.16",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.17",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -856,6 +856,47 @@ void DoAttach(const string id, const string expert, const string path,
    WriteStatus();
   }
 
+/* Pausing keeps a template so Run can restore the EA. Discarding is the other
+   answer: drop the entry and its template, leaving no chart and no row. It
+   stops nothing - a paused EA is already stopped - so it needs no guard beyond
+   AllowControl. */
+void DoForget(const string id, const string key)
+  {
+   string paused[];
+   int n  = LoadPaused(paused);
+   int at = -1;
+   for(int i = 0; i < n; i++)
+      if(Part(paused[i], 0) == key)
+        {
+         at = i;
+         break;
+        }
+   if(at < 0)
+     {
+      WriteResult(id, false, "nothing paused under key " + key);
+      return;
+     }
+
+   string expert = Part(paused[at], 3);
+   string tpl    = Part(paused[at], 4);
+   if(tpl != "" && FileIsExist(tpl + ".tpl"))
+      FileDelete(tpl + ".tpl");
+
+   string kept[];
+   int k = 0;
+   for(int i = 0; i < n; i++)
+     {
+      if(i == at)
+         continue;
+      ArrayResize(kept, k + 1);
+      kept[k++] = paused[i];
+     }
+   SavePaused(kept);
+
+   WriteResult(id, true, StringFormat("discarded %s - its saved settings are gone", expert));
+   WriteStatus();
+  }
+
 //+------------------------------------------------------------------+
 void ProcessCommand()
   {
@@ -885,7 +926,7 @@ void ProcessCommand()
       return;
      }
 
-   if(!AllowControl && (action == "pause" || action == "run" || action == "unload" || action == "setinputs" || action == "attach"))
+   if(!AllowControl && (action == "pause" || action == "run" || action == "unload" || action == "setinputs" || action == "attach" || action == "forget"))
      {
       WriteResult(id, false, "control disabled in this EA inputs");
       return;
@@ -900,6 +941,12 @@ void ProcessCommand()
    if(action == "run" || action == "resume")
      {
       DoRun(id, key != "" ? key : StringFormat("%I64d", chart));
+      return;
+     }
+
+   if(action == "forget")
+     {
+      DoForget(id, key != "" ? key : StringFormat("%I64d", chart));
       return;
      }
 
