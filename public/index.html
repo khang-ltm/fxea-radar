@@ -1628,6 +1628,30 @@ const tfName = p => TF_NAMES[Number(p)] || String(p ?? '');
    misspelled symbol nor an EA that is not installed can reach the manager. The
    PIN is asked for every time and never stored: the read token alone must not
    be able to start code trading. */
+/* The broker's full symbol list is thousands long and enumerating it stalls the
+   terminal, so the agent filters server-side and the page asks as you type. */
+function fillSymbols(res) {
+  document.getElementById('attach-syms').innerHTML = (res?.ok ? res.symbols : [])
+    .map(x => `<option value="${esc(x.name)}">${x.watched ? 'in Market Watch' : ''}</option>`)
+    .join('');
+}
+
+let symTimer = 0;
+function symbolSearch(text) {
+  clearTimeout(symTimer);
+  const q = text.trim();
+  if (q.length < 2) return;
+  symTimer = setTimeout(async () => {
+    try {
+      const r = await fetch(`${MT5.url}/api/symbols?q=${encodeURIComponent(q)}`, {
+        credentials: 'include',
+        headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+      });
+      fillSymbols(await r.json());
+    } catch { /* keep whatever the list already has */ }
+  }, 250);
+}
+
 const attachDlg = document.getElementById('attachdlg');
 let ACCOUNT = null;                        // last account seen, for the confirm
 
@@ -1656,15 +1680,14 @@ async function openAttach() {
       + esc(e.folder ? `${e.folder}/${e.name}` : e.name) + '</option>').join('')
     || '<option value="">no .ex5 found</option>';
 
-  document.getElementById('attach-syms').innerHTML = (syms.ok ? syms.symbols : [])
-    .map(x => `<option value="${esc(x.name)}">${x.watched ? 'Market Watch' : ''}</option>`).join('');
+  fillSymbols(syms);
 
   const tf = document.getElementById('attach-tf');
   tf.innerHTML = TF_ORDER.map(v =>
     `<option value="${v}" ${v === 16385 ? 'selected' : ''}>${TF_NAMES[v]}</option>`).join('');
 
-  note.textContent = eas.ok && syms.ok
-    ? `${eas.count} EA${eas.count === 1 ? '' : 's'} installed · ${syms.count} symbols at this broker`
+  note.textContent = eas.ok
+    ? `${eas.count} EA${eas.count === 1 ? '' : 's'} installed · type to search your broker symbols`
     : (eas.error || syms.error || '');
   document.getElementById('attach-note').textContent = ACCOUNT
     ? `Attaches to ${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} · ${ACCOUNT.server}.`
@@ -1673,6 +1696,7 @@ async function openAttach() {
 }
 
 document.getElementById('attach-open').onclick = openAttach;
+document.getElementById('attach-sym').oninput = e => symbolSearch(e.target.value);
 document.getElementById('attach-cancel').onclick = () => attachDlg.close();
 attachDlg.addEventListener('click', e => { if (e.target === attachDlg) attachDlg.close(); });
 

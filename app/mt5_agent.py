@@ -588,30 +588,69 @@ def _pin_ok(given) -> bool:
     return hmac.compare_digest(AGENT_PIN, str(given or ""))
 
 
-def read_symbols(query: str = "") -> dict:
-    """Broker symbols, Market Watch first.
+_SYM_CACHE: dict[str, tuple[float, dict]] = {}
+SYM_CACHE_SECONDS = 300
 
-    A catalog post says XAUUSD; brokers call it GOLD, XAUUSD.a, XAUUSDm. Choosing
-    from this list is the only way an attach cannot fail on a name.
+
+def symbol_exists(name: str) -> bool:
+    """One lookup, not an enumeration - this runs on the attach path."""
+    if not name:
+        return False
+    with _ipc_lock:
+        if not _ensure():
+            return False
+        try:
+            return _mt5.symbol_info(name) is not None
+        except Exception:                                  # noqa: BLE001
+            return False
+
+
+def read_symbols(query: str = "") -> dict:
+    """Broker symbols matching a query, Market Watch first.
+
+    symbols_get() with no filter walks every symbol the broker offers - thousands
+    on an ECN account - while holding the terminal lock, which stalled every other
+    request until the proxy gave up with a 502. So: the server does the filtering
+    through `group`, an empty query answers with what is already on a chart plus
+    the usual majors, and results are cached for a few minutes because a broker's
+    symbol list does not change while you are typing.
     """
+    q = query.strip().upper()
+    now = time.time()
+    hit = _SYM_CACHE.get(q)
+    if hit and now - hit[0] < SYM_CACHE_SECONDS:
+        return hit[1]
+
+    if len(q) < 2:
+        # nothing typed yet: offer the symbols this account is actually using
+        seen, out = set(), []
+        status = read_charts()
+        names = [c.get("symbol") for c in (status.get("charts") or []) if c.get("symbol")]
+        names += ["XAUUSD", "BTCUSD", "EURUSD", "GBPUSD", "USDJPY"]
+        for name in names:
+            if name in seen:
+                continue
+            seen.add(name)
+            if symbol_exists(name):
+                out.append({"name": name, "watched": True})
+        answer = {"ok": True, "count": len(out), "symbols": out, "partial": True}
+        _SYM_CACHE[q] = (now, answer)
+        return answer
+
     with _ipc_lock:
         if not _ensure():
             return {"ok": False, "error": _init_error or "terminal not readable"}
         try:
-            found = _mt5.symbols_get() or ()
-        except Exception as exc:                       # noqa: BLE001
+            found = _mt5.symbols_get(group=f"*{q}*") or ()
+        except Exception as exc:                           # noqa: BLE001
             return {"ok": False, "error": f"symbols unreadable: {exc}"}
 
-    want = query.strip().upper()
-    out = []
-    for sym in found:
-        if want and want not in sym.name.upper():
-            continue
-        out.append({"name": sym.name, "watched": bool(sym.visible),
-                    "digits": sym.digits, "path": sym.path})
-    # Market Watch first: the symbols already in use are the likely choice
-    out.sort(key=lambda x: (not x["watched"], x["name"]))
-    return {"ok": True, "count": len(out), "symbols": out[:400]}
+    out = [{"name": sym.name, "watched": bool(sym.visible), "digits": sym.digits}
+           for sym in found]
+    out.sort(key=lambda x: (not x["watched"], len(x["name"]), x["name"]))
+    answer = {"ok": True, "count": len(out), "symbols": out[:200]}
+    _SYM_CACHE[q] = (now, answer)
+    return answer
 
 
 def read_experts() -> dict:
@@ -656,8 +695,7 @@ def _check_attach(body: dict) -> str:
         if path and path not in {e["path"] for e in installed["experts"]}:
             return "that EA path does not exist"
 
-    syms = read_symbols(symbol)
-    if syms.get("ok") and not any(x["name"] == symbol for x in syms["symbols"]):
+    if not symbol_exists(symbol):
         return f"{symbol} is not a symbol at this broker"
 
     if body.get("inputs"):            # a .set file, or values chosen in the page
@@ -954,6 +992,76 @@ ZIP_URL = os.environ.get(
 UPDATE_EVERY_MINUTES = int(os.environ.get("MT5_UPDATE_MINUTES", "20") or 20)
 
 
+MANAGER_SOURCE = "FxeaManager.mq5"
+
+
+def _metaeditor() -> pathlib.Path | None:
+    """MetaEditor lives next to the terminal executable."""
+    with _ipc_lock:
+        if not _ensure():
+            return None
+        try:
+            exe = pathlib.Path(_mt5.terminal_info().path)
+        except Exception:                                  # noqa: BLE001
+            return None
+    for name in ("metaeditor64.exe", "metaeditor.exe"):
+        cand = exe / name
+        if cand.exists():
+            return cand
+    return None
+
+
+def sync_manager_ea() -> str:
+    """Copy the repo's FxeaManager into Experts and compile it if it changed.
+
+    MetaEditor has a /compile flag, and MT5 reloads a running EA as soon as its
+    .ex5 is rebuilt - so shipping a new manager needs no MetaEditor, no F7 and no
+    re-attaching by hand. Only this one file is ever compiled: the agent must not
+    become a way to build arbitrary code on the machine.
+    """
+    import shutil
+    import subprocess
+
+    src = config.ROOT / "mql5" / MANAGER_SOURCE
+    files = _mql5_files_dir()
+    if not src.exists() or files is None:
+        return "skipped (no source or no terminal)"
+    dst = files.parent / "Experts" / MANAGER_SOURCE
+
+    same = dst.exists() and dst.read_bytes() == src.read_bytes()
+    ex5 = dst.with_suffix(".ex5")
+    if same and ex5.exists() and ex5.stat().st_mtime >= dst.stat().st_mtime:
+        return "already current"
+
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+    except OSError as exc:
+        return f"could not copy the source: {exc}"
+
+    editor = _metaeditor()
+    if editor is None:
+        return "copied, but MetaEditor was not found - compile it once by hand"
+
+    log = files / "fxea_compile.log"
+    try:
+        # /compile builds one file; /log writes why when it fails. MetaEditor
+        # returns the number of errors as its exit code.
+        subprocess.run([str(editor), f"/compile:{dst}", f"/log:{log}"],
+                       capture_output=True, timeout=180, creationflags=0x08000000)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"compile could not run: {exc}"
+
+    if ex5.exists() and ex5.stat().st_mtime >= dst.stat().st_mtime - 5:
+        return f"compiled {MANAGER_SOURCE} (MT5 reloads it by itself)"
+    tail = ""
+    try:
+        tail = log.read_text(encoding="utf-16", errors="replace").strip().splitlines()[-1]
+    except (OSError, IndexError):
+        pass
+    return f"compile failed: {tail or 'see fxea_compile.log'}"
+
+
 def _current_sha() -> str:
     f = config.ROOT / "data" / ".agent_version"
     try:
@@ -1007,14 +1115,19 @@ def _self_update_loop() -> None:
     import subprocess
     import sys
 
+    first = True
     while True:
-        time.sleep(UPDATE_EVERY_MINUTES * 60)
+        # A restart used to wait a full interval before looking, which made
+        # "restart it and see" quietly useless.
+        time.sleep(5 if first else UPDATE_EVERY_MINUTES * 60)
+        first = False
         try:
             remote = _remote_sha()
             if not remote or remote == _current_sha():
                 continue
             print(f"[self-update] new version {remote[:7]} - updating", flush=True)
             _apply_update(remote)
+            print(f"[self-update] manager EA: {sync_manager_ea()}", flush=True)
             print("[self-update] restarting agent", flush=True)
             if _mt5 is not None:
                 _mt5.shutdown()          # drop our IPC pipe; the terminal keeps running
@@ -1089,6 +1202,7 @@ def main() -> None:
     print(f"  self-update: every {UPDATE_EVERY_MINUTES} min from GitHub"
           if UPDATE_EVERY_MINUTES > 0 else "  self-update: off")
     print(f"  watchdog: {_ensure_watchdog()}")
+    print(f"  manager EA: {sync_manager_ea()}")
 
     try:
         # Threading matters: one SSE connection would otherwise block every other
