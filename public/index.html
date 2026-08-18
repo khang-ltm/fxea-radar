@@ -612,9 +612,6 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div class="setrow text"><label for="attach-tf">Timeframe
       <small>the chart it opens on</small></label>
       <select id="attach-tf"></select></div>
-    <div class="setrow text"><label for="attach-pin">PIN
-      <small>the second secret, set as MT5_PIN on the agent</small></label>
-      <input id="attach-pin" type="password" autocomplete="off"></div>
     <p class="hint" id="attach-warn"></p>
   </div>
   <div class="sheet__foot">
@@ -1984,10 +1981,7 @@ document.getElementById('attach-go').onclick = async () => {
   const eaSel = document.getElementById('attach-ea');
   const symbol = document.getElementById('attach-sym').value.trim();
   const period = Number(document.getElementById('attach-tf').value);
-  const pin = document.getElementById('attach-pin').value;
-
   if (!symbol) { warn.textContent = 'pick a symbol'; return; }
-  if (!pin) { warn.textContent = 'the PIN is required'; return; }
   if (!PENDING_INSTALL && !eaSel.selectedOptions[0]?.dataset.name) {
     warn.textContent = 'pick an EA'; return;
   }
@@ -2011,7 +2005,7 @@ document.getElementById('attach-go').onclick = async () => {
   try {
     if (PENDING_INSTALL) {
       warn.textContent = 'downloading and unpacking...';
-      const r = await managerPost({ action: 'install', confirm: true, pin,
+      const r = await managerPost({ action: 'install', confirm: true,
                                     channel: PENDING_INSTALL.channel,
                                     message_id: PENDING_INSTALL.message_id });
       if (!r.ok) { warn.textContent = 'install failed: ' + (r.error || r.message); return; }
@@ -2041,11 +2035,10 @@ document.getElementById('attach-go').onclick = async () => {
 
     const opt = eaSel.selectedOptions[0];
     warn.textContent = warn.textContent.endsWith('attaching...') ? warn.textContent : 'attaching...';
-    const r = await managerPost({ action: 'attach', confirm: true, pin,
+    const r = await managerPost({ action: 'attach', confirm: true,
                                   expert: opt.dataset.name, path: opt.value, symbol, period });
     warn.textContent = r.ok ? (r.message || 'attached') : ('failed: ' + (r.error || r.message));
     if (r.ok) {
-      document.getElementById('attach-pin').value = '';
       setTimeout(() => { attachDlg.close(); loadEas().then(loadCharts); }, 1200);
     }
   } finally {

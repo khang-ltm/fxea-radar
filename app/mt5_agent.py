@@ -588,11 +588,32 @@ def _stage_inputs(pairs, chart) -> object:
 
 
 # Actions that can make the terminal trade with code it was not already running.
-GUARDED = ("attach", "install", "uninstall")
+# Deleting an .ex5 is the one action here with no undo, so it keeps the PIN.
+# Attach and install are gated by holding the token at all - which is also what
+# lets anything else on this agent be reached.
+GUARDED = ("uninstall",)
 AGENT_PIN = (os.environ.get("MT5_PIN") or "").strip()
 
 TIMEFRAMES = {1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30,
               16385, 16386, 16387, 16388, 16390, 16392, 16396, 16408, 32769, 49153}
+
+
+_pin_fails: dict[str, list] = {}
+PIN_MAX_FAILS = 5
+PIN_LOCK_SECONDS = 900
+
+
+def _pin_locked(who: str) -> int:
+    """Seconds of lockout left for this address.
+
+    Six digits is a million guesses, and a few hundred attempts a second gets
+    through that in hours - so wrong PINs have to cost something.
+    """
+    fails = [t for t in _pin_fails.get(who, []) if time.time() - t < PIN_LOCK_SECONDS]
+    _pin_fails[who] = fails
+    if len(fails) < PIN_MAX_FAILS:
+        return 0
+    return int(PIN_LOCK_SECONDS - (time.time() - fails[-PIN_MAX_FAILS]))
 
 
 def _pin_ok(given) -> bool:
@@ -1274,6 +1295,20 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json({"ok": False, "error": "not found"}, 404)
 
+    def _csrf_ok(self) -> bool:
+        """Cookie auth is convenient and forgeable; the token is neither.
+
+        The auth cookie is SameSite=None so the page can reach the agent
+        cross-site, which also means any page you visit can make your browser send
+        it. A POST that relies on the cookie therefore has to carry one of our own
+        origins; a POST carrying the Bearer token does not, since anything holding
+        the token could call the API directly anyway.
+        """
+        if (self.headers.get("Authorization") or "").strip() == f"Bearer {self.token}":
+            return True
+        origin = (self.headers.get("Origin") or "").strip()
+        return origin in ALLOWED_ORIGINS
+
     def do_POST(self):  # noqa: N802
         """Manager commands only. There is still no path here that can place,
         modify or close a TRADE - unloading an EA leaves its positions open."""
@@ -1283,6 +1318,10 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._json({"ok": False, "error": "unauthorized"}, 401)
             return
+        if not self._csrf_ok():
+            self._json({"ok": False,
+                        "error": "this request did not come from the app"}, 403)
+            return
         try:
             length = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -1291,12 +1330,23 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         action = str(body.get("action") or "")
-        if action in GUARDED and not _pin_ok(body.get("pin")):
-            self._json({"ok": False,
-                        "error": "PIN required" if AGENT_PIN else
-                                 "no MT5_PIN set on the agent, so attaching is disabled",
-                        "need_pin": bool(AGENT_PIN)}, 403)
-            return
+        if action in GUARDED:
+            who = self.client_address[0]
+            left = _pin_locked(who)
+            if left > 0:
+                self._json({"ok": False,
+                            "error": f"too many wrong PINs - locked for {left // 60 + 1} more minutes"},
+                           429)
+                return
+            if not _pin_ok(body.get("pin")):
+                _pin_fails.setdefault(who, []).append(time.time())
+                _audit({"ok": False, "action": "pin refused"}, {"from": who})
+                self._json({"ok": False,
+                            "error": "PIN required" if AGENT_PIN else
+                                     "no MT5_PIN set on the agent, so deleting is disabled",
+                            "need_pin": bool(AGENT_PIN)}, 403)
+                return
+            _pin_fails.pop(who, None)
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
                           "attach", "forget", "install", "uninstall"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
