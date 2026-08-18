@@ -435,6 +435,8 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <div class="wrap" id="mt5positions"></div></section>
     <section class="mt5sect"><h2>By EA (magic number) <span class="num" id="mt5eacount"></span></h2>
       <div class="wrap" id="mt5byea"></div></section>
+    <section class="mt5sect"><h2>Manual trades <span class="num" id="mt5mancount"></span></h2>
+      <div class="wrap" id="mt5manual"></div></section>
     <section class="mt5sect"><h2>Pending orders <span class="num" id="mt5ordcount"></span></h2>
       <div class="wrap" id="mt5orders"></div></section>
   </div>
@@ -1099,15 +1101,26 @@ function renderMt5(d) {
       <td class="n">${mt5Magic(p.magic)}</td><td>${esc(p.comment || '')}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No open positions.</div>');
 
-  const eas = d.by_ea || [];
-  document.getElementById('mt5eacount').textContent = eas.length ? `(${eas.length})` : '';
-  setHtml('mt5byea', eas.length ? `<table class="mt5">
-    <thead><tr><th class="n">Magic</th><th>Symbols</th><th class="n">Positions</th><th class="n">Lots</th>
-      <th class="n">P&amp;L</th><th>Comment</th></tr></thead>
-    <tbody>${eas.map(e => `<tr><td class="n">${mt5Magic(e.magic)}</td><td>${esc((e.symbols || []).join(', '))}</td>
+  // magic 0 is a hand-placed trade, not an EA - keep the two apart
+  const groups = d.by_ea || [];
+  const eas = groups.filter(e => Number(e.magic));
+  const manual = groups.filter(e => !Number(e.magic));
+  const groupRows = list => list.map(e => `<tr><td class="n">${mt5Magic(e.magic)}</td>
+      <td>${esc((e.symbols || []).join(', '))}</td>
       <td class="n">${esc(e.positions)}</td><td class="n">${esc(e.volume)}</td>
       <td class="n ${mt5Cls(e.profit)}">${mt5Money(e.profit, '')}</td>
-      <td>${esc((e.comments || []).join(', '))}</td></tr>`).join('')}</tbody></table>`
+      <td>${esc((e.comments || []).join(', '))}</td></tr>`).join('');
+  const groupHead = `<thead><tr><th class="n">Magic</th><th>Symbols</th><th class="n">Positions</th>
+      <th class="n">Lots</th><th class="n">P&amp;L</th><th>Comment</th></tr></thead>`;
+
+  document.getElementById('mt5mancount').textContent = manual.length ? `(${manual.length})` : '';
+  setHtml('mt5manual', manual.length
+    ? `<table class="mt5">${groupHead}<tbody>${groupRows(manual)}</tbody></table>`
+    : '<div class="empty">No trades placed by hand.</div>');
+
+  document.getElementById('mt5eacount').textContent = eas.length ? `(${eas.length})` : '';
+  setHtml('mt5byea', eas.length ? `<table class="mt5">
+    ${groupHead}<tbody>${groupRows(eas)}</tbody></table>`
     : '<div class="empty">EAs appear here once they hold a position.</div>');
 
   const ords = d.orders || [];
