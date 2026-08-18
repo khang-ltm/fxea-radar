@@ -1754,6 +1754,21 @@ const TREE_SHUT = new Set((() => {
   try { return JSON.parse(localStorage.getItem(TREE_KEY) || '[]'); } catch { return []; }
 })());
 
+function leafRows(rows, running, indent) {
+  return rows.map(e => {
+    const on = running.has(e.name);
+    return `<tr>
+      <td${indent ? ' class="tree__leaf"' : ''}>${esc(e.name)}</td>
+      <td class="n">${fmtSize(e.size_bytes)}</td>
+      <td>${on ? '<span class="badge badge--pass">on a chart</span>'
+               : '<span class="shot-none">idle</span>'}</td>
+      <td style="text-align:right">${on
+        ? '<span class="shot-none">pause it first</span>'
+        : `<button class="chip ghost" data-remove="${esc(e.path)}"
+             data-name="${esc(e.name)}">Delete</button>`}</td></tr>`;
+  }).join('');
+}
+
 function renderInstalled(charts, paused) {
   const running = new Set([
     ...charts.filter(c => c.expert).map(c => c.expert),
@@ -1779,6 +1794,9 @@ function renderInstalled(charts, paused) {
       <th style="text-align:right">Action</th></tr></thead>
     <tbody>${folders.map(folder => {
       const rows = byFolder.get(folder).slice().sort((a, b) => a.name.localeCompare(b.name));
+      // one folder needs no folder header: with the terminal's own folders hidden
+      // that is the usual case, and a tree of one branch is just a wasted row
+      if (folders.length === 1) return leafRows(rows, running);
       const shut = TREE_SHUT.has(folder);
       return `<tr class="tree__folder"><td colspan="4">
           <button class="chip ghost" data-folder="${esc(folder)}"
@@ -1788,18 +1806,7 @@ function renderInstalled(charts, paused) {
               rows.filter(e => running.has(e.name)).length
                 ? `, ${rows.filter(e => running.has(e.name)).length} live` : ''})</span>
           </button></td></tr>`
-        + (shut ? '' : rows.map(e => {
-          const on = running.has(e.name);
-          return `<tr>
-            <td class="tree__leaf">${esc(e.name)}</td>
-            <td class="n">${fmtSize(e.size_bytes)}</td>
-            <td>${on ? '<span class="badge badge--pass">on a chart</span>'
-                     : '<span class="shot-none">idle</span>'}</td>
-            <td style="text-align:right">${on
-              ? '<span class="shot-none">pause it first</span>'
-              : `<button class="chip ghost" data-remove="${esc(e.path)}"
-                   data-name="${esc(e.name)}">Delete</button>`}</td></tr>`;
-        }).join(''));
+        + (shut ? '' : leafRows(rows, running, true));
     }).join('')}</tbody></table>`
     : '<div class="empty">Nothing installed from the catalog yet.</div>');
 
