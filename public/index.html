@@ -1573,6 +1573,13 @@ const inputCell = i => {
     <dd title="${esc(v)}">${esc(v)}</dd></dl>`;
 };
 
+/* MQL5 numbers its timeframes 1..30 for minutes and then jumps: H1 is 16385,
+   D1 is 16408. The raw number tells nobody anything. */
+const TF_NAMES = { 1: 'M1', 2: 'M2', 3: 'M3', 4: 'M4', 5: 'M5', 6: 'M6', 10: 'M10', 12: 'M12',
+  15: 'M15', 20: 'M20', 30: 'M30', 16385: 'H1', 16386: 'H2', 16387: 'H3', 16388: 'H4',
+  16390: 'H6', 16392: 'H8', 16396: 'H12', 16408: 'D1', 32769: 'W1', 49153: 'MN1' };
+const tfName = p => TF_NAMES[Number(p)] || String(p ?? '');
+
 /* ── EA settings dialog ────────────────────────────────────────────────────
    The values come from the chart template, so they are exactly what the EA is
    running with. Applying writes them back through the same template, which
@@ -1610,7 +1617,7 @@ function openEaSettings(chartId) {
 
   document.getElementById('ea-title').textContent = shortEa(c.expert);
   document.getElementById('ea-sub').textContent =
-    `${c.symbol} · magic ${chart_magic(c) || 'unknown'} · ${EA_EDIT.inputs.length} settings`;
+    `${c.symbol} ${tfName(c.period)} · magic ${chart_magic(c) || 'unknown'} · ${EA_EDIT.inputs.length} settings`;
 
   document.getElementById('ea-inputs').innerHTML = EA_EDIT.inputs.map((i, n) => {
     if (isHeading(i)) return `<h3>${esc(headingText(i.k))}</h3>`;
@@ -1745,7 +1752,7 @@ async function loadCharts(quiet) {
     + (d.version ? ` <span class="hint">v${esc(d.version)}</span>` : '');
   charts.sort((a, b) => (b.expert ? 1 : 0) - (a.expert ? 1 : 0));
   setHtml('chartstable', charts.length ? `<table class="mt5">
-    <thead><tr><th>Expert</th><th>Symbol</th><th class="n">Open</th><th class="n">Floating</th>
+    <thead><tr><th>Expert</th><th>Symbol</th><th class="n">TF</th><th class="n">Open</th><th class="n">Floating</th>
       <th class="n">Trades</th><th class="n">Win%</th><th class="n">Realised 30d</th>
       <th>Last trade<span data-tz></span></th><th style="text-align:right">Action</th></tr></thead>
     <tbody>${charts.map(c => {
@@ -1775,6 +1782,7 @@ async function loadCharts(quiet) {
       return `<tr>
       <td>${esc(c.expert || '—')} ${c.expert ? link : ''} ${settings}</td>
       <td>${esc(c.symbol)}</td>
+      <td class="n">${esc(tfName(c.period))}</td>
       <td class="n">${r && r.open ? r.open : '—'}</td>
       <td class="n ${r ? mt5Cls(r.floating) : ''}">${r && r.open ? mt5Money(r.floating, '') : '—'}</td>
       <td class="n">${r && r.trades ? r.trades : '—'}</td>
@@ -1794,7 +1802,7 @@ async function loadCharts(quiet) {
     <thead><tr><th>Expert</th><th>Symbol</th><th class="n">TF</th>
       <th style="text-align:right">Action</th></tr></thead>
     <tbody>${paused.map(x => `<tr>
-      <td>${esc(x.expert || '—')}</td><td>${esc(x.symbol)}</td><td class="n">${esc(String(x.period))}</td>
+      <td>${esc(x.expert || '—')}</td><td>${esc(x.symbol)}</td><td class="n">${esc(tfName(x.period))}</td>
       <td style="text-align:right"><button class="chip" data-run="${esc(String(x.key))}"
         data-name="${esc(x.expert)} on ${esc(x.symbol)}">Run</button></td></tr>`).join('')}</tbody></table>`
     : '');
