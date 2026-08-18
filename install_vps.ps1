@@ -144,6 +144,26 @@ if ($SkipTask) {
     exit 0
 }
 
+# --- 7-Zip: the channel posts .rar, and Windows' own tar only reads rar4 -----
+# Installed silently, and skipped when it is already there. Without it an
+# install from the catalog fails on any rar5 archive, which is most of them.
+$sevenZip = 'C:\Program Files-Zipz.exe'
+if (-not (Test-Path $sevenZip)) {
+    Say 'installing 7-Zip (needed to unpack .rar posts)'
+    $exe = Join-Path $env:TEMP '7z-setup.exe'
+    try {
+        Invoke-WebRequest 'https://www.7-zip.org/a/7z2408-x64.exe' -OutFile $exe -UseBasicParsing
+        Start-Process -FilePath $exe -ArgumentList '/S' -Wait
+        Remove-Item $exe -Force -ErrorAction SilentlyContinue
+        if (Test-Path $sevenZip) { Say '7-Zip installed' 'Green' }
+        else { Say '7-Zip did not install - .rar archives will need extracting by hand' 'Yellow' }
+    } catch {
+        Say "7-Zip download failed: $_" 'Yellow'
+    }
+} else {
+    Say '7-Zip already installed'
+}
+
 # --- boot task, self-updating ------------------------------------------------
 $runner = Join-Path $InstallDir 'run_agent.ps1'
 @"

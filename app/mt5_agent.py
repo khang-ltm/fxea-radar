@@ -943,8 +943,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "unauthorized"}, 401)
                 return
             from . import installer
+            tool = installer._extractor()
             self._json({"ok": True, "telegram": installer.session_ready(),
-                        "extractor": installer._extractor() is not None,
+                        "extractor": tool is not None,
+                        # which tool matters: Windows' own tar reads rar4 but not
+                        # rar5, and most channel archives are rar
+                        "extractor_tool": pathlib.Path(tool[0]).name if tool else None,
                         "pin": bool(AGENT_PIN), "channels": config.CHANNELS})
             return
         if path == "/api/health":
