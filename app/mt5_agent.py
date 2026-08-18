@@ -730,7 +730,7 @@ def install_ea(channel: str, message_id) -> dict:
     return result
 
 
-def read_terminal_log(lines: int = 60, needle: str = "") -> dict:
+def read_terminal_log(lines: int = 60, needle: str = "", which: str = "experts") -> dict:
     """The tail of MT5's own Experts log.
 
     An EA that loads and then calls ExpertRemove - a licence check failing, a
@@ -742,8 +742,11 @@ def read_terminal_log(lines: int = 60, needle: str = "") -> dict:
     if d is None:
         return {"ok": False, "error": _init_error or "terminal not readable"}
 
+    # two different logs: MQL5/Logs is what EAs print, and the terminal's own
+    # logs folder is the Journal, where MT5 records alerts and unloads
+    folders = [d.parent / "Logs"] if which == "experts" else [d.parent.parent / "logs"]
     logs = []
-    for folder in (d.parent / "Logs", d.parent.parent / "logs"):
+    for folder in folders:
         if folder.is_dir():
             logs += [f for f in folder.glob("*.log") if f.is_file()]
     if not logs:
@@ -1002,7 +1005,8 @@ class Handler(BaseHTTPRequestHandler):
                 want = int(qs.get("lines", ["60"])[0])
             except ValueError:
                 want = 60
-            self._json(read_terminal_log(want, qs.get("q", [""])[0]))
+            self._json(read_terminal_log(want, qs.get("q", [""])[0],
+                                        qs.get("which", ["experts"])[0]))
             return
         if path == "/api/health":
             self._json({"ok": True, "agent": "read-only", "terminal_running": _terminal_running()})
