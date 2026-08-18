@@ -933,19 +933,24 @@ const TF_BY_NAME = Object.fromEntries(
 function attachBtn(p) {
   const pair = (p.pairs || []).find(x => /^[A-Z0-9.]{5,12}$/.test(x)) || '';
   const tf = (p.timeframes || []).map(x => TF_BY_NAME[String(x).toUpperCase()]).find(Boolean) || '';
+  const file = (p.files || []).find(f => /\.(rar|zip|ex5)$/i.test(f.name || ''));
+  const canFetch = file && INSTALLABLE.telegram && p.message_id;
+  // Fetching stays available after an install: a newer version gets posted, or a
+  // reinstall is simply the fastest way to put the files back where they belong.
+  const fetchBtn = !canFetch ? '' : `<button class="chip chip--icon"
+     data-install="${esc(String(p.message_id))}" data-channel="${esc(p.channel || '')}"
+     data-ea="${esc(p.name)}" data-sym="${esc(pair)}" data-tf="${tf}"
+     data-file="${esc(file.name)}"
+     title="Install ${esc(file.name)} on the VPS from the channel">${ICON.download}</button>`;
+
   const hit = installedFor(p.name);
   if (hit) {
     return `<button class="chip chip--icon" data-attach="${esc(hit.name)}" data-path="${esc(hit.path)}"
        data-sym="${esc(pair)}" data-tf="${tf}"
-       title="Put ${esc(hit.name)} on a chart">${ICON.chart}</button>`;
+       title="Put ${esc(hit.name)} on a chart (installed as ${esc(hit.path)})">${ICON.chart}</button>`
+      + fetchBtn;
   }
-  // not on the VPS yet: the agent can fetch this very message and install it
-  const file = (p.files || []).find(f => /\.(rar|zip|ex5)$/i.test(f.name || ''));
-  if (!file || !INSTALLABLE.telegram || !p.message_id) return '';
-  return `<button class="chip chip--icon" data-install="${esc(String(p.message_id))}"
-     data-channel="${esc(p.channel || '')}" data-ea="${esc(p.name)}"
-     data-sym="${esc(pair)}" data-tf="${tf}" data-file="${esc(file.name)}"
-     title="Install ${esc(file.name)} on the VPS, then put it on a chart">${ICON.download}</button>`;
+  return fetchBtn;
 }
 
 function row(p) {
