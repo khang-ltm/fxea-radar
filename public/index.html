@@ -1617,7 +1617,8 @@ function openEaSettings(chartId) {
     if (isHeading(i)) return `<h3>${esc(headingText(i.k))}</h3>`;
     const long = String(i.v).length > 18 || /[a-z]{4,}\s/i.test(String(i.v));
     return `<div class="setrow${long ? ' text' : ''}" data-row="${n}">
-      <label for="ea-in-${n}">${esc(prettyKey(i.k))}<small>${esc(i.k)}</small></label>
+      <label for="ea-in-${n}">${esc(prettyKey(i.k))}${/magic/i.test(i.k)
+        ? ' <span class="badge">identity</span>' : ''}<small>${esc(i.k)}</small></label>
       <input id="ea-in-${n}" data-idx="${n}" value="${esc(i.v)}" spellcheck="false"
         ${EA_EDIT.open ? 'readonly' : ''}></div>`;
   }).join('');
@@ -1663,13 +1664,40 @@ document.getElementById('ea-close').onclick = () => eaDlg.close();
 eaDlg.addEventListener('click', e => { if (e.target === eaDlg) eaDlg.close(); });
 document.getElementById('ea-reset').onclick = () => openEaSettings(EA_EDIT.chart);
 
+/* The magic number is not an ordinary setting: it is how the EA recognises its
+   own trades, and how this page attributes them. Two EAs sharing one is the
+   bad case - they manage each other's positions. */
+const isMagicKey = k => /magic/i.test(k);
+
+function magicObjection(changes) {
+  const entry = Object.entries(changes).find(([k]) => isMagicKey(k));
+  if (!entry) return '';
+  const want = Number(entry[1]);
+  if (!Number.isInteger(want) || want < 0) return `${entry[1]} is not a magic number.`;
+
+  const clash = CHARTS.find(c => Number(c.magic) === want && c.chart !== EA_EDIT.chart);
+  if (clash) {
+    return `Magic ${want} already belongs to ${shortEa(clash.expert)} on ${clash.symbol}.`
+      + ' Two EAs on one magic manage each other trades.';
+  }
+  return '';
+}
+
 document.getElementById('ea-save').onclick = async () => {
   const changes = eaChanges();
+  const objection = magicObjection(changes);
+  if (objection) { alert(objection + String.fromCharCode(10, 10) + 'Nothing applied.'); return; }
+
   const list = Object.entries(changes)
     .map(([k, v]) => `  ${prettyKey(k)}: ${EA_EDIT.inputs.find(i => i.k === k).v} -> ${v}`)
     .join(String.fromCharCode(10));
+  const magicWarning = Object.keys(changes).some(isMagicKey)
+    ? String.fromCharCode(10, 10)
+      + 'Changing the magic number: this EA stops recognising trades it already'
+      + ' placed, and its results on this page start from zero.'
+    : '';
   const what = `Apply to ${shortEa(EA_EDIT.expert)}?${String.fromCharCode(10, 10)}${list}`
-    + String.fromCharCode(10, 10) + 'The EA reloads. Open trades stay open.';
+    + String.fromCharCode(10, 10) + 'The EA reloads. Open trades stay open.' + magicWarning;
   if (!confirm(what)) return;
 
   const note = document.getElementById('ea-note');
