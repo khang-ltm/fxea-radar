@@ -517,6 +517,24 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
   <div class="sheet__body" id="detail-body"></div>
 </dialog>
 
+<dialog class="sheet" id="linkdlg" aria-labelledby="link-title" style="width:min(94vw,520px)">
+  <div class="sheet__bar">
+    <h2 id="link-title">Link chart to an EA</h2>
+    <button class="btn" id="link-cancel">Cancel</button>
+  </div>
+  <div class="sheet__body">
+    <p class="hint" id="link-what"></p>
+    <select id="link-pick" style="width:100%"></select>
+    <p class="hint">Trades carry the EA own comment, which often looks nothing like the
+      file name on the chart. Pick the magic number this chart trades under and the
+      results stay linked on this browser.</p>
+    <div style="display:flex; gap:8px; justify-content:flex-end">
+      <button class="btn" id="link-clear">Clear link</button>
+      <button class="btn btn--primary" id="link-save">Save</button>
+    </div>
+  </div>
+</dialog>
+
 <script>
 'use strict';
 let mt5Stream = null;   // declared up here: functions below run before the
@@ -1432,6 +1450,38 @@ function sumRows(list) {
   return t;
 }
 
+/* window.prompt is blocked in some browsers and unreadable with 16 magics in
+   it, so linking uses a real dialog listing what each magic actually traded. */
+const linkDlg = document.getElementById('linkdlg');
+let LINK_CHART = null;
+
+function openLinkDialog(chart, expert, symbol) {
+  LINK_CHART = chart;
+  document.getElementById('link-what').textContent = expert || 'this chart';
+  const cur = eaMap()[chart];
+  const here = EA_ROWS.filter(r => r.magic && (!symbol || r.symbols.includes(symbol)));
+  const rest = EA_ROWS.filter(r => r.magic && !here.includes(r));
+  const opt = r => `<option value="${r.magic}" ${r.magic === cur ? 'selected' : ''}>`
+    + esc(`${r.magic} — ${r.name || 'no comment'} · ${r.symbols.join(', ') || '?'} · ${r.trades} trades`)
+    + '</option>';
+  document.getElementById('link-pick').innerHTML =
+    '<option value="">— not linked —</option>'
+    + (here.length ? `<optgroup label="traded ${esc(symbol || '')}">${here.map(opt).join('')}</optgroup>` : '')
+    + (rest.length ? `<optgroup label="other symbols">${rest.map(opt).join('')}</optgroup>` : '');
+  linkDlg.showModal();
+}
+
+document.getElementById('link-cancel').onclick = () => linkDlg.close();
+linkDlg.addEventListener('click', e => { if (e.target === linkDlg) linkDlg.close(); });
+document.getElementById('link-clear').onclick = () => {
+  eaMapSet(LINK_CHART, null); linkDlg.close(); loadCharts();
+};
+document.getElementById('link-save').onclick = () => {
+  const v = document.getElementById('link-pick').value;
+  eaMapSet(LINK_CHART, v ? Number(v) : null);
+  linkDlg.close(); loadCharts();
+};
+
 /* ── charts / unload ───────────────────────────────────────────────────────
    FxeaManager.mq5 reports which EA sits on which chart and can close one, which
    is the only way to stop a compiled EA from outside. Chart names and trade
@@ -1474,13 +1524,15 @@ async function loadCharts() {
       const r = sumRows(m.rows);
       const rate = r && r.trades ? Math.round(100 * r.wins / r.trades) : null;
       const link = `<button class="chip" data-link="${esc(String(c.chart))}"
-          title="no match found - pick the EA by magic number">link</button>`;
+          data-name="${esc(c.expert || '')}" data-sym="${esc(c.symbol)}"
+          title="pick which magic number this chart trades under">link</button>`;
       return `<tr>
-      <td>${esc(c.expert || '—')}${m.how === 'manual' ? ' <span class="badge">linked</span>' : ''}</td>
+      <td>${esc(c.expert || '—')}${m.how === 'manual' ? ' <span class="badge">linked</span>' : ''}
+        ${c.expert ? link : ''}</td>
       <td>${esc(c.symbol)}</td>
       <td class="n">${r && r.open ? r.open : '—'}</td>
       <td class="n ${r ? mt5Cls(r.floating) : ''}">${r && r.open ? mt5Money(r.floating, '') : '—'}</td>
-      <td class="n">${r && r.trades ? r.trades : (r ? '—' : link)}</td>
+      <td class="n">${r && r.trades ? r.trades : '—'}</td>
       <td class="n">${rate == null ? '—' : rate + '%'}</td>
       <td class="n ${r ? mt5Cls(r.realised) : ''}">${r && r.trades ? mt5Money(r.realised, '') : '—'}</td>
       <td class="mono">${r ? esc(mt5Time(r.last)) : '—'}</td>
@@ -1506,15 +1558,7 @@ async function loadCharts() {
     b.onclick = () => managerAction('pause', { chart: Number(b.dataset.pause) }, b.dataset.name);
   }
   for (const b of document.querySelectorAll('[data-link]')) {
-    b.onclick = () => {
-      const opts = EA_ROWS.map(r => `${r.magic} - ${r.name || 'no comment'}`).join(String.fromCharCode(10));
-      const pick = prompt('Which magic number belongs to this chart?'
-        + String.fromCharCode(10, 10) + opts + String.fromCharCode(10, 10)
-        + 'Enter the magic number, or leave blank to clear.');
-      if (pick === null) return;
-      eaMapSet(b.dataset.link, pick.trim() ? Number(pick.trim()) : null);
-      loadCharts();
-    };
+    b.onclick = () => openLinkDialog(b.dataset.link, b.dataset.name, b.dataset.sym);
   }
   for (const b of document.querySelectorAll('[data-run]')) {
     b.onclick = () => managerAction('run', { key: b.dataset.run }, b.dataset.name);
