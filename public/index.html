@@ -2082,7 +2082,8 @@ async function loadCharts(quiet) {
              title="see and change what this EA is set to">settings</button>`
         : '';
       return `<tr>
-      <td>${esc(c.expert || '—')} ${c.expert ? link : ''} ${settings}</td>
+      <td>${c.expert ? esc(c.expert) : '<span class="shot-none">empty chart</span>'}
+        ${c.expert ? link : ''} ${settings}</td>
       <td>${esc(c.symbol)}</td>
       <td class="n">${esc(tfName(c.period))}</td>
       <td class="n">${r && r.open ? r.open : '—'}</td>
@@ -2094,7 +2095,8 @@ async function loadCharts(quiet) {
       <td style="text-align:right">${c.expert
         ? `<button class="chip" data-pause="${esc(String(c.chart))}"
              data-name="${esc(c.expert)} on ${esc(c.symbol)}">Pause</button>`
-        : '<span class="shot-none">no EA</span>'}</td></tr>`
+        : `<button class="chip ghost" data-close="${esc(String(c.chart))}"
+             data-name="the empty ${esc(c.symbol)} chart">Close chart</button>`}</td></tr>`
       ;
     }).join('')}</tbody></table>`
     : '<div class="empty">No other charts open.</div>');
@@ -2124,6 +2126,9 @@ async function loadCharts(quiet) {
   for (const b of document.querySelectorAll('[data-link]')) {
     b.onclick = () => openLinkDialog(b.dataset.link, b.dataset.name, b.dataset.sym);
   }
+  for (const b of document.querySelectorAll('[data-close]')) {
+    b.onclick = () => managerAction('unload', { chart: Number(b.dataset.close) }, b.dataset.name);
+  }
   for (const b of document.querySelectorAll('[data-forget]')) {
     b.onclick = () => managerAction('forget', { key: b.dataset.forget }, b.dataset.name);
   }
@@ -2133,14 +2138,16 @@ async function loadCharts(quiet) {
 }
 
 async function managerAction(action, args, label) {
-  const verb = { pause: 'Pause', forget: 'Discard' }[action] || 'Run';
+  const verb = { pause: 'Pause', forget: 'Discard', unload: 'Close' }[action] || 'Run';
   const note = action === 'pause'
     ? 'The EA stops. Its settings are saved, so Run brings it back. '
       + 'Positions and orders it already placed stay open.'
     : action === 'forget'
       ? 'Drops it from this list along with the settings Run would have restored. '
         + 'Nothing is running, so nothing stops. Any trades it left stay open.'
-      : 'The chart reopens with the EA and its saved settings.';
+      : action === 'unload'
+        ? 'Closes the chart. There is no EA on it, so nothing stops trading.'
+        : 'The chart reopens with the EA and its saved settings.';
   if (!confirm(`${verb} ${label}?
 
 ${note}`)) return;

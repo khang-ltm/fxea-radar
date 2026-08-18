@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.23"
+#property version   "1.24"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.23", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.24", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -256,7 +256,8 @@ void ChartProbe(const long id, const string expert, long &magic, string &inputs)
    g_pm_magic[n]  = magic;
    g_pm_inputs[n] = inputs;
    if(VerboseLog)
-      PrintFormat("settings for %s on chart %I64d: magic %s", expert, id,
+      PrintFormat("settings for %s on chart %I64d: magic %s",
+                  StringLen(expert) > 0 ? expert : "(no EA)", id,
                   magic > 0 ? (string)magic : "not found");
   }
 
@@ -270,7 +271,11 @@ void WriteStatus()
    while(id >= 0)
      {
       string expert = ChartGetString(id, CHART_EXPERT_NAME);
+      if(StringLen(expert) == 0)
+         expert = "";                   // a NULL string prints as "(null)"
       string symbol = ChartSymbol(id);
+      if(StringLen(symbol) == 0)
+         symbol = "";
       long   period = ChartPeriod(id);
 
       long   magic  = 0;
@@ -304,7 +309,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.23",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.24",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
