@@ -730,6 +730,45 @@ def install_ea(channel: str, message_id) -> dict:
     return result
 
 
+def read_terminal_log(lines: int = 60, needle: str = "") -> dict:
+    """The tail of MT5's own Experts log.
+
+    An EA that loads and then calls ExpertRemove - a licence check failing, a
+    symbol it refuses to trade - leaves a chart with no EA on it and no clue
+    anywhere this agent could see. MT5 writes the reason here, so read it: the
+    file is the terminal's, plain text, and nothing is ever written back.
+    """
+    d = _mql5_files_dir()
+    if d is None:
+        return {"ok": False, "error": _init_error or "terminal not readable"}
+
+    logs = []
+    for folder in (d.parent / "Logs", d.parent.parent / "logs"):
+        if folder.is_dir():
+            logs += [f for f in folder.glob("*.log") if f.is_file()]
+    if not logs:
+        return {"ok": False, "error": "no log files found"}
+
+    newest = max(logs, key=lambda f: f.stat().st_mtime)
+    try:
+        text = newest.read_text(encoding="utf-16-le", errors="replace")
+        if "\x00" in text or text.count(chr(0)) > 10:      # not utf-16 after all
+            raise UnicodeError
+    except (UnicodeError, OSError):
+        try:
+            text = newest.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            return {"ok": False, "error": f"cannot read {newest.name}: {exc}"}
+
+    rows = [r.rstrip() for r in text.splitlines() if r.strip()]
+    if needle:
+        low = needle.lower()
+        rows = [r for r in rows if low in r.lower()]
+    return {"ok": True, "file": newest.name,
+            "at": datetime.fromtimestamp(newest.stat().st_mtime, timezone.utc).isoformat(),
+            "lines": rows[-max(1, min(400, lines)):]}
+
+
 def manager_command(action: str, **fields) -> dict:
     """Drop a command file, wait for the EA to answer, return its verdict."""
     d = _mql5_files_dir()
@@ -953,6 +992,17 @@ class Handler(BaseHTTPRequestHandler):
                         "extractor_zip": pathlib.Path(other[0]).name if other else None,
                         "seven_zip": installer._seven_zip() is not None,
                         "pin": bool(AGENT_PIN), "channels": config.CHANNELS})
+            return
+        if path == "/api/logs":
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                want = int(qs.get("lines", ["60"])[0])
+            except ValueError:
+                want = 60
+            self._json(read_terminal_log(want, qs.get("q", [""])[0]))
             return
         if path == "/api/health":
             self._json({"ok": True, "agent": "read-only", "terminal_running": _terminal_running()})
