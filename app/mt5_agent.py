@@ -704,11 +704,13 @@ def _check_attach(body: dict) -> str:
     if not symbol_exists(symbol):
         return f"{symbol} is not a symbol at this broker"
 
-    if body.get("inputs"):            # a .set file, or values chosen in the page
-        staged = _stage_inputs(body["inputs"], None)
-        if isinstance(staged, str):
-            return staged
-    return ""
+    settings = body.get("inputs") or None
+    if settings and not isinstance(settings, dict):
+        return "inputs must be a name/value object"
+
+    # everything the manager needs is in the template, so build it here where
+    # there is no MQL5 sandbox to fight
+    return stage_attach_template(expert, path, settings)
 
 
 def experts_dir() -> pathlib.Path | None:
@@ -777,6 +779,89 @@ def read_terminal_log(lines: int = 60, needle: str = "", which: str = "experts")
     return {"ok": True, "file": newest.name,
             "at": datetime.fromtimestamp(newest.stat().st_mtime, timezone.utc).isoformat(),
             "lines": rows[-max(1, min(400, lines)):]}
+
+
+ATTACH_TEMPLATE = "fxea_attach"
+
+# A chart template MT5 will accept for an EA that has never been on a chart. The
+# terminal's own default.tpl is used when present, so the chart looks normal.
+MINIMAL_TEMPLATE = """<chart>
+period_type=0
+period_size=1
+<window>
+height=100.000000
+</window>
+</chart>
+"""
+
+
+def _templates_dir() -> pathlib.Path | None:
+    """MQL5/Profiles/Templates - the only place ChartApplyTemplate reads from.
+
+    MQL5 file functions can only write inside MQL5/Files, which is why the manager
+    used to edit its template there and then apply it from there - and MT5
+    answered "ChartApplyTemplate failed (error 4101)" every time. Python has no
+    such sandbox, so the template is built here instead.
+    """
+    d = _mql5_files_dir()
+    return None if d is None else d.parent / "Profiles" / "Templates"
+
+
+def stage_attach_template(expert: str, path: str, inputs: dict | None) -> str:
+    """Write fxea_attach.tpl with this EA in it. Returns "" or a reason."""
+    tdir = _templates_dir()
+    if tdir is None:
+        return _init_error or "terminal not readable"
+    try:
+        tdir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"cannot use the templates folder: {exc}"
+
+    base = tdir / "default.tpl"
+    try:
+        # latin-1 round-trips every byte, so nothing in the terminal's own
+        # template is corrupted by reading and rewriting it
+        text = base.read_text(encoding="latin-1") if base.exists() else MINIMAL_TEMPLATE
+    except OSError:
+        text = MINIMAL_TEMPLATE
+
+    lines, out, skipping, placed = text.splitlines(), [], False, False
+    for line in lines:
+        low = line.strip().lower()
+        if low == "<expert>":                  # drop whatever EA it carried
+            skipping = True
+            continue
+        if low == "</expert>":
+            skipping = False
+            continue
+        if skipping:
+            continue
+        if not placed and low == "<window>":
+            out.append("<expert>")
+            out.append(f"name={expert}")
+            out.append("flags=343")
+            if path:
+                out.append(f"path={path}")
+            if inputs:
+                out.append("<inputs>")
+                out += [f"{k}={v}" for k, v in inputs.items()]
+                out.append("</inputs>")
+            out.append("</expert>")
+            placed = True
+        out.append(line)
+
+    if not placed:                             # no window section: append at the end
+        out += ["<expert>", f"name={expert}", "flags=343"]
+        if path:
+            out.append(f"path={path}")
+        out.append("</expert>")
+
+    try:
+        (tdir / f"{ATTACH_TEMPLATE}.tpl").write_text(
+            chr(10).join(out) + chr(10), encoding="latin-1", errors="replace")
+    except OSError as exc:
+        return f"cannot write the attach template: {exc}"
+    return ""
 
 
 def manager_command(action: str, **fields) -> dict:

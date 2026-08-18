@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.22"
+#property version   "1.23"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.22", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.23", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -304,7 +304,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.22",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.23",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -746,19 +746,18 @@ void DoAttach(const string id, const string expert, const string path,
       scan = ChartNext(scan);
      }
 
-   // Open the chart first, then template it from ITSELF. Borrowing the manager's
-   // template dragged its chart properties, its expertmode flags and a window
-   // section with 144 objects and indicators onto every EA we attached - a lot of
-   // someone else's environment for an EA to wake up in. Its own template plus an
-   // expert block is the smallest possible change.
+   // The agent has already written fxea_attach.tpl into Profiles\\Templates with
+   // this EA in it. That split exists because MQL5 file functions can only write
+   // inside MQL5\\Files, while ChartApplyTemplate only reads templates from
+   // Profiles\\Templates - editing a template in Files and applying it from there
+   // failed with error 4101 every single time, which is why no EA ever loaded.
    long target = ChartOpen(symbol, (ENUM_TIMEFRAMES)period);
    if(target == 0)
      {
       WriteResult(id, false, StringFormat("ChartOpen failed (error %d)", GetLastError()));
       return;
      }
-   // ChartOpen returns an id before the chart is necessarily usable, and acting
-   // too early gave "ChartApplyTemplate failed (error 4101)" - chart not found
+
    bool ready = false;
    for(int wait = 0; wait < 40 && !ready; wait++)
      {
@@ -767,99 +766,20 @@ void DoAttach(const string id, const string expert, const string path,
      }
    if(!ready)
      {
+      ChartClose(target);
       WriteResult(id, false, "the new chart never became usable");
       return;
      }
 
-   string file = ATTACH_NAME + ".tpl";
-   if(FileIsExist(file))
-      FileDelete(file);
-   if(!ChartSaveTemplate(target, "\\Files\\" + ATTACH_NAME))
+   if(!ChartApplyTemplate(target, ATTACH_NAME))
      {
+      int err = GetLastError();
       ChartClose(target);
-      WriteResult(id, false, "could not save the new chart template");
-      return;
-     }
-   for(int wait = 0; wait < 20 && !FileIsExist(file); wait++)
-      Sleep(50);
-
-   string lines[];
-   if(!ReadLines(file, lines))
-     {
-      ChartClose(target);
-      WriteResult(id, false, "could not read the new chart template");
+      WriteResult(id, false, StringFormat("ChartApplyTemplate failed (error %d)", err));
       return;
      }
 
-   string inputs = StagedInputs();
-   string out[];
-   int    written = 0;
-   bool   placed  = false;
-
-   for(int i = 0; i < ArraySize(lines); i++)
-     {
-      string low = lines[i];
-      StringTrimLeft(low);
-      StringTrimRight(low);
-      StringToLower(low);
-
-      // the expert block belongs after the chart properties and before the first
-      // window section, which is where MT5 itself writes it
-      if(!placed && low == "<window>")
-        {
-         placed = true;
-         ArrayResize(out, written + 3);
-         out[written++] = "<expert>";
-         out[written++] = "name=" + expert;
-         out[written++] = "flags=343";             // as MT5 writes for a normal EA
-         if(path != "")
-           {
-            ArrayResize(out, written + 1);
-            out[written++] = "path=" + path;
-           }
-         if(inputs != "")
-           {
-            ArrayResize(out, written + 1);
-            out[written++] = "<inputs>";
-            string pairs[];
-            int np = StringSplit(inputs, (ushort)10, pairs);
-            for(int j = 0; j < np; j++)
-               if(StringFind(pairs[j], "=") > 0)
-                 {
-                  ArrayResize(out, written + 1);
-                  out[written++] = pairs[j];
-                 }
-            ArrayResize(out, written + 1);
-            out[written++] = "</inputs>";
-           }
-         ArrayResize(out, written + 1);
-         out[written++] = "</expert>";
-        }
-
-      ArrayResize(out, written + 1);
-      out[written++] = lines[i];
-     }
-   if(!placed)
-     {
-      ChartClose(target);
-      WriteResult(id, false, "the chart template has no window section to place the EA before");
-      return;
-     }
-   if(!WriteLines(file, out))
-     {
-      ChartClose(target);
-      WriteResult(id, false, "could not write the template");
-      return;
-     }
-
-   if(!ChartApplyTemplate(target, "\\Files\\" + ATTACH_NAME))
-     {
-      ChartClose(target);
-      WriteResult(id, false, StringFormat("ChartApplyTemplate failed (error %d)", GetLastError()));
-      return;
-     }
-
-   for(int wait = 0; wait < 40; wait++)
+   for(int wait = 0; wait < 60; wait++)
      {
       Sleep(100);
       if(StringLen(ChartGetString(target, CHART_EXPERT_NAME)) > 0)
@@ -868,7 +788,7 @@ void DoAttach(const string id, const string expert, const string path,
    if(StringLen(ChartGetString(target, CHART_EXPERT_NAME)) == 0)
      {
       ChartClose(target);                          // never leave a bare chart behind
-      WriteResult(id, false, "the EA did not load - is its .ex5 in MQL5\\Experts?");
+      WriteResult(id, false, "the template applied but no EA appeared on the chart");
       return;
      }
 
