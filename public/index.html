@@ -1178,7 +1178,8 @@ function renderMt5(d) {
    Realised results, i.e. closed deals. Deliberately a separate request from the
    live stream: it changes rarely, so it is fetched on demand and cached agent
    side rather than pushed every second. */
-let SUBTAB = localStorage.getItem('fxea_subtab') || 'pos';
+let SUBTAB = oneOf(urlParams.get('sub'), ['pos', 'ord', 'hist'],
+                  localStorage.getItem('fxea_subtab') || 'pos');
 let histTimer = 0;
 
 const SUBS = ['pos', 'ord', 'hist'];   // positions | pending orders | realised
