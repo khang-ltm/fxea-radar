@@ -309,12 +309,22 @@ def read_history(days: int = 30) -> dict:
     # frequently carries 0, which made real EA trades look manual. Build the
     # position -> magic map first, then attribute each close to its opener.
     magic_of_position: dict[int, int] = {}
+    comment_of_position: dict[int, str] = {}
     for dl in deals:
         d = _as_dict(dl)
         pid = int(d.get("position_id") or 0)
+        if not pid:
+            continue
         mg = int(d.get("magic") or 0)
-        if pid and mg and pid not in magic_of_position:
+        if mg and pid not in magic_of_position:
             magic_of_position[pid] = mg
+        # The EA's own comment sits on the opening deal; the closing deal carries
+        # the broker's close reason instead, e.g. "[sl 4402.25]", which is what
+        # MetaTrader shows in a separate column - not as the trade comment.
+        if int(d.get("entry") or 0) == 0:
+            cm = (d.get("comment") or "").strip()
+            if cm and pid not in comment_of_position:
+                comment_of_position[pid] = cm
 
     for dl in deals:
         d = _as_dict(dl)
@@ -338,7 +348,9 @@ def read_history(days: int = 30) -> dict:
         sym = d.get("symbol")
         if sym and sym not in e["symbols"]:
             e["symbols"].append(sym)
-        cm = (d.get("comment") or "").strip()
+        pid = int(d.get("position_id") or 0)
+        cm = comment_of_position.get(pid) or (d.get("comment") or "").strip()
+        close_reason = (d.get("comment") or "").strip()
         if cm and cm not in e["comments"]:
             e["comments"].append(cm)
 
@@ -353,6 +365,7 @@ def read_history(days: int = 30) -> dict:
             "profit": net,
             "magic": magic,
             "comment": cm,
+            "close_reason": close_reason if close_reason != cm else "",
             "closed_at": when.isoformat(),
         })
 
@@ -381,7 +394,7 @@ def read_history(days: int = 30) -> dict:
         },
         "by_ea": sorted(by_ea.values(), key=lambda e: e["profit"]),
         "by_day": [{"date": k, "profit": v} for k, v in sorted(by_day.items(), reverse=True)][:60],
-        "closed": closed[:100],
+        "closed": closed[:2000],
     }
     _hist_cache.update(at=now, days=days, data=data)
     return data

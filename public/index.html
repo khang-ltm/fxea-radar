@@ -320,6 +320,11 @@ table.mt5 thead th { text-align: left; padding: 8px var(--space-3); background: 
 table.mt5 tbody td { padding: 8px var(--space-3); border-top: 1px solid var(--color-border-soft); font-size: 13px; }
 table.mt5 tbody tr:hover { background: var(--color-surface-2); }
 table.mt5 td.n, table.mt5 th.n { text-align: right; font-family: var(--font-head); font-variant-numeric: tabular-nums; }
+table.mt5 td.mono { font-family: var(--font-head); font-variant-numeric: tabular-nums; text-align: left; }
+/* profit colouring applied everywhere, not just the tiles: table cells were
+   rendering Net in plain white */
+.pos { color: var(--color-accent); }
+.neg { color: var(--color-destructive); }
 .mt5rows { grid-column: 1 / -1; display: grid; gap: var(--space-1); }
 .mt5row { display: flex; align-items: center; gap: var(--space-2); padding: 5px 9px; font-size: 12px;
   background: var(--color-muted); border: 1px solid var(--color-border-soft); border-radius: var(--radius-sm); }
@@ -471,7 +476,8 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       </section>
 
       <section class="mt5sect"><h2>Closed trades <span class="num" id="histclosedcount"></span></h2>
-        <div class="wrap" id="histclosed"></div></section>
+        <div class="wrap" id="histclosed"></div>
+        <div class="more" id="histmore"></div></section>
     </div>
   </div>
 </main>
@@ -1177,6 +1183,9 @@ function renderMt5(d) {
 let SUBTAB = oneOf(urlParams.get('sub'), ['pos', 'ord', 'hist'],
                   localStorage.getItem('fxea_subtab') || 'pos');
 let histTimer = 0;
+const HIST_PAGE = 50;      // closed trades rendered at a time
+let histVisible = HIST_PAGE;
+let HIST = null;
 
 const SUBS = ['pos', 'ord', 'hist'];   // positions | pending orders | realised
 function showSub(name) {
@@ -1208,6 +1217,7 @@ async function loadHistory() {
     return;
   }
   if (!d.ok) { stats.textContent = 'agent: ' + (d.error || 'unknown error'); return; }
+  HIST = d;
   renderHistory(d);
 }
 
@@ -1228,23 +1238,33 @@ function renderHistory(d) {
   document.getElementById('histtiles').hidden = false;
   setHtml('histtiles', tiles);
 
-  const closed = d.closed || [];
-  document.getElementById('histclosedcount').textContent = closed.length ? `(${closed.length})` : '';
+  const all = d.closed || [];
+  const closed = all.slice(0, histVisible);
+  document.getElementById('histclosedcount').textContent =
+    all.length ? `(${closed.length} of ${all.length})` : '';
   setHtml('histclosed', closed.length ? `<table class="mt5">
     <thead><tr><th>Closed</th><th>Symbol</th><th>Side</th><th class="n">Lots</th>
       <th class="n">Net</th><th class="n">Magic</th><th>Comment</th></tr></thead>
     <tbody>${closed.map(c => `<tr>
-      <td class="n">${esc((c.closed_at || '').slice(0, 16).replace('T', ' '))}</td>
+      <td class="mono">${esc((c.closed_at || '').slice(0, 16).replace('T', ' '))}</td>
       <td>${esc(c.symbol)}</td>
       <td><span class="badge ${c.type === 'buy' ? 'badge--pass' : 'badge--loss'}">${esc(c.type)}</span></td>
       <td class="n">${mt5Lots(c.volume)}</td>
       <td class="n ${mt5Cls(c.profit)}">${mt5Money(c.profit, '')}</td>
       <td class="n">${mt5Magic(c.magic)}</td><td>${esc(c.comment || '')}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No closed trades in this window.</div>');
+
+  const left = all.length - closed.length;
+  setHtml('histmore', left > 0
+    ? `<button class="btn" id="histmorebtn">Show ${Math.min(HIST_PAGE, left)} more
+         <span class="num">(${closed.length}/${all.length})</span></button>`
+    : '');
+  const more = document.getElementById('histmorebtn');
+  if (more) more.onclick = () => { histVisible += HIST_PAGE; renderHistory(HIST); };
 }
 
 for (const sub of SUBS) document.getElementById('sub-' + sub).onclick = () => showSub(sub);
-document.getElementById('histdays').onchange = loadHistory;
+document.getElementById('histdays').onchange = () => { histVisible = HIST_PAGE; loadHistory(); };
 clearInterval(histTimer);
 histTimer = setInterval(loadHistory, 60000);   // no-op unless the History sub-tab is open
 
