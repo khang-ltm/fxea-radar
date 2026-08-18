@@ -212,14 +212,12 @@ Start-ScheduledTask -TaskName '$taskName'
 $wdName = 'fxea-mt5-updater'
 $wdAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$updater`""
-# RepetitionDuration is required: without it Windows registers the trigger as a
-# one-shot and the task never repeats.
-$wdTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
-    -RepetitionInterval (New-TimeSpan -Minutes 20) `
-    -RepetitionDuration ([TimeSpan]::MaxValue)
-Unregister-ScheduledTask -TaskName $wdName -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName $wdName -Action $wdAction -Trigger $wdTrigger `
-    -RunLevel Highest -Force | Out-Null
+# schtasks, not New-ScheduledTaskTrigger: a repetition interval without a
+# duration registers as a one-shot, and [TimeSpan]::MaxValue is rejected by Task
+# Scheduler as out of range. /SC MINUTE /MO 20 is unambiguous.
+schtasks /Delete /TN $wdName /F 2>$null | Out-Null
+$wdCmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$updater`""
+schtasks /Create /TN $wdName /TR $wdCmd /SC MINUTE /MO 20 /RL HIGHEST /F | Out-Null
 Say "watchdog task '$wdName' registered (checks every 20 min, restarts if needed)" 'Green'
 
 Get-Process python -ErrorAction SilentlyContinue |
