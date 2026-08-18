@@ -262,7 +262,7 @@ pre.raw { margin: var(--space-2) 0 0; padding: var(--space-3); background: var(-
 
 /* ── list view ─────────────────────────────────────────────────────────── */
 .row { display: grid; align-items: center; gap: var(--space-3);
-  grid-template-columns: minmax(0, 3fr) 78px 96px minmax(0, 1.4fr) 78px 70px 92px 132px;
+  grid-template-columns: minmax(0, 3fr) 78px 96px minmax(0, 1.4fr) 78px 70px 92px 166px;
   padding: 8px var(--space-4); border-bottom: 1px solid var(--color-border-soft); }
 .row:hover { background: var(--color-surface); }
 .row--head { position: sticky; top: 0; background: var(--color-background);
@@ -272,7 +272,9 @@ pre.raw { margin: var(--space-2) 0 0; padding: var(--space-3); background: var(-
 .row__name span.txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
 .row__num { font-family: var(--font-head); font-variant-numeric: tabular-nums;
   font-size: 12.5px; color: var(--color-muted-fg); }
-.row__act { display: flex; justify-content: flex-end; gap: 6px; }
+.row__act { display: flex; justify-content: flex-end; align-items: center; gap: 6px;
+  white-space: nowrap; }
+.chip--icon:not([hidden]) { padding: 0 8px; min-width: 30px; justify-content: center; }
 /* Verdict stays visible at every width - on a phone it is the column that matters. */
 @media (max-width: 1100px) { .row { grid-template-columns: minmax(0, 1fr) 78px 96px 92px 132px; } .row__hide2 { display: none; } }
 @media (max-width: 720px)  { .row { grid-template-columns: minmax(0, 1fr) 74px 124px; } .row__hide { display: none; } }
@@ -926,8 +928,9 @@ function attachBtn(p) {
   if (!hit) return '';
   const pair = (p.pairs || []).find(x => /^[A-Z0-9.]{5,12}$/.test(x)) || '';
   const tf = (p.timeframes || []).map(x => TF_BY_NAME[String(x).toUpperCase()]).find(Boolean) || '';
-  return `<button class="chip" data-attach="${esc(hit.name)}" data-path="${esc(hit.path)}"
-     data-sym="${esc(pair)}" data-tf="${tf}" title="installed as ${esc(hit.name)}">chart</button>`;
+  return `<button class="chip chip--icon" data-attach="${esc(hit.name)}" data-path="${esc(hit.path)}"
+     data-sym="${esc(pair)}" data-tf="${tf}"
+     title="Put ${esc(hit.name)} on a chart">${ICON.chart}</button>`;
 }
 
 function row(p) {
