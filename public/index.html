@@ -440,6 +440,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div class="segmented subtabs" role="tablist" aria-label="MT5 view">
       <button class="btn" id="sub-pos" role="tab" aria-selected="true">Positions</button>
       <button class="btn" id="sub-ord" role="tab" aria-selected="false">Orders</button>
+      <button class="btn" id="sub-eas" role="tab" aria-selected="false">EAs</button>
       <button class="btn" id="sub-hist" role="tab" aria-selected="false">History</button>
     </div>
 
@@ -456,6 +457,16 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div id="mt5-ord" hidden>
       <section class="mt5sect"><h2>Pending orders <span class="num" id="mt5ordcount"></span></h2>
         <div class="wrap" id="mt5orders"></div></section>
+    </div>
+
+    <div id="mt5-eas" hidden>
+      <section class="mt5bar">
+        <div class="mt5bar__head">
+          <span class="mt5bar__title">Expert Advisors on this account</span>
+          <span class="mt5bar__stats" id="easstats">loading…</span>
+        </div>
+      </section>
+      <section class="mt5sect"><div class="wrap" id="eastable"></div></section>
     </div>
 
     <div id="mt5-hist" hidden>
@@ -1201,14 +1212,14 @@ function renderMt5(d) {
    Realised results, i.e. closed deals. Deliberately a separate request from the
    live stream: it changes rarely, so it is fetched on demand and cached agent
    side rather than pushed every second. */
-let SUBTAB = oneOf(urlParams.get('sub'), ['pos', 'ord', 'hist'],
+let SUBTAB = oneOf(urlParams.get('sub'), ['pos', 'ord', 'eas', 'hist'],
                   localStorage.getItem('fxea_subtab') || 'pos');
 let histTimer = 0;
 const HIST_PAGE = 50;      // closed trades rendered at a time
 let histVisible = HIST_PAGE;
 let HIST = null;
 
-const SUBS = ['pos', 'ord', 'hist'];   // positions | pending orders | realised
+const SUBS = ['pos', 'ord', 'eas', 'hist'];   // positions | orders | per-EA | realised
 function showSub(name) {
   SUBTAB = SUBS.includes(name) ? name : 'pos';
   localStorage.setItem('fxea_subtab', SUBTAB);
@@ -1219,6 +1230,7 @@ function showSub(name) {
     btn.setAttribute('aria-pressed', String(s === SUBTAB));
   }
   if (SUBTAB === 'hist') loadHistory();
+  if (SUBTAB === 'eas') loadEas();
 }
 
 async function loadHistory() {
@@ -1290,6 +1302,89 @@ for (const sub of SUBS) document.getElementById('sub-' + sub).onclick = () => sh
 document.getElementById('histdays').onchange = () => { histVisible = HIST_PAGE; loadHistory(); };
 clearInterval(histTimer);
 histTimer = setInterval(loadHistory, 60000);   // no-op unless the History sub-tab is open
+
+/* ── EAs sub-tab ───────────────────────────────────────────────────────────
+   One row per EA, joining what it holds right now with what it has actually
+   made. Built from the two endpoints already in use, so nothing new is needed
+   on the agent - and this is the surface the management actions will attach to. */
+async function loadEas() {
+  if (TAB !== 'mt5' || SUBTAB !== 'eas' || !MT5?.url) return;
+  const stats = document.getElementById('easstats');
+  const auth = { credentials: 'include', headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {} };
+  const tz = -new Date().getTimezoneOffset();
+  let live, hist;
+  try {
+    [live, hist] = await Promise.all([
+      fetch(`${MT5.url}/api/mt5`, auth).then(r => r.json()),
+      fetch(`${MT5.url}/api/history?days=30&tz=${tz}`, auth).then(r => r.json()),
+    ]);
+  } catch (e) {
+    stats.textContent = 'agent unreachable — ' + e.message;
+    return;
+  }
+  if (!live?.ok) { stats.textContent = 'agent: ' + (live?.error || 'unknown error'); return; }
+
+  const rows = new Map();
+  const row = m => {
+    const k = String(m);
+    if (!rows.has(k)) {
+      rows.set(k, { magic: m, name: '', symbols: [], open: 0, lots: 0, floating: 0,
+                    pending: 0, trades: 0, wins: 0, realised: 0, last: '' });
+    }
+    return rows.get(k);
+  };
+
+  for (const p of live.positions || []) {
+    const r = row(p.magic || 0);
+    r.open++; r.lots += p.volume || 0; r.floating += p.profit || 0;
+    if (p.comment && !r.name) r.name = p.comment;
+    if (p.symbol && !r.symbols.includes(p.symbol)) r.symbols.push(p.symbol);
+  }
+  for (const o of live.orders || []) {
+    const r = row(o.magic || 0);
+    r.pending++;
+    if (o.comment && !r.name) r.name = o.comment;
+    if (o.symbol && !r.symbols.includes(o.symbol)) r.symbols.push(o.symbol);
+  }
+  for (const e of (hist?.ok ? hist.by_ea : []) || []) {
+    const r = row(e.magic || 0);
+    r.trades += e.trades || 0; r.wins += e.wins || 0; r.realised += e.profit || 0;
+    if (!r.name && (e.comments || [])[0]) r.name = e.comments[0];
+    for (const sym of e.symbols || []) if (!r.symbols.includes(sym)) r.symbols.push(sym);
+  }
+  for (const c of (hist?.ok ? hist.closed : []) || []) {
+    const r = rows.get(String(c.magic || 0));
+    if (r && !r.last) r.last = c.closed_at;
+  }
+
+  const list = [...rows.values()].sort((a, b) => (b.realised + b.floating) - (a.realised + a.floating));
+  const active = list.filter(r => r.open || r.pending).length;
+  stats.innerHTML = `<b>${list.length}</b> seen in 30d · <b>${active}</b> holding something now`;
+
+  setHtml('eastable', list.length ? `<table class="mt5">
+    <thead><tr><th class="n">Magic</th><th>Name</th><th>Symbols</th>
+      <th class="n">Open</th><th class="n">Lots</th><th class="n">Floating</th><th class="n">Pending</th>
+      <th class="n">Trades</th><th class="n">Win%</th><th class="n">Realised 30d</th>
+      <th>Last trade<span data-tz></span></th></tr></thead>
+    <tbody>${list.map(r => {
+      const rate = r.trades ? Math.round(100 * r.wins / r.trades) : null;
+      return `<tr>
+        <td class="n">${mt5Magic(r.magic)}</td>
+        <td>${esc(r.name || '—')}</td>
+        <td>${esc(r.symbols.slice(0, 3).join(', ') || '—')}</td>
+        <td class="n">${r.open || '—'}</td>
+        <td class="n">${r.lots ? r.lots.toFixed(2) : '—'}</td>
+        <td class="n ${mt5Cls(r.floating)}">${r.open ? mt5Money(r.floating, '') : '—'}</td>
+        <td class="n">${r.pending || '—'}</td>
+        <td class="n">${r.trades || '—'}</td>
+        <td class="n">${rate == null ? '—' : rate + '%'}</td>
+        <td class="n ${mt5Cls(r.realised)}">${r.trades ? mt5Money(r.realised, '') : '—'}</td>
+        <td class="mono">${esc(mt5Time(r.last))}</td></tr>`;
+    }).join('')}</tbody></table>`
+    : '<div class="empty">No EA activity in the last 30 days.</div>');
+}
+
+document.getElementById('sub-eas') && setInterval(loadEas, 30000);   // only runs while the tab is open
 
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 const TAB_KEY = 'fxea_tab';
