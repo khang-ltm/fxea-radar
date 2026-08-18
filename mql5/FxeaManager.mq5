@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.20"
+#property version   "1.21"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.20", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.21", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -304,7 +304,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.20",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.21",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -746,12 +746,26 @@ void DoAttach(const string id, const string expert, const string path,
       scan = ChartNext(scan);
      }
 
+   // Open the chart first, then template it from ITSELF. Borrowing the manager's
+   // template dragged its chart properties, its expertmode flags and a window
+   // section with 144 objects and indicators onto every EA we attached - a lot of
+   // someone else's environment for an EA to wake up in. Its own template plus an
+   // expert block is the smallest possible change.
+   long target = ChartOpen(symbol, (ENUM_TIMEFRAMES)period);
+   if(target == 0)
+     {
+      WriteResult(id, false, StringFormat("ChartOpen failed (error %d)", GetLastError()));
+      return;
+     }
+   Sleep(300);                                     // let the chart exist properly
+
    string file = ATTACH_NAME + ".tpl";
    if(FileIsExist(file))
       FileDelete(file);
-   if(!ChartSaveTemplate(g_self_chart, "\\Files\\" + ATTACH_NAME))
+   if(!ChartSaveTemplate(target, "\\Files\\" + ATTACH_NAME))
      {
-      WriteResult(id, false, "could not save a template to work from");
+      ChartClose(target);
+      WriteResult(id, false, "could not save the new chart template");
       return;
      }
    for(int wait = 0; wait < 20 && !FileIsExist(file); wait++)
@@ -760,20 +774,16 @@ void DoAttach(const string id, const string expert, const string path,
    string lines[];
    if(!ReadLines(file, lines))
      {
-      WriteResult(id, false, "could not read the template");
+      ChartClose(target);
+      WriteResult(id, false, "could not read the new chart template");
       return;
      }
 
    string inputs = StagedInputs();
    string out[];
-   int    written   = 0;
-   bool   in_expert = false, in_inputs = false, done = false;
+   int    written = 0;
+   bool   placed  = false;
 
-   // Only name, path and the inputs are ours to change. Everything else the
-   // template carries - expertmode, window_num, whatever a future build adds -
-   // stays exactly as MT5 wrote it: an expert block missing fields is a block
-   // MT5 is entitled to ignore, and an EA that never loads is what that looks
-   // like from outside.
    for(int i = 0; i < ArraySize(lines); i++)
      {
       string low = lines[i];
@@ -781,33 +791,22 @@ void DoAttach(const string id, const string expert, const string path,
       StringTrimRight(low);
       StringToLower(low);
 
-      if(low == "<expert>")
+      // the expert block belongs after the chart properties and before the first
+      // window section, which is where MT5 itself writes it
+      if(!placed && low == "<window>")
         {
-         in_expert = true;
-         done      = true;
-         ArrayResize(out, written + 1);
+         placed = true;
+         ArrayResize(out, written + 3);
          out[written++] = "<expert>";
-         continue;
-        }
-      if(low == "</expert>")
-        {
-         in_expert = false;
-         ArrayResize(out, written + 1);
-         out[written++] = "</expert>";
-         continue;
-        }
-
-      if(in_expert)
-        {
-         if(low == "<inputs>")
+         out[written++] = "name=" + expert;
+         out[written++] = "flags=343";             // as MT5 writes for a normal EA
+         if(path != "")
            {
-            in_inputs = true;
-            // An EMPTY <inputs></inputs> is not the same as no block at all: MT5
-            // reads it as "this expert has no settings", the EA comes up with
-            // nothing configured and drops off the chart seconds later. Every EA
-            // attached that way reported "magic not found" for the same reason.
-            if(inputs == "")
-               continue;                           // let the EA use its own defaults
+            ArrayResize(out, written + 1);
+            out[written++] = "path=" + path;
+           }
+         if(inputs != "")
+           {
             ArrayResize(out, written + 1);
             out[written++] = "<inputs>";
             string pairs[];
@@ -818,88 +817,35 @@ void DoAttach(const string id, const string expert, const string path,
                   ArrayResize(out, written + 1);
                   out[written++] = pairs[j];
                  }
-            continue;
-           }
-         if(low == "</inputs>")
-           {
-            in_inputs = false;
-            if(inputs == "")
-               continue;                           // the block was never opened
             ArrayResize(out, written + 1);
             out[written++] = "</inputs>";
-            continue;
            }
-         if(in_inputs)
-            continue;                              // drop the manager settings
-
-         if(StringFind(low, "name=") == 0)
-           {
-            ArrayResize(out, written + 1);
-            out[written++] = "name=" + expert;
-            continue;
-           }
-         if(StringFind(low, "path=") == 0)
-           {
-            if(path != "")
-              {
-               ArrayResize(out, written + 1);
-               out[written++] = "path=" + path;
-              }
-            continue;
-           }
+         ArrayResize(out, written + 1);
+         out[written++] = "</expert>";
         }
 
       ArrayResize(out, written + 1);
       out[written++] = lines[i];
      }
-
-   // the borrowed template has no path line when the manager sits in Experts
-   // root, so add one rather than leaving MT5 to guess where the EA lives
-   if(path != "")
+   if(!placed)
      {
-      bool has_path = false;
-      for(int i = 0; i < written; i++)
-         if(StringFind(out[i], "path=") == 0)
-            has_path = true;
-      if(!has_path)
-         for(int i = 0; i < written; i++)
-            if(StringFind(out[i], "name=") == 0)
-              {
-               ArrayResize(out, written + 1);
-               for(int j = written; j > i + 1; j--)
-                  out[j] = out[j - 1];
-               out[i + 1] = "path=" + path;
-               written++;
-               break;
-              }
-     }
-   if(!done)
-     {
-      WriteResult(id, false, "the template carries no expert block to replace");
+      ChartClose(target);
+      WriteResult(id, false, "the chart template has no window section to place the EA before");
       return;
      }
    if(!WriteLines(file, out))
      {
+      ChartClose(target);
       WriteResult(id, false, "could not write the template");
       return;
      }
 
-   long target = ChartOpen(symbol, (ENUM_TIMEFRAMES)period);
-   if(target == 0)
-     {
-      WriteResult(id, false, StringFormat("ChartOpen failed (error %d)", GetLastError()));
-      return;
-     }
    if(!ChartApplyTemplate(target, "\\Files\\" + ATTACH_NAME))
      {
       ChartClose(target);
       WriteResult(id, false, StringFormat("ChartApplyTemplate failed (error %d)", GetLastError()));
       return;
      }
-   // Only if the template moved it: ChartSetSymbolPeriod reloads the EA, and an
-   // EA whose second OnInit fails is gone with nothing logged.
-   if(ChartSymbol(target) != symbol || (long)ChartPeriod(target) != period)
-      ChartSetSymbolPeriod(target, symbol, (ENUM_TIMEFRAMES)period);
 
    for(int wait = 0; wait < 40; wait++)
      {
@@ -909,14 +855,14 @@ void DoAttach(const string id, const string expert, const string path,
      }
    if(ChartGetString(target, CHART_EXPERT_NAME) == "")
      {
-      ChartClose(target);                 // never leave a bare chart behind
+      ChartClose(target);                          // never leave a bare chart behind
       WriteResult(id, false, "the EA did not load - is its .ex5 in MQL5\\Experts?");
       return;
      }
 
    // an EA can load and then remove itself; the caller deserves to know
    string loaded = ChartGetString(target, CHART_EXPERT_NAME);
-   Sleep(2000);
+   Sleep(9000);            // they have been dropping off at five to eight seconds
    string still = ChartGetString(target, CHART_EXPERT_NAME);
    ForgetProbe(target);
    if(still == "")
