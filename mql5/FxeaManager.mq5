@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.14"
+#property version   "1.15"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -54,7 +54,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.14", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.15", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -300,9 +300,9 @@ void WriteStatus()
      }
 
    string json = StringFormat(
-                    "{\"at\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,\"control_allowed\":%s,"
-                    "\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS),
+                    "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
+                    "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.15",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",

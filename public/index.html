@@ -1741,7 +1741,8 @@ async function loadCharts(quiet) {
   stats.textContent = `(${withEa.length})`;
   document.getElementById('easstats').innerHTML =
     `<b>${withEa.length}</b> EA${withEa.length === 1 ? '' : 's'} attached to charts`
-    + ` · manager ${d.attached ? 'connected' : '<span style="color:var(--color-warn)">stale</span>'}`;
+    + ` · manager ${d.attached ? 'connected' : '<span style="color:var(--color-warn)">stale</span>'}`
+    + (d.version ? ` <span class="hint">v${esc(d.version)}</span>` : '');
   charts.sort((a, b) => (b.expert ? 1 : 0) - (a.expert ? 1 : 0));
   setHtml('chartstable', charts.length ? `<table class="mt5">
     <thead><tr><th>Expert</th><th>Symbol</th><th class="n">Open</th><th class="n">Floating</th>
