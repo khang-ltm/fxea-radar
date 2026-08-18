@@ -1396,6 +1396,7 @@ function placedBy(magic) {
 }
 
 /* chart names carry the version and the channel tag; neither helps in a cell */
+const chart_magic = c => Number(c.magic) || 0;
 const shortEa = name => String(name).replace(/@\S+/, '').replace(/[_ ]v?[\d.]+.*$/i, '')
   .replace(/\s+(mt4|mt5)\b.*$/i, '').trim() || String(name);
 
@@ -1426,6 +1427,16 @@ function matchMagic(chart, rows) {
   if (manual !== undefined) {
     const hit = rows.filter(r => r.magic === manual);
     return { rows: hit, how: 'manual' };
+  }
+
+  // FxeaManager 1.11+ reads the magic straight out of the EA inputs, which
+  // beats any name guessing. One EA often numbers its strategies off a round
+  // base (8000 -> 8001, 8002), so a round base claims its block of 100.
+  const base = Number(chart.magic) || 0;
+  if (base) {
+    const hit = rows.filter(r => r.magic === base
+      || (base % 100 === 0 && r.magic > base && r.magic < base + 100));
+    return { rows: hit, how: 'magic' };
   }
 
   const words = eaWords(chart.expert);
@@ -1539,9 +1550,10 @@ async function loadCharts(quiet) {
       const linkBtn = (cls, label, tip) => `<button class="chip ${cls}"
           data-link="${esc(String(c.chart))}" data-name="${esc(c.expert || '')}"
           data-sym="${esc(c.symbol)}" title="${tip}">${label}</button>`;
-      const link = r
-        ? linkBtn('ghost', m.how === 'manual' ? 'linked' : 'auto',
-                  `matched to magic ${m.rows.map(x => x.magic).join(', ')} - click to change`)
+      const label = { manual: 'linked', magic: 'magic ' + chart_magic(c), auto: 'auto' }[m.how];
+      const link = label
+        ? linkBtn('ghost', label,
+                  `magic ${m.rows.map(x => x.magic).join(', ') || chart_magic(c) || '?'} - click to change`)
         : linkBtn('', 'link', 'pick which magic number this chart trades under');
       return `<tr>
       <td>${esc(c.expert || '—')} ${c.expert ? link : ''}</td>

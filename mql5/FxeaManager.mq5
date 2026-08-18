@@ -19,17 +19,22 @@
 //|      fxea_result.txt  -> outcome of the last command              |
 //|      fxea_paused.txt  -> what is paused, so it survives restarts  |
 //|                                                                   |
+//|  A chart reports only the EA file name, never the magic number it |
+//|  trades under, so the status file also carries the magic read out |
+//|  of the EA own inputs via a throwaway template.                   |
+//|                                                                   |
 //|  Timer driven, so it still answers on a quiet symbol or when the  |
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.10"
+#property version   "1.11"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
 input int  StatusEverySecs = 5;      // how often to rewrite the status file
 input bool AllowControl    = true;   // master switch for pause / run
 input bool VerboseLog      = true;   // print actions to the Experts log
+input bool ReportMagic     = true;   // read each EA magic number from its inputs
 
 #define CMD_FILE     "fxea_cmd.txt"
 #define RESULT_FILE  "fxea_result.txt"
@@ -46,7 +51,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.10", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.11", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -126,6 +131,106 @@ string Part(const string row, const int index)
    return(index < n ? bits[index] : "");
   }
 
+
+//+------------------------------------------------------------------+
+//| The magic number a chart trades under.                            |
+//|                                                                   |
+//| MT5 exposes the EA file name on a chart and the magic number on a |
+//| trade, and nothing that joins the two. The inputs do hold it, and |
+//| a saved template is the only way to read another EA inputs, so    |
+//| this dumps a throwaway template into MQL5\Files, greps the first  |
+//| input under <expert> whose name mentions "magic", and deletes it. |
+//| Cached per chart+expert: templates are disk writes, not free.     |
+//+------------------------------------------------------------------+
+#define PROBE_NAME "fxea_probe"
+
+long   g_pm_chart[];
+string g_pm_expert[];
+long   g_pm_magic[];
+
+long ReadMagicFromTemplate(const long id)
+  {
+   string file = PROBE_NAME + ".tpl";
+   if(FileIsExist(file))
+      FileDelete(file);
+   if(!ChartSaveTemplate(id, "\\Files\\" + PROBE_NAME))
+      return(0);
+
+   // chart commands are queued, so the file appears a moment later
+   for(int wait = 0; wait < 20 && !FileIsExist(file); wait++)
+      Sleep(50);
+   if(!FileIsExist(file))
+      return(0);
+
+   int fh = FileOpen(file, FILE_READ | FILE_TXT | FILE_ANSI);
+   if(fh == INVALID_HANDLE)
+     {
+      FileDelete(file);
+      return(0);
+     }
+
+   bool in_expert = false;
+   long magic     = 0;
+   while(!FileIsEnding(fh) && magic == 0)
+     {
+      string line = FileReadString(fh);
+      StringTrimLeft(line);
+      StringTrimRight(line);
+      string low = line;
+      StringToLower(low);
+
+      if(low == "<expert>")            // indicators carry inputs too: ignore them
+        {
+         in_expert = true;
+         continue;
+        }
+      if(low == "</expert>")
+        {
+         in_expert = false;
+         continue;
+        }
+      if(!in_expert)
+         continue;
+
+      int eq = StringFind(line, "=");
+      if(eq <= 0)
+         continue;
+      string key = StringSubstr(line, 0, eq);
+      StringToLower(key);
+      if(StringFind(key, "magic") < 0)
+         continue;
+      long v = StringToInteger(StringSubstr(line, eq + 1));
+      if(v > 0)
+         magic = v;
+     }
+   FileClose(fh);
+   FileDelete(file);
+   return(magic);
+  }
+
+long ChartMagic(const long id, const string expert)
+  {
+   if(!ReportMagic || expert == "")
+      return(0);
+
+   for(int i = 0; i < ArraySize(g_pm_chart); i++)
+      if(g_pm_chart[i] == id && g_pm_expert[i] == expert)
+         return(g_pm_magic[i]);       // recomputed only when the EA changes
+
+   long magic = ReadMagicFromTemplate(id);
+   int  n     = ArraySize(g_pm_chart);
+   ArrayResize(g_pm_chart, n + 1);
+   ArrayResize(g_pm_expert, n + 1);
+   ArrayResize(g_pm_magic, n + 1);
+   g_pm_chart[n]  = id;
+   g_pm_expert[n] = expert;
+   g_pm_magic[n]  = magic;
+   if(VerboseLog)
+      PrintFormat("magic for %s on chart %I64d: %s", expert, id,
+                  magic > 0 ? (string)magic : "not found in its inputs");
+   return(magic);
+  }
+
 //+------------------------------------------------------------------+
 void WriteStatus()
   {
@@ -139,11 +244,14 @@ void WriteStatus()
       string symbol = ChartSymbol(id);
       long   period = ChartPeriod(id);
 
+      long magic = (id == g_self_chart) ? 0 : ChartMagic(id, expert);
+
       if(n > 0)
          rows += ",";
       rows += StringFormat(
-                 "{\"chart\":%I64d,\"symbol\":\"%s\",\"period\":%I64d,\"expert\":\"%s\",\"is_manager\":%s}",
-                 id, JsonEscape(symbol), period, JsonEscape(expert),
+                 "{\"chart\":%I64d,\"symbol\":\"%s\",\"period\":%I64d,\"expert\":\"%s\","
+                 "\"magic\":%I64d,\"is_manager\":%s}",
+                 id, JsonEscape(symbol), period, JsonEscape(expert), magic,
                  (id == g_self_chart) ? "true" : "false");
       n++;
       id = ChartNext(id);
