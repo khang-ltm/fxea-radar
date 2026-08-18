@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.18"
+#property version   "1.19"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.18", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.19", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -304,7 +304,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.18",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.19",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -893,7 +893,7 @@ void DoAttach(const string id, const string expert, const string path,
      }
    // Only if the template moved it: ChartSetSymbolPeriod reloads the EA, and an
    // EA whose second OnInit fails is gone with nothing logged.
-   if(ChartSymbol(target) != symbol || ChartPeriod(target) != period)
+   if(ChartSymbol(target) != symbol || (long)ChartPeriod(target) != period)
       ChartSetSymbolPeriod(target, symbol, (ENUM_TIMEFRAMES)period);
 
    for(int wait = 0; wait < 40; wait++)
