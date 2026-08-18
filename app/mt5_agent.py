@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -455,6 +456,40 @@ def read_charts() -> dict:
     return data
 
 
+MANAGER_INPUTS = "fxea_inputs.txt"
+_INPUT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,63}$")
+
+
+def _stage_inputs(pairs) -> object:
+    """Write the settings the manager should apply. Returns a message on refusal.
+
+    Values go into the EA's own template, so anything that could break the file
+    - newlines, over-long strings, odd keys - is rejected here rather than
+    corrupting a template that a live EA is about to reload.
+    """
+    if not isinstance(pairs, dict) or not pairs:
+        return "no settings given"
+    if len(pairs) > 100:
+        return "too many settings in one request"
+
+    lines = []
+    for key, value in pairs.items():
+        key = str(key)
+        text = "" if value is None else str(value)
+        if not _INPUT_KEY.match(key):
+            return f"bad setting name: {key}"
+        if len(text) > 500 or chr(10) in text or chr(13) in text:
+            return f"bad value for {key}"
+        lines.append(f"{key}={text}")
+
+    d = _mql5_files_dir()
+    if d is None:
+        return _init_error or "terminal not readable"
+    (d / MANAGER_INPUTS).write_text(chr(10).join(lines) + chr(10),
+                                    encoding="ascii", errors="replace")
+    return len(lines)
+
+
 def manager_command(action: str, **fields) -> dict:
     """Drop a command file, wait for the EA to answer, return its verdict."""
     d = _mql5_files_dir()
@@ -687,12 +722,18 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         action = str(body.get("action") or "")
-        if action not in ("status", "pause", "run", "resume", "unload"):
+        if action not in ("status", "pause", "run", "resume", "unload", "setinputs"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
-        if action in ("pause", "unload") and not body.get("confirm"):
+        if action in ("pause", "unload", "setinputs") and not body.get("confirm"):
             self._json({"ok": False, "error": f"{action} requires confirm: true"}, 400)
             return
+
+        if action == "setinputs":
+            written = _stage_inputs(body.get("inputs"))
+            if isinstance(written, str):
+                self._json({"ok": False, "error": written}, 400)
+                return
 
         self._json(manager_command(
             action,
@@ -701,6 +742,7 @@ class Handler(BaseHTTPRequestHandler):
             expert=body.get("expert"),
             key=body.get("key"),
             magic=body.get("magic"),
+            force=1 if (action == "setinputs" and body.get("force")) else None,
         ))
 
 

@@ -75,7 +75,8 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
   border: 1px solid var(--color-border); border-radius: var(--radius);
   font: 400 13px/1.3 var(--font-body); cursor: pointer; }
 
-.btn { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 7px 12px;
+.btn[hidden] { display: none; }   /* [hidden] must beat display:inline-flex */
+.btn:not([hidden]) { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 7px 12px;
   cursor: pointer; background: var(--color-surface); color: var(--color-foreground);
   border: 1px solid var(--color-border); border-radius: var(--radius);
   font: 500 13px/1.2 var(--font-body);
@@ -86,6 +87,8 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
   border-color: var(--color-accent); font-weight: 600; }
 .btn--primary:hover { background: color-mix(in srgb, var(--color-accent) 85%, #fff); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn--primary:disabled { background: var(--color-surface-2); color: var(--color-muted-fg);
+   border-color: var(--color-border); opacity: 1; }
 .segmented { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius); overflow: hidden; }
 .segmented .btn { border: 0; border-radius: 0; min-height: 34px; }
 .segmented .btn + .btn { border-left: 1px solid var(--color-border); }
@@ -112,6 +115,27 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .chip.ghost { min-height: 0; padding: 1px 6px; font-size: 11px; border-color: transparent;
    background: none; color: var(--color-muted-fg); }
 .chip.ghost:hover { border-color: var(--color-border); }
+.sheet__foot { display: flex; align-items: center; gap: var(--space-3); flex: none;
+   padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border);
+   background: var(--color-surface); }
+.sheet__foot .hint { flex: 1; margin: 0; }
+.settings { display: grid; gap: 0; }
+.settings h3 { grid-column: 1 / -1; margin: var(--space-4) 0 var(--space-1); font-size: 11px;
+   letter-spacing: .06em; text-transform: uppercase; color: var(--color-muted-fg);
+   font-family: var(--font-head); }
+.settings h3:first-child { margin-top: 0; }
+.setrow { display: grid; grid-template-columns: 1fr 150px; gap: var(--space-3); align-items: center;
+   padding: 5px 0; border-bottom: 1px dotted var(--color-border); }
+.setrow label { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setrow label small { display: block; color: var(--color-muted-fg); font-size: 11px; }
+.setrow input { width: 100%; padding: 5px 8px; text-align: right; font-family: var(--font-head);
+   font-variant-numeric: tabular-nums; background: var(--color-surface-2);
+   color: var(--color-foreground); border: 1px solid var(--color-border); border-radius: 6px; }
+.setrow input:focus { outline: 2px solid var(--color-accent); outline-offset: -1px; }
+.setrow.dirty input { border-color: var(--color-accent); color: var(--color-accent); }
+.setrow.text { grid-template-columns: 1fr; gap: 4px; }
+.setrow.text input { text-align: left; }
+.setrow.text label small { display: inline; margin-left: var(--space-2); }
 .inputrow > td { background: var(--color-surface); padding: var(--space-3) var(--space-4); }
 .inputs { display: grid; gap: 2px var(--space-4); font-size: 12px;
    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
@@ -120,6 +144,11 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .inputs dt { color: var(--color-muted-fg); overflow: hidden; text-overflow: ellipsis; }
 .inputs dd { margin: 0; font-family: var(--font-head); font-variant-numeric: tabular-nums; }
 .inputs > dl.key dd { color: var(--color-accent); }
+.inputs > dl.head { grid-column: 1 / -1; border: 0; margin-top: var(--space-3); padding-bottom: 0; }
+.inputs > dl.head:first-child { margin-top: 0; }
+.inputs > dl.head dt { color: var(--color-foreground); font-size: 11px; letter-spacing: .06em;
+   text-transform: uppercase; font-family: var(--font-head); }
+.inputs dd { max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inputrow .hint { margin: var(--space-3) 0 0; }
 .chip.as-text { cursor: default; }
 .chip.as-text:hover { border-color: transparent; color: var(--color-muted-fg); }
@@ -525,6 +554,23 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <button class="btn" id="detail-close" aria-label="Close details">Close</button>
   </div>
   <div class="sheet__body" id="detail-body"></div>
+</dialog>
+
+<dialog class="sheet" id="eadlg" aria-labelledby="ea-title">
+  <div class="sheet__bar">
+    <h2 id="ea-title">EA settings</h2>
+    <span class="mt5bar__stats" id="ea-sub"></span>
+    <button class="btn" id="ea-close">Close</button>
+  </div>
+  <div class="sheet__body">
+    <div id="ea-inputs" class="settings"></div>
+  </div>
+  <div class="sheet__foot">
+    <span class="hint" id="ea-note">Applying reloads the EA: open trades stay, its
+      memory of them does not.</span>
+    <button class="btn" id="ea-reset" hidden>Undo changes</button>
+    <button class="btn btn--primary" id="ea-save" disabled>Apply</button>
+  </div>
 </dialog>
 
 <dialog class="sheet" id="linkdlg" aria-labelledby="link-title" style="width:min(94vw,520px)">
@@ -1395,7 +1441,7 @@ async function loadEas(quiet) {
    for an EA whose chart is closed) the badge just says it was not placed by
    hand. Magic 0 is only ever a manual trade. */
 let EA_BY_MAGIC = {};
-const EXPANDED = new Set();   // charts showing their EA settings
+let CHARTS = [];              // last chart list, for the settings dialog
 let chartsPrefetched = false;
 
 function placedBy(magic) {
@@ -1512,6 +1558,125 @@ document.getElementById('link-save').onclick = () => {
   linkDlg.close(); loadCharts();
 };
 
+/* EAs pad their input list with headings (">>>> GENERAL SETTINGS", "input
+   group #1") carrying no value, and with note fields holding a paragraph of
+   text. Headings become section breaks, everything else a name/value pair. */
+const inputCell = i => {
+  const v = String(i.v ?? '');
+  if (!v.trim()) {
+    const title = i.k.replace(/^[>\s#]+|[:=\s]+$/g, '').replace(/^input group/i, 'group');
+    return `<dl class="head"><dt>${esc(title)}</dt></dl>`;
+  }
+  const money = /lot|risk|magic|money|balance|percent|spread/i.test(i.k);
+  return `<dl${money ? ' class="key"' : ''}><dt title="${esc(i.k)}">${esc(i.k)}</dt>
+    <dd title="${esc(v)}">${esc(v)}</dd></dl>`;
+};
+
+/* ── EA settings dialog ────────────────────────────────────────────────────
+   The values come from the chart template, so they are exactly what the EA is
+   running with. Applying writes them back through the same template, which
+   reloads the EA - fine when it is flat, deliberate when it is not. */
+const eaDlg = document.getElementById('eadlg');
+let EA_EDIT = null;      // { chart, expert, inputs: [{k, v}] }
+
+/* InpLotsFixed -> "Lots Fixed", inp_RiskPercent -> "Risk Percent" */
+const prettyKey = k => String(k)
+  .replace(/^(inp|input|i)[_]?/i, '')
+  .replace(/_/g, ' ')
+  .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+  .replace(/\s+/g, ' ')
+  .trim() || String(k);
+
+const isHeading = i => !String(i.v ?? '').trim();
+const headingText = k => String(k).replace(/^[>#*=~\s-]+|[:=\s]+$/g, '')
+  .replace(/^input group/i, 'Group').trim() || 'Settings';
+
+function openEaSettings(chartId) {
+  const c = CHARTS.find(x => String(x.chart) === String(chartId));
+  if (!c) return;
+  EA_EDIT = { chart: c.chart, expert: c.expert, inputs: (c.inputs || []).map(i => ({ ...i })) };
+
+  document.getElementById('ea-title').textContent = shortEa(c.expert);
+  document.getElementById('ea-sub').textContent =
+    `${c.symbol} · magic ${chart_magic(c) || 'unknown'} · ${EA_EDIT.inputs.length} settings`;
+
+  document.getElementById('ea-inputs').innerHTML = EA_EDIT.inputs.map((i, n) => {
+    if (isHeading(i)) return `<h3>${esc(headingText(i.k))}</h3>`;
+    const long = String(i.v).length > 18 || /[a-z]{4,}\s/i.test(String(i.v));
+    return `<div class="setrow${long ? ' text' : ''}" data-row="${n}">
+      <label for="ea-in-${n}">${esc(prettyKey(i.k))}<small>${esc(i.k)}</small></label>
+      <input id="ea-in-${n}" data-idx="${n}" value="${esc(i.v)}" spellcheck="false"></div>`;
+  }).join('');
+
+  for (const el of document.querySelectorAll('#ea-inputs input')) {
+    el.oninput = () => {
+      const n = Number(el.dataset.idx);
+      el.closest('.setrow').classList.toggle('dirty', el.value !== EA_EDIT.inputs[n].v);
+      refreshEaButtons();
+    };
+  }
+  refreshEaButtons();
+  eaDlg.showModal();
+}
+
+function eaChanges() {
+  const out = {};
+  if (!EA_EDIT) return out;
+  for (const el of document.querySelectorAll('#ea-inputs input')) {
+    const n = Number(el.dataset.idx);
+    if (el.value !== EA_EDIT.inputs[n].v) out[EA_EDIT.inputs[n].k] = el.value;
+  }
+  return out;
+}
+
+function refreshEaButtons() {
+  const n = Object.keys(eaChanges()).length;
+  const save = document.getElementById('ea-save');
+  save.disabled = n === 0;
+  save.textContent = n ? `Apply ${n} change${n === 1 ? '' : 's'}` : 'Apply';
+  document.getElementById('ea-reset').hidden = n === 0;
+}
+
+document.getElementById('ea-close').onclick = () => eaDlg.close();
+eaDlg.addEventListener('click', e => { if (e.target === eaDlg) eaDlg.close(); });
+document.getElementById('ea-reset').onclick = () => openEaSettings(EA_EDIT.chart);
+
+document.getElementById('ea-save').onclick = async () => {
+  const changes = eaChanges();
+  const list = Object.entries(changes)
+    .map(([k, v]) => `  ${prettyKey(k)}: ${EA_EDIT.inputs.find(i => i.k === k).v} -> ${v}`)
+    .join(String.fromCharCode(10));
+  const what = `Apply to ${shortEa(EA_EDIT.expert)}?${String.fromCharCode(10, 10)}${list}`
+    + String.fromCharCode(10, 10) + 'The EA reloads. Open trades stay open.';
+  if (!confirm(what)) return;
+
+  const note = document.getElementById('ea-note');
+  const save = document.getElementById('ea-save');
+  save.disabled = true;
+  note.textContent = 'applying...';
+  let r = await managerPost({ action: 'setinputs', chart: EA_EDIT.chart, confirm: true, inputs: changes });
+
+  // the manager refuses while the EA holds trades: that is a decision, not a bug
+  if (!r.ok && /open trade/i.test(r.message || r.error || '')) {
+    if (confirm((r.message || r.error) + String.fromCharCode(10, 10) + 'Apply anyway?')) {
+      note.textContent = 'applying...';
+      r = await managerPost({ action: 'setinputs', chart: EA_EDIT.chart, confirm: true,
+                             force: true, inputs: changes });
+    } else {
+      note.textContent = 'not applied';
+      refreshEaButtons();
+      return;
+    }
+  }
+
+  note.textContent = r.ok ? (r.message || 'applied') : ('failed: ' + (r.message || r.error));
+  if (r.ok) {
+    setTimeout(() => { eaDlg.close(); loadCharts(); }, 900);
+  } else {
+    refreshEaButtons();
+  }
+};
+
 /* ── charts / unload ───────────────────────────────────────────────────────
    FxeaManager.mq5 reports which EA sits on which chart and can close one, which
    is the only way to stop a compiled EA from outside. Chart names and trade
@@ -1539,6 +1704,7 @@ async function loadCharts(quiet) {
   }
 
   const charts = (d.charts || []).filter(c => !c.is_manager);
+  CHARTS = charts;
   // every base another chart reported stays that chart's own, never absorbed
   // into a neighbour's block
   const bases = new Set(charts.map(c => Number(c.magic)).filter(Boolean));
@@ -1579,11 +1745,9 @@ async function loadCharts(quiet) {
           ? linkBtn('', 'link', 'pick which magic number this chart trades under')
           : linkBtn('ghost', m.how === 'manual' ? 'linked' : 'auto',
                     `guessed magic ${magics} from the trade comments - click to change`);
-      const ins = c.inputs || [];
-      const open = EXPANDED.has(String(c.chart)) && ins.length;
-      const settings = ins.length
+      const settings = (c.inputs || []).length
         ? `<button class="chip ghost" data-inputs="${esc(String(c.chart))}"
-             title="what this EA is set to">${open ? 'hide' : 'settings'}</button>`
+             title="see and change what this EA is set to">settings</button>`
         : '';
       return `<tr>
       <td>${esc(c.expert || '—')} ${c.expert ? link : ''} ${settings}</td>
@@ -1598,11 +1762,7 @@ async function loadCharts(quiet) {
         ? `<button class="chip" data-pause="${esc(String(c.chart))}"
              data-name="${esc(c.expert)} on ${esc(c.symbol)}">Pause</button>`
         : '<span class="shot-none">no EA</span>'}</td></tr>`
-      + (open ? `<tr class="inputrow"><td colspan="9"><div class="inputs">${ins.map(i =>
-          `<dl${/lot|risk|magic|money|balance|percent/i.test(i.k) ? ' class="key"' : ''}>
-             <dt>${esc(i.k)}</dt><dd>${esc(i.v)}</dd></dl>`).join('')}</div>
-        <p class="hint">Read from the chart template. Changing them still means
-          opening the EA properties in MT5.</p></td></tr>` : '');
+      ;
     }).join('')}</tbody></table>`
     : '<div class="empty">No other charts open.</div>');
 
@@ -1618,12 +1778,11 @@ async function loadCharts(quiet) {
   document.getElementById('pausedwrap').hidden = paused.length === 0;
 
   for (const b of document.querySelectorAll('[data-inputs]')) {
-    b.onclick = () => {
-      const k = b.dataset.inputs;
-      if (EXPANDED.has(k)) EXPANDED.delete(k); else EXPANDED.add(k);
-      loadCharts();
-    };
+    b.onclick = () => openEaSettings(b.dataset.inputs);
   }
+  // ?ea=<chart id> opens that EA settings straight away
+  const deep = urlParams.get('ea');
+  if (deep && !eaDlg.open && charts.some(c => String(c.chart) === deep)) openEaSettings(deep);
   for (const b of document.querySelectorAll('[data-pause]')) {
     b.onclick = () => managerAction('pause', { chart: Number(b.dataset.pause) }, b.dataset.name);
   }
@@ -1644,6 +1803,12 @@ async function managerAction(action, args, label) {
   if (!confirm(`${verb} ${label}?
 
 ${note}`)) return;
+  const d = await managerPost({ action, ...args, confirm: true });
+  alert(d.ok ? `Done: ${d.message}` : `Failed: ${d.error || d.message}`);
+  loadEas().then(loadCharts);
+}
+
+async function managerPost(body) {
   try {
     const r = await fetch(`${MT5.url}/api/manager`, {
       method: 'POST',
@@ -1652,14 +1817,12 @@ ${note}`)) return;
         'Content-Type': 'application/json',
         ...(MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {}),
       },
-      body: JSON.stringify({ action, ...args, confirm: true }),
+      body: JSON.stringify(body),
     });
-    const d = await r.json();
-    alert(d.ok ? `Done: ${d.message}` : `Failed: ${d.error || d.message}`);
+    return await r.json();
   } catch (e) {
-    alert('Request failed: ' + e.message);
+    return { ok: false, error: 'request failed: ' + e.message };
   }
-  loadEas().then(loadCharts);
 }
 
 /* ── tabs ──────────────────────────────────────────────────────────────── */

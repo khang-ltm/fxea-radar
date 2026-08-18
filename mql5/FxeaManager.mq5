@@ -27,12 +27,13 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.12"
+#property version   "1.13"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
 input int  StatusEverySecs = 5;      // how often to rewrite the status file
 input bool AllowControl    = true;   // master switch for pause / run
+input bool AllowEditInputs = true;   // let the page change EA settings
 input bool VerboseLog      = true;   // print actions to the Experts log
 input bool ReportInputs    = true;   // report each EA settings (magic, lots, ...)
 
@@ -40,6 +41,8 @@ input bool ReportInputs    = true;   // report each EA settings (magic, lots, ..
 #define RESULT_FILE  "fxea_result.txt"
 #define STATUS_FILE  "fxea_status.json"
 #define PAUSED_FILE  "fxea_paused.txt"
+#define INPUTS_FILE  "fxea_inputs.txt"
+#define EDIT_NAME    "fxea_edit"
 
 datetime g_last_status = 0;
 long     g_self_chart  = 0;
@@ -51,7 +54,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.12", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.13", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -474,6 +477,187 @@ void DoRun(const string id, const string key)
   }
 
 //+------------------------------------------------------------------+
+//| Change an EA settings by rewriting its template and reapplying it.|
+//|                                                                   |
+//| MT5 has no call to set another EA inputs, so this saves the chart |
+//| template, edits the values inside its <inputs> block and applies  |
+//| it back. The EA reloads: its open trades stay untouched, but any  |
+//| state it kept in memory starts over, which is why an EA holding   |
+//| positions is refused unless the caller insists.                   |
+//+------------------------------------------------------------------+
+int CountOpenFor(const long magic)
+  {
+   int n = 0;
+   if(magic <= 0)
+      return(0);
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0 && PositionGetInteger(POSITION_MAGIC) == magic)
+         n++;
+     }
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket > 0 && OrderGetInteger(ORDER_MAGIC) == magic)
+         n++;
+     }
+   return(n);
+  }
+
+void ForgetProbe(const long id)
+  {
+   for(int i = 0; i < ArraySize(g_pm_chart); i++)
+      if(g_pm_chart[i] == id)
+         g_pm_expert[i] = "";               // forces a re-read after the reload
+  }
+
+void DoSetInputs(const string id, const long chart, const bool force)
+  {
+   if(!AllowEditInputs)
+     {
+      WriteResult(id, false, "editing settings is switched off in this EA inputs");
+      return;
+     }
+
+   string expert = ChartGetString(chart, CHART_EXPERT_NAME);
+   if(chart <= 0 || chart == g_self_chart || expert == "")
+     {
+      WriteResult(id, false, "no EA on that chart");
+      return;
+     }
+
+   // what to change, written next to the command so long lists are no problem
+   string keys[], vals[];
+   int    n = 0;
+   int    fh = FileOpen(INPUTS_FILE, FILE_READ | FILE_TXT | FILE_ANSI);
+   if(fh == INVALID_HANDLE)
+     {
+      WriteResult(id, false, "no settings file to apply");
+      return;
+     }
+   while(!FileIsEnding(fh))
+     {
+      string line = FileReadString(fh);
+      StringTrimLeft(line);
+      StringTrimRight(line);
+      int eq = StringFind(line, "=");
+      if(eq <= 0)
+         continue;
+      ArrayResize(keys, n + 1);
+      ArrayResize(vals, n + 1);
+      keys[n] = StringSubstr(line, 0, eq);
+      vals[n] = StringSubstr(line, eq + 1);
+      n++;
+     }
+   FileClose(fh);
+   FileDelete(INPUTS_FILE);
+   if(n == 0)
+     {
+      WriteResult(id, false, "nothing to change");
+      return;
+     }
+
+   long   magic = 0;
+   string dump  = "";
+   ChartProbe(chart, expert, magic, dump);
+   int held = CountOpenFor(magic);
+   if(held > 0 && !force)
+     {
+      WriteResult(id, false, StringFormat(
+                     "%s has %d open trade(s) on magic %I64d - reloading it drops its state. Confirm to apply anyway.",
+                     expert, held, magic));
+      return;
+     }
+
+   string file = EDIT_NAME + ".tpl";
+   if(FileIsExist(file))
+      FileDelete(file);
+   if(!ChartSaveTemplate(chart, "\\Files\\" + EDIT_NAME))
+     {
+      WriteResult(id, false, "could not save the chart template");
+      return;
+     }
+   for(int wait = 0; wait < 20 && !FileIsExist(file); wait++)
+      Sleep(50);
+
+   string lines[];
+   int    count = 0;
+   fh = FileOpen(file, FILE_READ | FILE_TXT | FILE_ANSI);
+   if(fh == INVALID_HANDLE)
+     {
+      WriteResult(id, false, "could not read the saved template");
+      return;
+     }
+   while(!FileIsEnding(fh))
+     {
+      ArrayResize(lines, count + 1);
+      lines[count] = FileReadString(fh);
+      count++;
+     }
+   FileClose(fh);
+
+   bool in_expert = false, in_inputs = false;
+   int  applied   = 0;
+   for(int i = 0; i < count; i++)
+     {
+      string low = lines[i];
+      StringTrimLeft(low);
+      StringTrimRight(low);
+      StringToLower(low);
+      if(low == "<expert>")
+         in_expert = true;
+      if(low == "</expert>")
+         in_expert = false;
+      if(in_expert && low == "<inputs>")
+         in_inputs = true;
+      if(low == "</inputs>")
+         in_inputs = false;
+      if(!in_inputs)
+         continue;
+
+      int eq = StringFind(lines[i], "=");
+      if(eq <= 0)
+         continue;
+      string key = StringSubstr(lines[i], 0, eq);
+      StringTrimLeft(key);
+      StringTrimRight(key);
+      for(int j = 0; j < n; j++)
+         if(keys[j] == key)
+           {
+            lines[i] = key + "=" + vals[j];
+            applied++;
+            break;
+           }
+     }
+   if(applied == 0)
+     {
+      WriteResult(id, false, "none of those settings exist on this EA");
+      return;
+     }
+
+   fh = FileOpen(file, FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(fh == INVALID_HANDLE)
+     {
+      WriteResult(id, false, "could not rewrite the template");
+      return;
+     }
+   for(int i = 0; i < count; i++)
+      FileWriteString(fh, lines[i] + "\n");
+   FileClose(fh);
+
+   if(!ChartApplyTemplate(chart, "\\Files\\" + EDIT_NAME))
+     {
+      WriteResult(id, false, StringFormat("ChartApplyTemplate failed (error %d)", GetLastError()));
+      return;
+     }
+   ForgetProbe(chart);
+   WriteResult(id, true, StringFormat("%d setting(s) applied - %s reloaded%s",
+                                      applied, expert, held > 0 ? " while holding trades" : ""));
+   WriteStatus();
+  }
+
+//+------------------------------------------------------------------+
 void ProcessCommand()
   {
    if(!FileIsExist(CMD_FILE))
@@ -502,7 +686,7 @@ void ProcessCommand()
       return;
      }
 
-   if(!AllowControl && (action == "pause" || action == "run" || action == "unload"))
+   if(!AllowControl && (action == "pause" || action == "run" || action == "unload" || action == "setinputs"))
      {
       WriteResult(id, false, "control disabled in this EA inputs");
       return;
@@ -517,6 +701,12 @@ void ProcessCommand()
    if(action == "run" || action == "resume")
      {
       DoRun(id, key != "" ? key : StringFormat("%I64d", chart));
+      return;
+     }
+
+   if(action == "setinputs")
+     {
+      DoSetInputs(id, chart, GetField(body, "force") == "1");
       return;
      }
 

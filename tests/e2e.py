@@ -330,6 +330,10 @@ def run_once(run_no: int, port: int) -> None:
               "stale banner respects [hidden] (a bare display:flex leaves an empty bar)")
         check(".toolbar[hidden]" in html and ".toolbar:not([hidden])" in html,
               "EA filter bar respects [hidden] so it disappears on the MT5 tab")
+        check(".btn[hidden]" in html and ".btn:not([hidden])" in html,
+              "buttons respect [hidden] (Undo changes must vanish when nothing changed)")
+        for el in ("eadlg", "ea-save", "ea-inputs"):
+            check(f'id="{el}"' in html, f"EA settings dialog has #{el}")
         check('id="tab-mt5"' in html and 'id="view-mt5"' in html and "showTab" in html,
               "MT5 is a tab in this page, not a separate page")
         check("dialog.sheet[open]" in html and "\ndialog.sheet {" in html.replace("\r", ""),
