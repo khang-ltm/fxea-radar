@@ -166,6 +166,59 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Se
     -RunLevel Highest -Force | Out-Null
 Say "scheduled task '$taskName' registered (boot start, auto-restart)" 'Green'
 
+# --- watchdog: update + restart the agent without anyone logging in ----------
+# The agent updates itself too, but that only works while it is healthy. This
+# task runs independently every 20 minutes, so a wedged or crashed agent still
+# gets new code and a restart.
+$updater = Join-Path $InstallDir 'update_agent.ps1'
+@"
+`$ErrorActionPreference = 'Continue'
+`$dir  = '$InstallDir'
+`$mark = Join-Path `$dir 'data\.agent_version'
+try {
+    `$remote = (Invoke-RestMethod -Uri 'https://api.github.com/repos/khang-ltm/fxea-radar/commits/main' ``
+        -Headers @{ 'User-Agent' = 'fxea-updater' } -TimeoutSec 30).sha
+} catch { return }
+`$local = if (Test-Path `$mark) { (Get-Content `$mark -Raw).Trim() } else { '' }
+
+`$agentUp = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+    Where-Object { `$_.CommandLine -like '*app.mt5_agent*' }).Count -gt 0
+
+if (`$remote -eq `$local -and `$agentUp) { return }   # current and running: nothing to do
+
+if (`$remote -ne `$local) {
+    `$zip = Join-Path `$env:TEMP 'fxea_upd.zip'
+    `$tmp = Join-Path `$env:TEMP 'fxea_upd'
+    Invoke-WebRequest -Uri '$ZipUrl' -OutFile `$zip -UseBasicParsing
+    if (Test-Path `$tmp) { Remove-Item `$tmp -Recurse -Force }
+    Expand-Archive -Path `$zip -DestinationPath `$tmp -Force
+    `$src = (Get-ChildItem `$tmp -Directory | Select-Object -First 1).FullName
+    foreach (`$f in 'app', 'public') {
+        if (Test-Path (Join-Path `$src `$f)) {
+            Copy-Item (Join-Path `$src `$f) -Destination `$dir -Recurse -Force
+        }
+    }
+    Remove-Item `$zip, `$tmp -Recurse -Force -ErrorAction SilentlyContinue
+    Set-Content -Path `$mark -Value `$remote -Encoding utf8
+}
+
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+    Where-Object { `$_.CommandLine -like '*app.mt5_agent*' } |
+    ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 2
+Start-ScheduledTask -TaskName '$taskName'
+"@ | Set-Content -Path $updater -Encoding utf8
+
+$wdName = 'fxea-mt5-updater'
+$wdAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$updater`""
+$wdTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
+    -RepetitionInterval (New-TimeSpan -Minutes 20)
+Unregister-ScheduledTask -TaskName $wdName -Confirm:$false -ErrorAction SilentlyContinue
+Register-ScheduledTask -TaskName $wdName -Action $wdAction -Trigger $wdTrigger `
+    -RunLevel Highest -Force | Out-Null
+Say "watchdog task '$wdName' registered (checks every 20 min, restarts if needed)" 'Green'
+
 Get-Process python -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -like "$InstallDir*" } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-ScheduledTask -TaskName $taskName
