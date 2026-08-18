@@ -462,17 +462,18 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div id="mt5-eas" hidden>
       <section class="mt5bar">
         <div class="mt5bar__head">
-          <span class="mt5bar__title">Expert Advisors on this account</span>
+          <span class="mt5bar__title">Expert Advisors</span>
           <span class="mt5bar__stats" id="easstats">loading…</span>
-          <span class="toolbar__spacer"></span>
-          <button class="chip" id="eas-all" aria-pressed="false"
-                  title="include EAs that traded in the last 30 days but hold nothing now">Show idle</button>
+
         </div>
       </section>
-      <section class="mt5sect"><div class="wrap" id="eastable"></div></section>
       <section class="mt5sect">
-        <h2>Charts in the terminal <span class="num" id="chartstats"></span></h2>
+        <h2>Running now <span class="num" id="chartstats"></span></h2>
         <div class="wrap" id="chartstable"></div>
+      </section>
+      <section class="mt5sect">
+        <h2>Exposure &amp; results <span class="num" id="easkicker"></span></h2>
+        <div class="wrap" id="eastable"></div>
       </section>
     </div>
 
@@ -1306,11 +1307,6 @@ function renderHistory(d) {
 }
 
 for (const sub of SUBS) document.getElementById('sub-' + sub).onclick = () => showSub(sub);
-document.getElementById('eas-all').onclick = e => {
-  easShowAll = !easShowAll;
-  e.currentTarget.setAttribute('aria-pressed', String(easShowAll));
-  loadEas();
-};
 document.getElementById('histdays').onchange = () => { histVisible = HIST_PAGE; loadHistory(); };
 clearInterval(histTimer);
 histTimer = setInterval(loadHistory, 60000);   // no-op unless the History sub-tab is open
@@ -1319,8 +1315,6 @@ histTimer = setInterval(loadHistory, 60000);   // no-op unless the History sub-t
    One row per EA, joining what it holds right now with what it has actually
    made. Built from the two endpoints already in use, so nothing new is needed
    on the agent - and this is the surface the management actions will attach to. */
-let easShowAll = false;
-
 async function loadEas() {
   if (TAB !== 'mt5' || SUBTAB !== 'eas' || !MT5?.url) return;
   const stats = document.getElementById('easstats');
@@ -1374,10 +1368,8 @@ async function loadEas() {
   const all = [...rows.values()].sort((a, b) => (b.realised + b.floating) - (a.realised + a.floating));
   // Only what is live: an EA with an open position or a pending order. Everything
   // that merely traded at some point in the window belongs in History, not here.
-  const list = easShowAll ? all : all.filter(r => r.open || r.pending);
-  stats.innerHTML = easShowAll
-    ? `<b>${all.length}</b> seen in 30d`
-    : `<b>${list.length}</b> live now · ${all.length - list.length} idle (hidden)`;
+  const list = all.filter(r => r.open || r.pending);   // live only; History has the rest
+  document.getElementById('easkicker').textContent = `(${list.length} with money at risk)`;
 
   setHtml('eastable', list.length ? `<table class="mt5">
     <thead><tr><th class="n">Magic</th><th>Name</th><th>Symbols</th>
@@ -1399,9 +1391,7 @@ async function loadEas() {
         <td class="n ${mt5Cls(r.realised)}">${r.trades ? mt5Money(r.realised, '') : '—'}</td>
         <td class="mono">${esc(mt5Time(r.last))}</td></tr>`;
     }).join('')}</tbody></table>`
-    : `<div class="empty">${easShowAll
-        ? 'No EA activity in the last 30 days.'
-        : 'No EA is holding a position or order right now.'}</div>`);
+    : '<div class="empty">No EA is holding a position or order right now.</div>');
 }
 
 setInterval(() => { loadEas(); loadCharts(); }, 30000);   // both no-op unless the EAs tab is open
@@ -1432,7 +1422,12 @@ async function loadCharts() {
   }
 
   const charts = (d.charts || []).filter(c => !c.is_manager);
-  stats.textContent = `(${charts.length}) · manager ${d.attached ? 'attached' : 'stale'}`;
+  const withEa = charts.filter(c => c.expert);
+  stats.textContent = `(${withEa.length})`;
+  document.getElementById('easstats').innerHTML =
+    `<b>${withEa.length}</b> EA${withEa.length === 1 ? '' : 's'} attached to charts`
+    + ` · manager ${d.attached ? 'connected' : '<span style="color:var(--color-warn)">stale</span>'}`;
+  charts.sort((a, b) => (b.expert ? 1 : 0) - (a.expert ? 1 : 0));
   setHtml('chartstable', charts.length ? `<table class="mt5">
     <thead><tr><th class="n">Chart</th><th>Symbol</th><th class="n">TF</th><th>Expert</th>
       <th style="text-align:right">Action</th></tr></thead>
