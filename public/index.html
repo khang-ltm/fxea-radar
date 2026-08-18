@@ -471,6 +471,10 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
         <h2>Running now <span class="num" id="chartstats"></span></h2>
         <div class="wrap" id="chartstable"></div>
       </section>
+      <section class="mt5sect" id="pausedwrap" hidden>
+        <h2>Paused</h2>
+        <div class="wrap" id="pausedtable"></div>
+      </section>
       <section class="mt5sect">
         <h2>Exposure &amp; results <span class="num" id="easkicker"></span></h2>
         <div class="wrap" id="eastable"></div>
@@ -1437,23 +1441,39 @@ async function loadCharts() {
       <td class="n">${esc(String(c.period))}</td>
       <td>${esc(c.expert || '—')}</td>
       <td style="text-align:right">${c.expert
-        ? `<button class="chip" data-unload="${esc(String(c.chart))}"
-             data-name="${esc(c.expert)} on ${esc(c.symbol)}">Unload</button>`
+        ? `<button class="chip" data-pause="${esc(String(c.chart))}"
+             data-name="${esc(c.expert)} on ${esc(c.symbol)}">Pause</button>`
         : '<span class="shot-none">no EA</span>'}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No other charts open.</div>');
 
-  for (const b of document.querySelectorAll('[data-unload]')) {
-    b.onclick = () => unloadChart(b.dataset.unload, b.dataset.name);
+  const paused = d.paused || [];
+  setHtml('pausedtable', paused.length ? `<table class="mt5">
+    <thead><tr><th>Expert</th><th>Symbol</th><th class="n">TF</th>
+      <th style="text-align:right">Action</th></tr></thead>
+    <tbody>${paused.map(x => `<tr>
+      <td>${esc(x.expert || '—')}</td><td>${esc(x.symbol)}</td><td class="n">${esc(String(x.period))}</td>
+      <td style="text-align:right"><button class="chip" data-run="${esc(String(x.key))}"
+        data-name="${esc(x.expert)} on ${esc(x.symbol)}">Run</button></td></tr>`).join('')}</tbody></table>`
+    : '');
+  document.getElementById('pausedwrap').hidden = paused.length === 0;
+
+  for (const b of document.querySelectorAll('[data-pause]')) {
+    b.onclick = () => managerAction('pause', { chart: Number(b.dataset.pause) }, b.dataset.name);
+  }
+  for (const b of document.querySelectorAll('[data-run]')) {
+    b.onclick = () => managerAction('run', { key: b.dataset.run }, b.dataset.name);
   }
 }
 
-async function unloadChart(chart, label) {
-  // unloading stops the EA; it does NOT close whatever it already has open
-  if (!confirm(`Unload ${label}?
+async function managerAction(action, args, label) {
+  const verb = action === 'pause' ? 'Pause' : 'Run';
+  const note = action === 'pause'
+    ? 'The EA stops. Its settings are saved, so Run brings it back. '
+      + 'Positions and orders it already placed stay open.'
+    : 'The chart reopens with the EA and its saved settings.';
+  if (!confirm(`${verb} ${label}?
 
-This closes its chart, which stops the EA.
-`
-    + 'Any positions or pending orders it already placed stay open.')) return;
+${note}`)) return;
   try {
     const r = await fetch(`${MT5.url}/api/manager`, {
       method: 'POST',
@@ -1462,7 +1482,7 @@ This closes its chart, which stops the EA.
         'Content-Type': 'application/json',
         ...(MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {}),
       },
-      body: JSON.stringify({ action: 'unload', chart: Number(chart), confirm: true }),
+      body: JSON.stringify({ action, ...args, confirm: true }),
     });
     const d = await r.json();
     alert(d.ok ? `Done: ${d.message}` : `Failed: ${d.error || d.message}`);

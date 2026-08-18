@@ -687,11 +687,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         action = str(body.get("action") or "")
-        if action not in ("status", "unload", "pause", "resume"):
+        if action not in ("status", "pause", "run", "resume", "unload"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
-        if action == "unload" and not body.get("confirm"):
-            self._json({"ok": False, "error": "unload requires confirm: true"}, 400)
+        if action in ("pause", "unload") and not body.get("confirm"):
+            self._json({"ok": False, "error": f"{action} requires confirm: true"}, 400)
             return
 
         self._json(manager_command(
@@ -699,6 +699,7 @@ class Handler(BaseHTTPRequestHandler):
             chart=body.get("chart"),
             symbol=body.get("symbol"),
             expert=body.get("expert"),
+            key=body.get("key"),
             magic=body.get("magic"),
         ))
 
