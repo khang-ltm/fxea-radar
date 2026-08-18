@@ -133,6 +133,8 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
    color: var(--color-foreground); border: 1px solid var(--color-border); border-radius: 6px; }
 .setrow input:focus { outline: 2px solid var(--color-accent); outline-offset: -1px; }
 .setrow.dirty input { border-color: var(--color-accent); color: var(--color-accent); }
+.setrow input[readonly] { background: none; border-color: transparent; color: var(--color-muted-fg);
+   cursor: default; }
 .setrow.text { grid-template-columns: 1fr; gap: 4px; }
 .setrow.text input { text-align: left; }
 .setrow.text label small { display: inline; margin-left: var(--space-2); }
@@ -1577,7 +1579,16 @@ const inputCell = i => {
    running with. Applying writes them back through the same template, which
    reloads the EA - fine when it is flat, deliberate when it is not. */
 const eaDlg = document.getElementById('eadlg');
-let EA_EDIT = null;      // { chart, expert, inputs: [{k, v}] }
+let EA_EDIT = null;      // { chart, expert, inputs: [{k, v}], held }
+
+/* Reloading an EA that is in a trade loses the state it manages that trade
+   with, so settings are read-only until it is flat. The manager refuses this
+   too - this is the half that explains why. */
+function heldBy(chart) {
+  const r = sumRows(matchMagic(chart, EA_ROWS, new Set(
+    CHARTS.map(c => Number(c.magic)).filter(m => m && m !== Number(chart.magic)))).rows);
+  return r ? (r.open || 0) + (r.pending || 0) : 0;
+}
 
 /* InpLotsFixed -> "Lots Fixed", inp_RiskPercent -> "Risk Percent" */
 const prettyKey = k => String(k)
@@ -1594,7 +1605,8 @@ const headingText = k => String(k).replace(/^[>#*=~\s-]+|[:=\s]+$/g, '')
 function openEaSettings(chartId) {
   const c = CHARTS.find(x => String(x.chart) === String(chartId));
   if (!c) return;
-  EA_EDIT = { chart: c.chart, expert: c.expert, inputs: (c.inputs || []).map(i => ({ ...i })) };
+  EA_EDIT = { chart: c.chart, expert: c.expert, held: heldBy(c),
+              inputs: (c.inputs || []).map(i => ({ ...i })) };
 
   document.getElementById('ea-title').textContent = shortEa(c.expert);
   document.getElementById('ea-sub').textContent =
@@ -1605,7 +1617,8 @@ function openEaSettings(chartId) {
     const long = String(i.v).length > 18 || /[a-z]{4,}\s/i.test(String(i.v));
     return `<div class="setrow${long ? ' text' : ''}" data-row="${n}">
       <label for="ea-in-${n}">${esc(prettyKey(i.k))}<small>${esc(i.k)}</small></label>
-      <input id="ea-in-${n}" data-idx="${n}" value="${esc(i.v)}" spellcheck="false"></div>`;
+      <input id="ea-in-${n}" data-idx="${n}" value="${esc(i.v)}" spellcheck="false"
+        ${EA_EDIT.held ? 'readonly' : ''}></div>`;
   }).join('');
 
   for (const el of document.querySelectorAll('#ea-inputs input')) {
@@ -1632,9 +1645,14 @@ function eaChanges() {
 function refreshEaButtons() {
   const n = Object.keys(eaChanges()).length;
   const save = document.getElementById('ea-save');
-  save.disabled = n === 0;
+  const held = EA_EDIT?.held || 0;
+  save.disabled = held > 0 || n === 0;
   save.textContent = n ? `Apply ${n} change${n === 1 ? '' : 's'}` : 'Apply';
   document.getElementById('ea-reset').hidden = n === 0;
+  document.getElementById('ea-note').textContent = held
+    ? `${held} open trade${held === 1 ? '' : 's'} on this EA - settings are read-only`
+      + ' until it is flat, because reloading it loses the state it manages them with.'
+    : 'Applying reloads the EA: open trades stay, its memory of them does not.';
 }
 
 document.getElementById('ea-close').onclick = () => eaDlg.close();
@@ -1652,22 +1670,13 @@ document.getElementById('ea-save').onclick = async () => {
 
   const note = document.getElementById('ea-note');
   const save = document.getElementById('ea-save');
+  if (EA_EDIT.held) return;              // belt and braces: the button is disabled
   save.disabled = true;
   note.textContent = 'applying...';
-  let r = await managerPost({ action: 'setinputs', chart: EA_EDIT.chart, confirm: true, inputs: changes });
-
-  // the manager refuses while the EA holds trades: that is a decision, not a bug
-  if (!r.ok && /open trade/i.test(r.message || r.error || '')) {
-    if (confirm((r.message || r.error) + String.fromCharCode(10, 10) + 'Apply anyway?')) {
-      note.textContent = 'applying...';
-      r = await managerPost({ action: 'setinputs', chart: EA_EDIT.chart, confirm: true,
-                             force: true, inputs: changes });
-    } else {
-      note.textContent = 'not applied';
-      refreshEaButtons();
-      return;
-    }
-  }
+  // no force from here: if the EA opened a trade since the dialog was drawn,
+  // the manager refuses and the honest answer is to wait until it is flat
+  const r = await managerPost({ action: 'setinputs', chart: EA_EDIT.chart,
+                                confirm: true, inputs: changes });
 
   note.textContent = r.ok ? (r.message || 'applied') : ('failed: ' + (r.message || r.error));
   if (r.ok) {
