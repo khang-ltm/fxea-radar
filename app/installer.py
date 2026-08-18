@@ -69,7 +69,8 @@ async def _download(channel: str, message_id: int, into: pathlib.Path) -> tuple[
             pass
 
 
-def _unpack(archive: pathlib.Path, into: pathlib.Path) -> tuple[list[pathlib.Path], str]:
+def _unpack(archive: pathlib.Path, into: pathlib.Path,
+            seen: list | None = None) -> tuple[list[pathlib.Path], str]:
     """Extract what an archive holds, flat, keeping only EA files.
 
     .zip is handled here; anything else goes to whichever external tool can read
@@ -91,6 +92,8 @@ def _unpack(archive: pathlib.Path, into: pathlib.Path) -> tuple[list[pathlib.Pat
                     if m.file_size > MAX_MEMBER_BYTES:
                         continue
                     name = pathlib.PurePosixPath(m.filename).name      # ignore any path
+                    if seen is not None and name:
+                        seen.append(m.filename)
                     if not name or not name.lower().endswith(KEEP_SUFFIXES):
                         continue
                     with z.open(m) as src, open(into / name, "wb") as dst:
@@ -112,6 +115,8 @@ def _unpack(archive: pathlib.Path, into: pathlib.Path) -> tuple[list[pathlib.Pat
 
     kept = []
     for f in into.rglob("*"):
+        if f.is_file() and seen is not None:
+            seen.append(str(f.relative_to(into)))
         if f.is_file() and f.suffix.lower() in KEEP_SUFFIXES and f.stat().st_size <= MAX_MEMBER_BYTES:
             flat = into / f.name
             if f != flat:
@@ -157,7 +162,8 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
         if archive is None:
             return {"ok": False, "error": why}
 
-        found, why = _unpack(archive, tmpdir / "out")
+        seen: list[str] = []
+        found, why = _unpack(archive, tmpdir / "out", seen)
         if why:
             return {"ok": False, "error": why}
         eas = [f for f in found if f.suffix.lower() == ".ex5"]
@@ -182,7 +188,13 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
                               "kind": "ea" if dst.suffix.lower() == ".ex5" else "set",
                               "size_bytes": dst.stat().st_size})
 
+        # What an EA needs beyond its .ex5 is worth naming: a pack that shipped a
+        # .dll or a data file has an EA that may refuse to run without it, and
+        # this is the only place that knows those files existed.
+        kept_names = {f.name for f in found}
+        dropped = sorted({pathlib.PurePath(x).name for x in seen
+                          if pathlib.PurePath(x).name and pathlib.PurePath(x).name not in kept_names})
         return {"ok": True, "archive": archive.name, "installed": installed,
-                "unchanged": skipped,
+                "unchanged": skipped, "dropped": dropped[:40],
                 "experts": [x for x in installed if x["kind"] == "ea"],
                 "presets": [x for x in installed if x["kind"] == "set"]}
