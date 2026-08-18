@@ -305,15 +305,30 @@ def read_history(days: int = 30) -> dict:
     closed: list[dict] = []
     today = datetime.now(timezone.utc).date()
 
+    # An EA stamps its magic on the deal that OPENS a position; the closing deal
+    # frequently carries 0, which made real EA trades look manual. Build the
+    # position -> magic map first, then attribute each close to its opener.
+    magic_of_position: dict[int, int] = {}
     for dl in deals:
         d = _as_dict(dl)
+        pid = int(d.get("position_id") or 0)
+        mg = int(d.get("magic") or 0)
+        if pid and mg and pid not in magic_of_position:
+            magic_of_position[pid] = mg
+
+    for dl in deals:
+        d = _as_dict(dl)
+        # types 0/1 are buy/sell; 2+ are balance, credit, bonus and similar
+        # non-trades that would otherwise pollute every total
+        if int(d.get("type") or 0) > 1:
+            continue
         if d.get("entry") not in DEAL_ENTRY_OUT:
             continue                                    # skip the opening leg
         # a trade's true result is profit plus its costs
         net = round(float(d.get("profit") or 0) + float(d.get("swap") or 0)
                     + float(d.get("commission") or 0) + float(d.get("fee") or 0), 2)
         when = datetime.fromtimestamp(int(d.get("time") or 0), tz=timezone.utc)
-        magic = int(d.get("magic") or 0)
+        magic = int(d.get("magic") or 0) or magic_of_position.get(int(d.get("position_id") or 0), 0)
 
         e = by_ea.setdefault(magic, {"magic": magic, "trades": 0, "wins": 0, "losses": 0,
                                      "profit": 0.0, "symbols": [], "comments": []})
