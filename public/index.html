@@ -138,6 +138,10 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .setrow.text { grid-template-columns: 1fr; gap: 4px; }
 .setrow.text input { text-align: left; }
 .setrow.text label small { display: inline; margin-left: var(--space-2); }
+.tree__folder > td { color: var(--color-muted-fg); font-size: 11px; letter-spacing: .05em;
+   text-transform: uppercase; font-family: var(--font-head); padding-top: var(--space-4); }
+.tree__folder svg { vertical-align: -2px; margin-right: 4px; }
+.tree__leaf { padding-left: var(--space-5); }
 .inputrow > td { background: var(--color-surface); padding: var(--space-3) var(--space-4); }
 .inputs { display: grid; gap: 2px var(--space-4); font-size: 12px;
    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
@@ -669,6 +673,7 @@ const ICON = {
   chevron: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
   download: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 12l5 5 5-5"/><path d="M4 21h16"/></svg>',
   link: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7L11 7"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 1 0 11 18.7L13 17"/></svg>',
+  folder: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   chart: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
 const RISKY = new Set(['cracked', 'martingale', 'grid']);
@@ -1718,32 +1723,50 @@ const inputCell = i => {
 };
 
 
-/* What is on the VPS, and what is safe to remove. MT5's own samples are hidden:
-   they are not EAs anyone here installed, and nobody wants 40 rows of Examples. */
+/* What is on the VPS, grouped the way it sits on disk. MT5's own samples are
+   hidden: nobody here installed them, and forty rows of Examples buries the
+   handful that matter. */
 function renderInstalled(charts, paused) {
   const running = new Set([
     ...charts.filter(c => c.expert).map(c => c.expert),
     ...paused.map(p => p.expert),
   ]);
   const mine = INSTALLED.filter(e =>
-    !/^(Advisors|Examples)\b/i.test(e.folder || '') && !/^Experts?FxeaManager$|^FxeaManager$/i.test(e.name));
+    !/^(Advisors|Examples)\b/i.test(e.folder || '')
+    && !/^Experts?FxeaManager$|^FxeaManager$/i.test(e.name));
 
-  document.getElementById('instcount').textContent = mine.length ? `(${mine.length})` : '';
-  setHtml('insttable', mine.length ? `<table class="mt5">
-    <thead><tr><th>Expert</th><th>Folder</th><th class="n">Size</th><th>State</th>
+  const byFolder = new Map();
+  for (const e of mine) {
+    const key = e.folder || 'Experts';
+    if (!byFolder.has(key)) byFolder.set(key, []);
+    byFolder.get(key).push(e);
+  }
+  const folders = [...byFolder.keys()].sort((a, b) =>
+    (a === 'Experts' ? '' : a).localeCompare(b === 'Experts' ? '' : b));
+
+  const live = mine.filter(e => running.has(e.name)).length;
+  document.getElementById('instcount').textContent = mine.length
+    ? `(${mine.length}${live ? `, ${live} on charts` : ''})` : '';
+
+  setHtml('insttable', mine.length ? `<table class="mt5 tree">
+    <thead><tr><th>Expert</th><th class="n">Size</th><th>State</th>
       <th style="text-align:right">Action</th></tr></thead>
-    <tbody>${mine.map(e => {
-      const live = running.has(e.name);
-      return `<tr>
-        <td>${esc(e.name)}</td>
-        <td class="mono">${esc(e.folder || 'Experts')}</td>
-        <td class="n">${fmtSize(e.size_bytes)}</td>
-        <td>${live ? '<span class="badge badge--pass">on a chart</span>'
-                   : '<span class="shot-none">idle</span>'}</td>
-        <td style="text-align:right">${live
-          ? '<span class="shot-none">pause it first</span>'
-          : `<button class="chip ghost" data-remove="${esc(e.path)}"
-               data-name="${esc(e.name)}">Delete</button>`}</td></tr>`;
+    <tbody>${folders.map(folder => {
+      const rows = byFolder.get(folder).slice().sort((a, b) => a.name.localeCompare(b.name));
+      return `<tr class="tree__folder"><td colspan="4">${ICON.folder}
+          ${esc(folder)} <span class="num">(${rows.length})</span></td></tr>`
+        + rows.map(e => {
+          const on = running.has(e.name);
+          return `<tr>
+            <td class="tree__leaf">${esc(e.name)}</td>
+            <td class="n">${fmtSize(e.size_bytes)}</td>
+            <td>${on ? '<span class="badge badge--pass">on a chart</span>'
+                     : '<span class="shot-none">idle</span>'}</td>
+            <td style="text-align:right">${on
+              ? '<span class="shot-none">pause it first</span>'
+              : `<button class="chip ghost" data-remove="${esc(e.path)}"
+                   data-name="${esc(e.name)}">Delete</button>`}</td></tr>`;
+        }).join('');
     }).join('')}</tbody></table>`
     : '<div class="empty">Nothing installed from the catalog yet.</div>');
 
@@ -1756,12 +1779,19 @@ async function removeInstalled(path, name) {
   const pin = prompt(`Delete "${name}" from the VPS?`
     + String.fromCharCode(10, 10)
     + 'It is not on a chart, so nothing stops trading. A copy is kept in'
-    + ' data/removed on the VPS, and MT5 forgets it after a Navigator refresh.'
+    + ' data/removed on the VPS.'
     + String.fromCharCode(10, 10) + 'Enter the PIN to confirm:');
   if (!pin) return;
   const r = await managerPost({ action: 'uninstall', confirm: true, pin, path });
-  alert(r.ok ? r.message : `Failed: ${r.error || r.message}`);
-  if (r.ok) { installedAsked = false; loadInstalled(); loadCharts(); }
+  if (!r.ok) { alert(`Failed: ${r.error || r.message}`); return; }
+
+  // gone means gone: drop it locally rather than waiting for the next poll, and
+  // re-render the catalog too, since that row now offers install instead of chart
+  INSTALLED = INSTALLED.filter(e => e.path !== path);
+  renderInstalled(CHARTS.filter(c => !c.is_manager), []);
+  render();
+  installedAsked = false;
+  loadInstalled();
 }
 
 /* ── attaching an EA ────────────────────────────────────────────
