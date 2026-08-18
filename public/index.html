@@ -981,7 +981,8 @@ const mt5Lots = v => (v == null ? '—' : Number(v).toFixed(2));
 const mt5Magic = v => (!Number(v) ? '<span class="badge">manual</span>' : esc(String(v)));
 
 document.getElementById('mt5conf').onclick = () => {
-  const url = prompt('Agent URL (from cloudflared on the VPS):', MT5?.url || 'https://xxx.trycloudflare.com');
+  const url = prompt('Agent URL (the mt5. host on your VPS, no trailing slash):',
+    MT5?.url || 'https://mt5.your-domain');
   if (url === null) return;
   const token = prompt('Access token (MT5_TOKEN on the VPS):', MT5?.token || '');
   if (token === null) return;
