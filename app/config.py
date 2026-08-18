@@ -15,9 +15,14 @@ SESSION_FILE = DATA_DIR / "tg.session"  # Telethon sqlite session
 
 
 def _load_env() -> None:
-    if not ENV_FILE.exists():
+    for path in (ENV_FILE, ROOT / ".env.mt5"):
+        _load_env_file(path)
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
         return
-    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
