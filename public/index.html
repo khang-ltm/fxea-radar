@@ -109,6 +109,9 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
   font: 500 12.5px/1.2 var(--font-body);
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
 .chip:hover { color: var(--color-foreground); border-color: var(--color-muted-fg); }
+.chip.ghost { min-height: 0; padding: 1px 6px; font-size: 11px; border-color: transparent;
+   background: none; color: var(--color-muted-fg); }
+.chip.ghost:hover { border-color: var(--color-border); }
 .chip[aria-pressed="true"] { background: color-mix(in srgb, var(--color-info) 18%, var(--color-surface));
   border-color: var(--color-info); color: var(--color-foreground); }
 
@@ -448,10 +451,6 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 
     <section class="mt5sect"><h2>Open positions <span class="num" id="mt5poscount"></span></h2>
       <div class="wrap" id="mt5positions"></div></section>
-    <section class="mt5sect"><h2>By EA (magic number) <span class="num" id="mt5eacount"></span></h2>
-      <div class="wrap" id="mt5byea"></div></section>
-    <section class="mt5sect"><h2>Manual trades <span class="num" id="mt5mancount"></span></h2>
-      <div class="wrap" id="mt5manual"></div></section>
     </div>
 
     <div id="mt5-ord" hidden>
@@ -1185,15 +1184,21 @@ function renderMt5(d) {
   // connected and reading fine: the button is only clutter now
   document.getElementById('mt5conf').hidden = true;
 
+  if (!chartsPrefetched) {                 // learn magic -> EA name once, quietly
+    chartsPrefetched = true;
+    loadEas(true).then(() => loadCharts(true)).catch(() => {});
+  }
+
   const pos = d.positions || [];
   document.getElementById('mt5poscount').textContent = pos.length ? `(${pos.length})` : '';
   setHtml('mt5positions', pos.length ? `<table class="mt5">
-    <thead><tr><th>Symbol</th><th>Side</th><th class="n">Lots</th><th class="n">Entry</th><th class="n">Now</th>
-      <th class="n">SL</th><th class="n">TP</th><th class="n">P&amp;L</th><th class="n">Magic</th>
-      <th>Comment</th><th>Opened<span data-tz></span></th></tr></thead>
+    <thead><tr><th>Symbol</th><th>Side</th><th>By</th><th class="n">Lots</th><th class="n">Entry</th>
+      <th class="n">Now</th><th class="n">SL</th><th class="n">TP</th><th class="n">P&amp;L</th>
+      <th class="n">Magic</th><th>Comment</th><th>Opened<span data-tz></span></th></tr></thead>
     <tbody>${pos.map(p => `<tr>
       <td>${esc(p.symbol)}</td>
       <td><span class="badge ${p.type === 'buy' ? 'badge--pass' : 'badge--loss'}">${esc(p.type)}</span></td>
+      <td>${placedBy(p.magic)}</td>
       <td class="n">${mt5Lots(p.volume)}</td>
       <td class="n">${mt5Px(p.price_open, p.digits)}</td><td class="n">${mt5Px(p.price_current, p.digits)}</td>
       <td class="n">${mt5Px(p.sl, p.digits)}</td><td class="n">${mt5Px(p.tp, p.digits)}</td>
@@ -1202,36 +1207,16 @@ function renderMt5(d) {
       <td class="mono">${esc(mt5Time(p.opened_at))}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No open positions.</div>');
 
-  // magic 0 is a hand-placed trade, not an EA - keep the two apart
-  const groups = d.by_ea || [];
-  const eas = groups.filter(e => Number(e.magic));
-  const manual = groups.filter(e => !Number(e.magic));
-  const groupRows = list => list.map(e => `<tr><td class="n">${mt5Magic(e.magic)}</td>
-      <td>${esc((e.symbols || []).join(', '))}</td>
-      <td class="n">${esc(e.positions)}</td><td class="n">${esc(e.volume)}</td>
-      <td class="n ${mt5Cls(e.profit)}">${mt5Money(e.profit, '')}</td>
-      <td>${esc((e.comments || []).join(', '))}</td></tr>`).join('');
-  const groupHead = `<thead><tr><th class="n">Magic</th><th>Symbols</th><th class="n">Positions</th>
-      <th class="n">Lots</th><th class="n">P&amp;L</th><th>Comment</th></tr></thead>`;
-
-  document.getElementById('mt5mancount').textContent = manual.length ? `(${manual.length})` : '';
-  setHtml('mt5manual', manual.length
-    ? `<table class="mt5">${groupHead}<tbody>${groupRows(manual)}</tbody></table>`
-    : '<div class="empty">No trades placed by hand.</div>');
-
-  document.getElementById('mt5eacount').textContent = eas.length ? `(${eas.length})` : '';
-  setHtml('mt5byea', eas.length ? `<table class="mt5">
-    ${groupHead}<tbody>${groupRows(eas)}</tbody></table>`
-    : '<div class="empty">EAs appear here once they hold a position.</div>');
-
   const ords = d.orders || [];
   document.getElementById('mt5ordcount').textContent = ords.length ? `(${ords.length})` : '';
   setHtml('mt5orders', ords.length ? `<table class="mt5">
     <thead><tr><th>Symbol</th><th>Type</th><th class="n">Lots</th><th class="n">Price</th><th class="n">SL</th>
-      <th class="n">TP</th><th class="n">Magic</th><th>Comment</th><th>Placed<span data-tz></span></th></tr></thead>
+      <th class="n">TP</th><th>By</th><th class="n">Magic</th><th>Comment</th>
+      <th>Placed<span data-tz></span></th></tr></thead>
     <tbody>${ords.map(o => `<tr><td>${esc(o.symbol)}</td><td>${esc(o.type)}</td><td class="n">${mt5Lots(o.volume)}</td>
       <td class="n">${mt5Px(o.price_open, o.digits)}</td><td class="n">${mt5Px(o.sl, o.digits)}</td>
-      <td class="n">${mt5Px(o.tp, o.digits)}</td><td class="n">${mt5Magic(o.magic)}</td>
+      <td class="n">${mt5Px(o.tp, o.digits)}</td><td>${placedBy(o.magic)}</td>
+      <td class="n">${mt5Magic(o.magic)}</td>
       <td>${esc(o.comment || '')}</td>
       <td class="mono">${esc(mt5Time(o.placed_at))}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No pending orders.</div>');
@@ -1336,8 +1321,8 @@ histTimer = setInterval(loadHistory, 60000);   // no-op unless the History sub-t
    One row per EA, joining what it holds right now with what it has actually
    made. Built from the two endpoints already in use, so nothing new is needed
    on the agent - and this is the surface the management actions will attach to. */
-async function loadEas() {
-  if (TAB !== 'mt5' || SUBTAB !== 'eas' || !MT5?.url) return;
+async function loadEas(quiet) {
+  if (TAB !== 'mt5' || (!quiet && SUBTAB !== 'eas') || !MT5?.url) return;
   const stats = document.getElementById('easstats');
   const auth = { credentials: 'include', headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {} };
   const tz = -new Date().getTimezoneOffset();
@@ -1393,6 +1378,26 @@ async function loadEas() {
   const list = all.filter(r => r.open || r.pending);   // live only; History has the rest
   // no table of its own any more: these rows feed the Running now table
 }
+
+/* Which EA is behind a trade. MT5 only reports a magic number, so the name
+   comes from the chart matching done for the EAs tab; until that has run (or
+   for an EA whose chart is closed) the badge just says it was not placed by
+   hand. Magic 0 is only ever a manual trade. */
+let EA_BY_MAGIC = {};
+let chartsPrefetched = false;
+
+function placedBy(magic) {
+  const m = Number(magic) || 0;
+  if (!m) return '<span class="badge">manual</span>';
+  const name = EA_BY_MAGIC[m];
+  return name
+    ? `<span class="badge badge--pass" title="${esc(name)}">${esc(shortEa(name))}</span>`
+    : '<span class="badge badge--pass">EA</span>';
+}
+
+/* chart names carry the version and the channel tag; neither helps in a cell */
+const shortEa = name => String(name).replace(/@\S+/, '').replace(/[_ ]v?[\d.]+.*$/i, '')
+  .replace(/\s+(mt4|mt5)\b.*$/i, '').trim() || String(name);
 
 /* ── matching a chart to its magic number ──────────────────────────────────
    A chart reports the EA FILE name ("Quantum Bitcoin EA_3.2_fix@free_fx_pro")
@@ -1487,8 +1492,8 @@ document.getElementById('link-save').onclick = () => {
    is the only way to stop a compiled EA from outside. Chart names and trade
    comments do not reliably match, so charts are listed separately rather than
    guessed onto the per-EA rows. */
-async function loadCharts() {
-  if (TAB !== 'mt5' || SUBTAB !== 'eas' || !MT5?.url) return;
+async function loadCharts(quiet) {
+  if (TAB !== 'mt5' || (!quiet && SUBTAB !== 'eas') || !MT5?.url) return;
   if (!EA_ROWS.length) await loadEas();      // matching needs the per-EA rows
   const stats = document.getElementById('chartstats');
   let d;
@@ -1509,6 +1514,12 @@ async function loadCharts() {
   }
 
   const charts = (d.charts || []).filter(c => !c.is_manager);
+  EA_BY_MAGIC = {};
+  for (const c of charts) {
+    if (!c.expert) continue;
+    for (const r of matchMagic(c, EA_ROWS).rows) EA_BY_MAGIC[r.magic] = c.expert;
+  }
+  if (quiet) return;                       // called only to learn the mapping
   const withEa = charts.filter(c => c.expert);
   stats.textContent = `(${withEa.length})`;
   document.getElementById('easstats').innerHTML =
@@ -1523,12 +1534,17 @@ async function loadCharts() {
       const m = matchMagic(c, EA_ROWS);
       const r = sumRows(m.rows);
       const rate = r && r.trades ? Math.round(100 * r.wins / r.trades) : null;
-      const link = `<button class="chip" data-link="${esc(String(c.chart))}"
-          data-name="${esc(c.expert || '')}" data-sym="${esc(c.symbol)}"
-          title="pick which magic number this chart trades under">link</button>`;
+      // a matched row only offers a quiet way to correct the match; an unmatched
+      // one has to ask, because without a magic it can show no numbers at all
+      const linkBtn = (cls, label, tip) => `<button class="chip ${cls}"
+          data-link="${esc(String(c.chart))}" data-name="${esc(c.expert || '')}"
+          data-sym="${esc(c.symbol)}" title="${tip}">${label}</button>`;
+      const link = r
+        ? linkBtn('ghost', m.how === 'manual' ? 'linked' : 'auto',
+                  `matched to magic ${m.rows.map(x => x.magic).join(', ')} - click to change`)
+        : linkBtn('', 'link', 'pick which magic number this chart trades under');
       return `<tr>
-      <td>${esc(c.expert || '—')}${m.how === 'manual' ? ' <span class="badge">linked</span>' : ''}
-        ${c.expert ? link : ''}</td>
+      <td>${esc(c.expert || '—')} ${c.expert ? link : ''}</td>
       <td>${esc(c.symbol)}</td>
       <td class="n">${r && r.open ? r.open : '—'}</td>
       <td class="n ${r ? mt5Cls(r.floating) : ''}">${r && r.open ? mt5Money(r.floating, '') : '—'}</td>
