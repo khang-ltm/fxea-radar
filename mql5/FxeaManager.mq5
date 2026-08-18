@@ -27,13 +27,14 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.15"
+#property version   "1.16"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
 input int  StatusEverySecs = 5;      // how often to rewrite the status file
 input bool AllowControl    = true;   // master switch for pause / run
 input bool AllowEditInputs = true;   // let the page change EA settings
+input bool AllowAttach     = true;   // let the page put an EA on a new chart
 input bool VerboseLog      = true;   // print actions to the Experts log
 input bool ReportInputs    = true;   // report each EA settings (magic, lots, ...)
 
@@ -43,6 +44,7 @@ input bool ReportInputs    = true;   // report each EA settings (magic, lots, ..
 #define PAUSED_FILE  "fxea_paused.txt"
 #define INPUTS_FILE  "fxea_inputs.txt"
 #define EDIT_NAME    "fxea_edit"
+#define ATTACH_NAME  "fxea_attach"
 
 datetime g_last_status = 0;
 long     g_self_chart  = 0;
@@ -54,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.15", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.16", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -302,7 +304,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.15",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.16",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -654,6 +656,207 @@ void DoSetInputs(const string id, const long chart, const bool force)
   }
 
 //+------------------------------------------------------------------+
+//| Put an EA on a new chart.                                         |
+//|                                                                   |
+//| Again there is no call for it: an EA can only arrive on a chart    |
+//| through a template. Rather than hand-write one - the format is    |
+//| undocumented and version-dependent - this borrows a real template |
+//| from the manager own chart and swaps the <expert> block for the   |
+//| requested EA and its settings. Symbol and timeframe are forced    |
+//| afterwards, since the borrowed template carries the manager ones. |
+//+------------------------------------------------------------------+
+bool ReadLines(const string file, string &lines[])
+  {
+   int fh = FileOpen(file, FILE_READ | FILE_TXT | FILE_ANSI);
+   if(fh == INVALID_HANDLE)
+      return(false);
+   int n = 0;
+   while(!FileIsEnding(fh))
+     {
+      ArrayResize(lines, n + 1);
+      lines[n] = FileReadString(fh);
+      n++;
+     }
+   FileClose(fh);
+   return(true);
+  }
+
+bool WriteLines(const string file, const string &lines[])
+  {
+   int fh = FileOpen(file, FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(fh == INVALID_HANDLE)
+      return(false);
+   for(int i = 0; i < ArraySize(lines); i++)
+      FileWriteString(fh, lines[i] + "\n");
+   FileClose(fh);
+   return(true);
+  }
+
+/* fxea_inputs.txt, if the agent staged one, becomes the new EA settings */
+string StagedInputs()
+  {
+   string out = "";
+   if(!FileIsExist(INPUTS_FILE))
+      return(out);
+   string lines[];
+   if(ReadLines(INPUTS_FILE, lines))
+      for(int i = 0; i < ArraySize(lines); i++)
+        {
+         string line = lines[i];
+         StringTrimLeft(line);
+         StringTrimRight(line);
+         if(StringFind(line, "=") > 0)
+            out += line + "\n";
+        }
+   FileDelete(INPUTS_FILE);
+   return(out);
+  }
+
+void DoAttach(const string id, const string expert, const string path,
+              const string symbol, const long period)
+  {
+   if(!AllowAttach)
+     {
+      WriteResult(id, false, "attaching is switched off in this EA inputs");
+      return;
+     }
+   if(expert == "" || symbol == "")
+     {
+      WriteResult(id, false, "expert and symbol are both required");
+      return;
+     }
+   if(!SymbolSelect(symbol, true))
+     {
+      WriteResult(id, false, "unknown symbol at this broker: " + symbol);
+      return;
+     }
+
+   // refuse a second copy of the same EA on the same symbol and timeframe: two
+   // instances trading one setup is how an account doubles its risk by accident
+   long scan = ChartFirst();
+   while(scan >= 0)
+     {
+      if(ChartGetString(scan, CHART_EXPERT_NAME) == expert
+         && ChartSymbol(scan) == symbol && ChartPeriod(scan) == period)
+        {
+         WriteResult(id, false, StringFormat("%s already runs on %s (chart %I64d)",
+                                             expert, symbol, scan));
+         return;
+        }
+      scan = ChartNext(scan);
+     }
+
+   string file = ATTACH_NAME + ".tpl";
+   if(FileIsExist(file))
+      FileDelete(file);
+   if(!ChartSaveTemplate(g_self_chart, "\\Files\\" + ATTACH_NAME))
+     {
+      WriteResult(id, false, "could not save a template to work from");
+      return;
+     }
+   for(int wait = 0; wait < 20 && !FileIsExist(file); wait++)
+      Sleep(50);
+
+   string lines[];
+   if(!ReadLines(file, lines))
+     {
+      WriteResult(id, false, "could not read the template");
+      return;
+     }
+
+   string inputs = StagedInputs();
+   string out[];
+   int    written   = 0;
+   bool   in_expert = false, done = false;
+   for(int i = 0; i < ArraySize(lines); i++)
+     {
+      string low = lines[i];
+      StringTrimLeft(low);
+      StringTrimRight(low);
+      StringToLower(low);
+
+      if(low == "<expert>")
+        {
+         in_expert = true;
+         done      = true;
+         ArrayResize(out, written + 4);
+         out[written++] = "<expert>";
+         out[written++] = "name=" + expert;
+         out[written++] = (path != "") ? "path=" + path : "window_num=0";
+         out[written++] = "<inputs>";
+         if(inputs != "")
+           {
+            string pairs[];
+            int np = StringSplit(inputs, (ushort)10, pairs);
+            for(int j = 0; j < np; j++)
+               if(StringFind(pairs[j], "=") > 0)
+                 {
+                  ArrayResize(out, written + 1);
+                  out[written++] = pairs[j];
+                 }
+           }
+         ArrayResize(out, written + 1);
+         out[written++] = "</inputs>";
+         continue;
+        }
+      if(in_expert)
+        {
+         if(low == "</expert>")
+           {
+            in_expert = false;
+            ArrayResize(out, written + 1);
+            out[written++] = "</expert>";
+           }
+         continue;                        // drop the manager own expert lines
+        }
+      ArrayResize(out, written + 1);
+      out[written++] = lines[i];
+     }
+   if(!done)
+     {
+      WriteResult(id, false, "the template carries no expert block to replace");
+      return;
+     }
+   if(!WriteLines(file, out))
+     {
+      WriteResult(id, false, "could not write the template");
+      return;
+     }
+
+   long target = ChartOpen(symbol, (ENUM_TIMEFRAMES)period);
+   if(target == 0)
+     {
+      WriteResult(id, false, StringFormat("ChartOpen failed (error %d)", GetLastError()));
+      return;
+     }
+   if(!ChartApplyTemplate(target, "\\Files\\" + ATTACH_NAME))
+     {
+      ChartClose(target);
+      WriteResult(id, false, StringFormat("ChartApplyTemplate failed (error %d)", GetLastError()));
+      return;
+     }
+   ChartSetSymbolPeriod(target, symbol, (ENUM_TIMEFRAMES)period);
+
+   for(int wait = 0; wait < 40; wait++)
+     {
+      Sleep(100);
+      if(ChartGetString(target, CHART_EXPERT_NAME) != "")
+         break;
+     }
+   if(ChartGetString(target, CHART_EXPERT_NAME) == "")
+     {
+      ChartClose(target);                 // never leave a bare chart behind
+      WriteResult(id, false, "the EA did not load - is its .ex5 in MQL5\\Experts?");
+      return;
+     }
+
+   ForgetProbe(target);
+   WriteResult(id, true, StringFormat("attached %s to %s (chart %I64d)",
+                                      ChartGetString(target, CHART_EXPERT_NAME), symbol, target));
+   WriteStatus();
+  }
+
+//+------------------------------------------------------------------+
 void ProcessCommand()
   {
    if(!FileIsExist(CMD_FILE))
@@ -682,7 +885,7 @@ void ProcessCommand()
       return;
      }
 
-   if(!AllowControl && (action == "pause" || action == "run" || action == "unload" || action == "setinputs"))
+   if(!AllowControl && (action == "pause" || action == "run" || action == "unload" || action == "setinputs" || action == "attach"))
      {
       WriteResult(id, false, "control disabled in this EA inputs");
       return;
@@ -697,6 +900,13 @@ void ProcessCommand()
    if(action == "run" || action == "resume")
      {
       DoRun(id, key != "" ? key : StringFormat("%I64d", chart));
+      return;
+     }
+
+   if(action == "attach")
+     {
+      DoAttach(id, expert, GetField(body, "path"), symbol,
+               (long)StringToInteger(GetField(body, "period")));
       return;
      }
 

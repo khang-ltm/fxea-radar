@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import pathlib
@@ -413,6 +414,29 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
     return data
 
 
+def _load_env_file() -> None:
+    """Read .env.mt5 into the environment, without overriding what is already set.
+
+    The boot script exports MT5_TOKEN and nothing else, and self-update refreshes
+    app/ and public/ only - so a new secret added to .env.mt5 would never reach
+    this process. Reading the file here means adding a line to it is enough.
+    """
+    f = config.ROOT / ".env.mt5"
+    try:
+        text = f.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
+
+
+_load_env_file()
+
+
 # --- manager EA channel -----------------------------------------------------
 # FxeaManager.mq5 sits on a spare chart and exchanges files with us inside the
 # terminal's MQL5\Files sandbox. Same machine, no network, no token in MQL5.
@@ -547,6 +571,100 @@ def _stage_inputs(pairs, chart) -> object:
     (d / MANAGER_INPUTS).write_text(chr(10).join(lines) + chr(10),
                                     encoding="ascii", errors="replace")
     return len(lines)
+
+
+# Actions that can make the terminal trade with code it was not already running.
+GUARDED = ("attach",)
+AGENT_PIN = (os.environ.get("MT5_PIN") or "").strip()
+
+TIMEFRAMES = {1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30,
+              16385, 16386, 16387, 16388, 16390, 16392, 16396, 16408, 32769, 49153}
+
+
+def _pin_ok(given) -> bool:
+    """The read token is not enough to start an EA: attach needs MT5_PIN too."""
+    if not AGENT_PIN:
+        return False
+    return hmac.compare_digest(AGENT_PIN, str(given or ""))
+
+
+def read_symbols(query: str = "") -> dict:
+    """Broker symbols, Market Watch first.
+
+    A catalog post says XAUUSD; brokers call it GOLD, XAUUSD.a, XAUUSDm. Choosing
+    from this list is the only way an attach cannot fail on a name.
+    """
+    with _ipc_lock:
+        if not _ensure():
+            return {"ok": False, "error": _init_error or "terminal not readable"}
+        try:
+            found = _mt5.symbols_get() or ()
+        except Exception as exc:                       # noqa: BLE001
+            return {"ok": False, "error": f"symbols unreadable: {exc}"}
+
+    want = query.strip().upper()
+    out = []
+    for sym in found:
+        if want and want not in sym.name.upper():
+            continue
+        out.append({"name": sym.name, "watched": bool(sym.visible),
+                    "digits": sym.digits, "path": sym.path})
+    # Market Watch first: the symbols already in use are the likely choice
+    out.sort(key=lambda x: (not x["watched"], x["name"]))
+    return {"ok": True, "count": len(out), "symbols": out[:400]}
+
+
+def read_experts() -> dict:
+    """Compiled EAs under MQL5/Experts, named the way a template must name them."""
+    d = _mql5_files_dir()
+    if d is None:
+        return {"ok": False, "error": _init_error or "terminal not readable"}
+    root = d.parent / "Experts"
+    if not root.is_dir():
+        return {"ok": False, "error": f"no Experts folder at {root}"}
+
+    out = []
+    for f in sorted(root.rglob("*.ex5")):
+        rel = f.relative_to(root)
+        out.append({"name": f.stem,
+                    "path": str(pathlib.PurePath("Experts") / rel),
+                    "folder": "" if str(rel.parent) == "." else str(rel.parent),
+                    "size_bytes": f.stat().st_size})
+    return {"ok": True, "count": len(out), "experts": out}
+
+
+def _check_attach(body: dict) -> str:
+    """What the manager would only discover late, refused early and in words."""
+    expert = str(body.get("expert") or "").strip()
+    path = str(body.get("path") or "").strip()
+    symbol = str(body.get("symbol") or "").strip()
+    try:
+        period = int(body.get("period") or 0)
+    except (TypeError, ValueError):
+        return "period must be an MQL5 timeframe number"
+
+    if not expert:
+        return "no EA chosen"
+    if period not in TIMEFRAMES:
+        return "unknown timeframe"
+
+    installed = read_experts()
+    if installed.get("ok"):
+        by_name = {e["name"]: e for e in installed["experts"]}
+        if expert not in by_name:
+            return f"{expert} is not installed in MQL5 Experts"
+        if path and path not in {e["path"] for e in installed["experts"]}:
+            return "that EA path does not exist"
+
+    syms = read_symbols(symbol)
+    if syms.get("ok") and not any(x["name"] == symbol for x in syms["symbols"]):
+        return f"{symbol} is not a symbol at this broker"
+
+    if body.get("inputs"):            # a .set file, or values chosen in the page
+        staged = _stage_inputs(body["inputs"], None)
+        if isinstance(staged, str):
+            return staged
+    return ""
 
 
 def manager_command(action: str, **fields) -> dict:
@@ -726,6 +844,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(read_charts())
             return
+        if path in ("/api/symbols", "/api/experts"):
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            if path == "/api/experts":
+                self._json(read_experts())
+            else:
+                q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+                self._json(read_symbols(q))
+            return
         if path == "/api/history":
             if not self._authorized():
                 self._json({"ok": False, "error": "unauthorized"}, 401)
@@ -781,10 +909,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         action = str(body.get("action") or "")
-        if action not in ("status", "pause", "run", "resume", "unload", "setinputs"):
+        if action in GUARDED and not _pin_ok(body.get("pin")):
+            self._json({"ok": False,
+                        "error": "PIN required" if AGENT_PIN else
+                                 "no MT5_PIN set on the agent, so attaching is disabled",
+                        "need_pin": bool(AGENT_PIN)}, 403)
+            return
+        if action not in ("status", "pause", "run", "resume", "unload", "setinputs", "attach"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
-        if action in ("pause", "unload", "setinputs") and not body.get("confirm"):
+        if action in ("pause", "unload", "setinputs", "attach") and not body.get("confirm"):
             self._json({"ok": False, "error": f"{action} requires confirm: true"}, 400)
             return
 
@@ -794,6 +928,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": written}, 400)
                 return
 
+        if action == "attach":
+            problem = _check_attach(body)
+            if problem:
+                self._json({"ok": False, "error": problem}, 400)
+                return
+
         self._json(manager_command(
             action,
             chart=body.get("chart"),
@@ -801,6 +941,8 @@ class Handler(BaseHTTPRequestHandler):
             expert=body.get("expert"),
             key=body.get("key"),
             magic=body.get("magic"),
+            path=body.get("path"),
+            period=body.get("period"),
             force=1 if (action == "setinputs" and body.get("force")) else None,
         ))
 

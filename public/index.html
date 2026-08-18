@@ -517,7 +517,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
         <div class="mt5bar__head">
           <span class="mt5bar__title">Expert Advisors</span>
           <span class="mt5bar__stats" id="easstats">loading…</span>
-
+          <button class="btn" id="attach-open">Attach EA</button>
         </div>
       </section>
       <section class="mt5sect">
@@ -568,6 +568,34 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <button class="btn" id="detail-close" aria-label="Close details">Close</button>
   </div>
   <div class="sheet__body" id="detail-body"></div>
+</dialog>
+
+<dialog class="sheet" id="attachdlg" aria-labelledby="attach-title" style="width:min(94vw,560px)">
+  <div class="sheet__bar">
+    <h2 id="attach-title">Attach an EA to a chart</h2>
+    <button class="btn" id="attach-cancel">Cancel</button>
+  </div>
+  <div class="sheet__body">
+    <div class="setrow text"><label for="attach-ea">Expert Advisor
+      <small>compiled EAs found in MQL5\Experts</small></label>
+      <select id="attach-ea"></select></div>
+    <div class="setrow text"><label for="attach-sym">Symbol
+      <small>your broker's own name for it</small></label>
+      <input id="attach-sym" list="attach-syms" spellcheck="false" placeholder="XAUUSD">
+      <datalist id="attach-syms"></datalist></div>
+    <div class="setrow text"><label for="attach-tf">Timeframe
+      <small>the chart it opens on</small></label>
+      <select id="attach-tf"></select></div>
+    <div class="setrow text"><label for="attach-pin">PIN
+      <small>the second secret, set as MT5_PIN on the agent</small></label>
+      <input id="attach-pin" type="password" autocomplete="off"></div>
+    <p class="hint" id="attach-warn"></p>
+  </div>
+  <div class="sheet__foot">
+    <span class="hint" id="attach-note">The EA loads with its own default settings
+      and starts trading as soon as it does.</span>
+    <button class="btn btn--primary" id="attach-go">Attach</button>
+  </div>
 </dialog>
 
 <dialog class="sheet" id="eadlg" aria-labelledby="ea-title">
@@ -1235,6 +1263,7 @@ function renderMt5(d) {
   if (!d.ok) { stats.textContent = 'agent: ' + (d.error || 'unknown error'); grid.hidden = true; return; }
 
   const a = d.account, t = d.terminal, cur = a.currency || '';
+  ACCOUNT = a;
   stats.innerHTML = `<b>${esc(String(a.login))}</b> @ ${esc(a.server)} · ${a.is_demo ? 'demo' : 'live'}`
     + ` · ${t.connected ? 'connected' : '<span style="color:var(--color-destructive)">disconnected</span>'}`
     + ` · AutoTrading ${t.trade_allowed ? 'on' : '<span style="color:var(--color-warn)">off</span>'}`;
@@ -1593,6 +1622,87 @@ const TF_NAMES = { 1: 'M1', 2: 'M2', 3: 'M3', 4: 'M4', 5: 'M5', 6: 'M6', 10: 'M1
   15: 'M15', 20: 'M20', 30: 'M30', 16385: 'H1', 16386: 'H2', 16387: 'H3', 16388: 'H4',
   16390: 'H6', 16392: 'H8', 16396: 'H12', 16408: 'D1', 32769: 'W1', 49153: 'MN1' };
 const tfName = p => TF_NAMES[Number(p)] || String(p ?? '');
+
+/* ── attaching an EA ────────────────────────────────────────────
+   The EA list and the symbol list both come from the terminal, so neither a
+   misspelled symbol nor an EA that is not installed can reach the manager. The
+   PIN is asked for every time and never stored: the read token alone must not
+   be able to start code trading. */
+const attachDlg = document.getElementById('attachdlg');
+let ACCOUNT = null;                        // last account seen, for the confirm
+
+const TF_ORDER = [1, 5, 15, 30, 16385, 16388, 16408, 32769, 49153];
+
+async function openAttach() {
+  const note = document.getElementById('attach-warn');
+  note.textContent = 'loading what is installed...';
+  attachDlg.showModal();
+
+  const auth = { credentials: 'include', headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {} };
+  let eas, syms;
+  try {
+    [eas, syms] = await Promise.all([
+      fetch(`${MT5.url}/api/experts`, auth).then(r => r.json()),
+      fetch(`${MT5.url}/api/symbols`, auth).then(r => r.json()),
+    ]);
+  } catch (e) {
+    note.textContent = 'agent unreachable - ' + e.message;
+    return;
+  }
+
+  const eaSel = document.getElementById('attach-ea');
+  eaSel.innerHTML = (eas.ok ? eas.experts : [])
+    .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}">`
+      + esc(e.folder ? `${e.folder}/${e.name}` : e.name) + '</option>').join('')
+    || '<option value="">no .ex5 found</option>';
+
+  document.getElementById('attach-syms').innerHTML = (syms.ok ? syms.symbols : [])
+    .map(x => `<option value="${esc(x.name)}">${x.watched ? 'Market Watch' : ''}</option>`).join('');
+
+  const tf = document.getElementById('attach-tf');
+  tf.innerHTML = TF_ORDER.map(v =>
+    `<option value="${v}" ${v === 16385 ? 'selected' : ''}>${TF_NAMES[v]}</option>`).join('');
+
+  note.textContent = eas.ok && syms.ok
+    ? `${eas.count} EA${eas.count === 1 ? '' : 's'} installed · ${syms.count} symbols at this broker`
+    : (eas.error || syms.error || '');
+  document.getElementById('attach-note').textContent = ACCOUNT
+    ? `Attaches to ${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} · ${ACCOUNT.server}.`
+      + ' The EA starts trading as soon as it loads.'
+    : 'The EA starts trading as soon as it loads.';
+}
+
+document.getElementById('attach-open').onclick = openAttach;
+document.getElementById('attach-cancel').onclick = () => attachDlg.close();
+attachDlg.addEventListener('click', e => { if (e.target === attachDlg) attachDlg.close(); });
+
+document.getElementById('attach-go').onclick = async () => {
+  const opt = document.getElementById('attach-ea').selectedOptions[0];
+  const expert = opt?.dataset.name || '';
+  const path = opt?.value || '';
+  const symbol = document.getElementById('attach-sym').value.trim();
+  const period = Number(document.getElementById('attach-tf').value);
+  const pin = document.getElementById('attach-pin').value;
+  const warn = document.getElementById('attach-warn');
+
+  if (!expert || !symbol) { warn.textContent = 'pick an EA and a symbol'; return; }
+  if (!pin) { warn.textContent = 'the PIN is required to attach'; return; }
+
+  const where = ACCOUNT ? `${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} (${ACCOUNT.server})` : 'this account';
+  if (!confirm(`Attach "${expert}" to ${symbol} ${TF_NAMES[period]} on ${where}?`
+      + String.fromCharCode(10, 10) + 'It starts trading as soon as it loads.')) return;
+
+  const go = document.getElementById('attach-go');
+  go.disabled = true;
+  warn.textContent = 'attaching...';
+  const r = await managerPost({ action: 'attach', confirm: true, pin, expert, path, symbol, period });
+  go.disabled = false;
+  warn.textContent = r.ok ? (r.message || 'attached') : ('failed: ' + (r.error || r.message));
+  if (r.ok) {
+    document.getElementById('attach-pin').value = '';
+    setTimeout(() => { attachDlg.close(); loadEas().then(loadCharts); }, 1200);
+  }
+};
 
 /* ── EA settings dialog ────────────────────────────────────────────────────
    The values come from the chart template, so they are exactly what the EA is
