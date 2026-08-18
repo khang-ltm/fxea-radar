@@ -21,6 +21,7 @@ import pathlib
 import shutil
 import subprocess
 import tempfile
+import re
 import zipfile
 
 from . import config
@@ -32,6 +33,21 @@ MAX_MEMBERS = 200
 MAX_MEMBER_BYTES = 40 * 1024 * 1024
 
 VPS_SESSION = config.DATA_DIR / "tg_vps.session"
+
+
+def _tidy_name(name: str) -> str:
+    """Drop the channel tag from a file name before installing it.
+
+    "Boring Pips MT5 @free_fx_pro.ex5" becomes "Boring Pips MT5.ex5". The tag is
+    advertising, it puts '@' and double spaces into a name that has to survive a
+    template file and a Navigator lookup, and it makes every installed EA read
+    like the channel rather than the product.
+    """
+    stem = pathlib.PurePath(name).stem
+    suffix = pathlib.PurePath(name).suffix
+    stem = re.sub(r"[@#]\S*", " ", stem)
+    stem = re.sub(r"\s+", " ", stem).strip(" -_")
+    return (stem or pathlib.PurePath(name).stem) + suffix
 
 
 def session_ready() -> bool:
@@ -177,7 +193,7 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
         target.mkdir(parents=True, exist_ok=True)
         installed, skipped = [], []
         for f in found:
-            dst = target / f.name
+            dst = target / _tidy_name(f.name)
             if dst.exists() and dst.read_bytes() == f.read_bytes():
                 skipped.append(f.name)                     # already installed, unchanged
                 continue

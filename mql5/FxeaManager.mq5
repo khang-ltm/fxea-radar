@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.21"
+#property version   "1.22"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.21", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.22", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -233,7 +233,7 @@ void ChartProbe(const long id, const string expert, long &magic, string &inputs)
   {
    magic  = 0;
    inputs = "";
-   if(!ReportInputs || expert == "")
+   if(!ReportInputs || StringLen(expert) == 0)
       return;
 
    for(int i = 0; i < ArraySize(g_pm_chart); i++)
@@ -304,7 +304,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.21",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.22",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -519,7 +519,7 @@ void DoSetInputs(const string id, const long chart, const bool force)
      }
 
    string expert = ChartGetString(chart, CHART_EXPERT_NAME);
-   if(chart <= 0 || chart == g_self_chart || expert == "")
+   if(chart <= 0 || chart == g_self_chart || StringLen(expert) == 0)
      {
       WriteResult(id, false, "no EA on that chart");
       return;
@@ -757,7 +757,19 @@ void DoAttach(const string id, const string expert, const string path,
       WriteResult(id, false, StringFormat("ChartOpen failed (error %d)", GetLastError()));
       return;
      }
-   Sleep(300);                                     // let the chart exist properly
+   // ChartOpen returns an id before the chart is necessarily usable, and acting
+   // too early gave "ChartApplyTemplate failed (error 4101)" - chart not found
+   bool ready = false;
+   for(int wait = 0; wait < 40 && !ready; wait++)
+     {
+      Sleep(100);
+      ready = StringLen(ChartSymbol(target)) > 0;
+     }
+   if(!ready)
+     {
+      WriteResult(id, false, "the new chart never became usable");
+      return;
+     }
 
    string file = ATTACH_NAME + ".tpl";
    if(FileIsExist(file))
@@ -850,10 +862,10 @@ void DoAttach(const string id, const string expert, const string path,
    for(int wait = 0; wait < 40; wait++)
      {
       Sleep(100);
-      if(ChartGetString(target, CHART_EXPERT_NAME) != "")
+      if(StringLen(ChartGetString(target, CHART_EXPERT_NAME)) > 0)
          break;
      }
-   if(ChartGetString(target, CHART_EXPERT_NAME) == "")
+   if(StringLen(ChartGetString(target, CHART_EXPERT_NAME)) == 0)
      {
       ChartClose(target);                          // never leave a bare chart behind
       WriteResult(id, false, "the EA did not load - is its .ex5 in MQL5\\Experts?");
@@ -865,7 +877,7 @@ void DoAttach(const string id, const string expert, const string path,
    Sleep(9000);            // they have been dropping off at five to eight seconds
    string still = ChartGetString(target, CHART_EXPERT_NAME);
    ForgetProbe(target);
-   if(still == "")
+   if(StringLen(still) == 0)
      {
       WriteResult(id, false, StringFormat(
                      "%s loaded on %s then removed itself - check the Experts log", loaded, symbol));
