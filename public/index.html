@@ -112,6 +112,15 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .chip.ghost { min-height: 0; padding: 1px 6px; font-size: 11px; border-color: transparent;
    background: none; color: var(--color-muted-fg); }
 .chip.ghost:hover { border-color: var(--color-border); }
+.inputrow > td { background: var(--color-surface); padding: var(--space-3) var(--space-4); }
+.inputs { display: grid; gap: 2px var(--space-4); font-size: 12px;
+   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.inputs > dl { margin: 0; display: flex; gap: var(--space-2); justify-content: space-between;
+   border-bottom: 1px dotted var(--color-border); padding: 3px 0; }
+.inputs dt { color: var(--color-muted-fg); overflow: hidden; text-overflow: ellipsis; }
+.inputs dd { margin: 0; font-family: var(--font-head); font-variant-numeric: tabular-nums; }
+.inputs > dl.key dd { color: var(--color-accent); }
+.inputrow .hint { margin: var(--space-3) 0 0; }
 .chip.as-text { cursor: default; }
 .chip.as-text:hover { border-color: transparent; color: var(--color-muted-fg); }
 .chip[aria-pressed="true"] { background: color-mix(in srgb, var(--color-info) 18%, var(--color-surface));
@@ -1386,6 +1395,7 @@ async function loadEas(quiet) {
    for an EA whose chart is closed) the badge just says it was not placed by
    hand. Magic 0 is only ever a manual trade. */
 let EA_BY_MAGIC = {};
+const EXPANDED = new Set();   // charts showing their EA settings
 let chartsPrefetched = false;
 
 function placedBy(magic) {
@@ -1569,8 +1579,14 @@ async function loadCharts(quiet) {
           ? linkBtn('', 'link', 'pick which magic number this chart trades under')
           : linkBtn('ghost', m.how === 'manual' ? 'linked' : 'auto',
                     `guessed magic ${magics} from the trade comments - click to change`);
+      const ins = c.inputs || [];
+      const open = EXPANDED.has(String(c.chart)) && ins.length;
+      const settings = ins.length
+        ? `<button class="chip ghost" data-inputs="${esc(String(c.chart))}"
+             title="what this EA is set to">${open ? 'hide' : 'settings'}</button>`
+        : '';
       return `<tr>
-      <td>${esc(c.expert || '—')} ${c.expert ? link : ''}</td>
+      <td>${esc(c.expert || '—')} ${c.expert ? link : ''} ${settings}</td>
       <td>${esc(c.symbol)}</td>
       <td class="n">${r && r.open ? r.open : '—'}</td>
       <td class="n ${r ? mt5Cls(r.floating) : ''}">${r && r.open ? mt5Money(r.floating, '') : '—'}</td>
@@ -1581,7 +1597,12 @@ async function loadCharts(quiet) {
       <td style="text-align:right">${c.expert
         ? `<button class="chip" data-pause="${esc(String(c.chart))}"
              data-name="${esc(c.expert)} on ${esc(c.symbol)}">Pause</button>`
-        : '<span class="shot-none">no EA</span>'}</td></tr>`;
+        : '<span class="shot-none">no EA</span>'}</td></tr>`
+      + (open ? `<tr class="inputrow"><td colspan="9"><div class="inputs">${ins.map(i =>
+          `<dl${/lot|risk|magic|money|balance|percent/i.test(i.k) ? ' class="key"' : ''}>
+             <dt>${esc(i.k)}</dt><dd>${esc(i.v)}</dd></dl>`).join('')}</div>
+        <p class="hint">Read from the chart template. Changing them still means
+          opening the EA properties in MT5.</p></td></tr>` : '');
     }).join('')}</tbody></table>`
     : '<div class="empty">No other charts open.</div>');
 
@@ -1596,6 +1617,13 @@ async function loadCharts(quiet) {
     : '');
   document.getElementById('pausedwrap').hidden = paused.length === 0;
 
+  for (const b of document.querySelectorAll('[data-inputs]')) {
+    b.onclick = () => {
+      const k = b.dataset.inputs;
+      if (EXPANDED.has(k)) EXPANDED.delete(k); else EXPANDED.add(k);
+      loadCharts();
+    };
+  }
   for (const b of document.querySelectorAll('[data-pause]')) {
     b.onclick = () => managerAction('pause', { chart: Number(b.dataset.pause) }, b.dataset.name);
   }

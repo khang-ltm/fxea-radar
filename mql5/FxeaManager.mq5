@@ -19,22 +19,22 @@
 //|      fxea_result.txt  -> outcome of the last command              |
 //|      fxea_paused.txt  -> what is paused, so it survives restarts  |
 //|                                                                   |
-//|  A chart reports only the EA file name, never the magic number it |
-//|  trades under, so the status file also carries the magic read out |
-//|  of the EA own inputs via a throwaway template.                   |
+//|  A chart reports only the EA file name, never its settings, so    |
+//|  the status file also carries the inputs - magic, lots, risk -    |
+//|  read out of a throwaway template saved from that chart.          |
 //|                                                                   |
 //|  Timer driven, so it still answers on a quiet symbol or when the  |
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.11"
+#property version   "1.12"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
 input int  StatusEverySecs = 5;      // how often to rewrite the status file
 input bool AllowControl    = true;   // master switch for pause / run
 input bool VerboseLog      = true;   // print actions to the Experts log
-input bool ReportMagic     = true;   // read each EA magic number from its inputs
+input bool ReportInputs    = true;   // report each EA settings (magic, lots, ...)
 
 #define CMD_FILE     "fxea_cmd.txt"
 #define RESULT_FILE  "fxea_result.txt"
@@ -51,7 +51,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.11", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.12", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -147,31 +147,37 @@ string Part(const string row, const int index)
 long   g_pm_chart[];
 string g_pm_expert[];
 long   g_pm_magic[];
+string g_pm_inputs[];
 
-long ReadMagicFromTemplate(const long id)
+bool ReadInputsFromTemplate(const long id, long &magic, string &json)
   {
+   magic = 0;
+   json  = "";
+
    string file = PROBE_NAME + ".tpl";
    if(FileIsExist(file))
       FileDelete(file);
    if(!ChartSaveTemplate(id, "\\Files\\" + PROBE_NAME))
-      return(0);
+      return(false);
 
    // chart commands are queued, so the file appears a moment later
    for(int wait = 0; wait < 20 && !FileIsExist(file); wait++)
       Sleep(50);
    if(!FileIsExist(file))
-      return(0);
+      return(false);
 
    int fh = FileOpen(file, FILE_READ | FILE_TXT | FILE_ANSI);
    if(fh == INVALID_HANDLE)
      {
       FileDelete(file);
-      return(0);
+      return(false);
      }
 
-   bool in_expert = false;
-   long magic     = 0;
-   while(!FileIsEnding(fh) && magic == 0)
+   bool in_expert = false;                 // indicators carry inputs too
+   bool in_inputs = false;
+   int  count     = 0;
+
+   while(!FileIsEnding(fh))
      {
       string line = FileReadString(fh);
       StringTrimLeft(line);
@@ -179,56 +185,74 @@ long ReadMagicFromTemplate(const long id)
       string low = line;
       StringToLower(low);
 
-      if(low == "<expert>")            // indicators carry inputs too: ignore them
-        {
+      if(low == "<expert>")
          in_expert = true;
-         continue;
-        }
-      if(low == "</expert>")
-        {
-         in_expert = false;
-         continue;
-        }
-      if(!in_expert)
+      else
+         if(low == "</expert>")
+            break;                         // one EA per chart: nothing after it
+         else
+            if(in_expert && low == "<inputs>")
+               in_inputs = true;
+            else
+               if(low == "</inputs>")
+                  in_inputs = false;
+
+      if(!in_inputs || StringLen(line) == 0 || StringGetCharacter(line, 0) == '<')
          continue;
 
       int eq = StringFind(line, "=");
       if(eq <= 0)
          continue;
       string key = StringSubstr(line, 0, eq);
-      StringToLower(key);
-      if(StringFind(key, "magic") < 0)
-         continue;
-      long v = StringToInteger(StringSubstr(line, eq + 1));
-      if(v > 0)
-         magic = v;
+      string val = StringSubstr(line, eq + 1);
+      StringTrimRight(key);
+      StringTrimLeft(val);
+
+      string lowkey = key;
+      StringToLower(lowkey);
+      if(magic == 0 && StringFind(lowkey, "magic") >= 0)
+         magic = StringToInteger(val);
+
+      if(count > 0)
+         json += ",";
+      json += StringFormat("{\"k\":\"%s\",\"v\":\"%s\"}",
+                           JsonEscape(key), JsonEscape(val));
+      count++;
      }
    FileClose(fh);
    FileDelete(file);
-   return(magic);
+   return(true);
   }
 
-long ChartMagic(const long id, const string expert)
+void ChartProbe(const long id, const string expert, long &magic, string &inputs)
   {
-   if(!ReportMagic || expert == "")
-      return(0);
+   magic  = 0;
+   inputs = "";
+   if(!ReportInputs || expert == "")
+      return;
 
    for(int i = 0; i < ArraySize(g_pm_chart); i++)
       if(g_pm_chart[i] == id && g_pm_expert[i] == expert)
-         return(g_pm_magic[i]);       // recomputed only when the EA changes
+        {
+         magic  = g_pm_magic[i];           // recomputed only when the EA changes
+         inputs = g_pm_inputs[i];
+         return;
+        }
 
-   long magic = ReadMagicFromTemplate(id);
-   int  n     = ArraySize(g_pm_chart);
+   ReadInputsFromTemplate(id, magic, inputs);
+
+   int n = ArraySize(g_pm_chart);
    ArrayResize(g_pm_chart, n + 1);
    ArrayResize(g_pm_expert, n + 1);
    ArrayResize(g_pm_magic, n + 1);
+   ArrayResize(g_pm_inputs, n + 1);
    g_pm_chart[n]  = id;
    g_pm_expert[n] = expert;
    g_pm_magic[n]  = magic;
+   g_pm_inputs[n] = inputs;
    if(VerboseLog)
-      PrintFormat("magic for %s on chart %I64d: %s", expert, id,
-                  magic > 0 ? (string)magic : "not found in its inputs");
-   return(magic);
+      PrintFormat("settings for %s on chart %I64d: magic %s", expert, id,
+                  magic > 0 ? (string)magic : "not found");
   }
 
 //+------------------------------------------------------------------+
@@ -244,14 +268,17 @@ void WriteStatus()
       string symbol = ChartSymbol(id);
       long   period = ChartPeriod(id);
 
-      long magic = (id == g_self_chart) ? 0 : ChartMagic(id, expert);
+      long   magic  = 0;
+      string inputs = "";
+      if(id != g_self_chart)
+         ChartProbe(id, expert, magic, inputs);
 
       if(n > 0)
          rows += ",";
       rows += StringFormat(
                  "{\"chart\":%I64d,\"symbol\":\"%s\",\"period\":%I64d,\"expert\":\"%s\","
-                 "\"magic\":%I64d,\"is_manager\":%s}",
-                 id, JsonEscape(symbol), period, JsonEscape(expert), magic,
+                 "\"magic\":%I64d,\"inputs\":[%s],\"is_manager\":%s}",
+                 id, JsonEscape(symbol), period, JsonEscape(expert), magic, inputs,
                  (id == g_self_chart) ? "true" : "false");
       n++;
       id = ChartNext(id);
