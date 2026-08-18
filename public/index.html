@@ -915,6 +915,9 @@ function renderSync() {
    account data never passes through GitHub.                                  */
 const MT5_KEY = 'mt5_conf';
 let MT5 = JSON.parse(localStorage.getItem(MT5_KEY) || 'null');
+// The published build bakes in the agent hostname, so a new device only ever
+// needs the token. The token itself is never built in - the site is public.
+if (window.__MT5_URL__ && !MT5?.url) MT5 = { url: window.__MT5_URL__, token: MT5?.token || '' };
 
 // Exponential backoff: when the agent is down, stop hammering it every 10s.
 // 20s, 40s, 80s ... capped at 5 min. Reset on the first success.
@@ -981,9 +984,11 @@ const mt5Lots = v => (v == null ? '—' : Number(v).toFixed(2));
 const mt5Magic = v => (!Number(v) ? '<span class="badge">manual</span>' : esc(String(v)));
 
 document.getElementById('mt5conf').onclick = () => {
-  const url = prompt('Agent URL (the mt5. host on your VPS, no trailing slash):',
-    MT5?.url || 'https://mt5.your-domain');
-  if (url === null) return;
+  let url = MT5?.url || window.__MT5_URL__ || '';
+  if (!url) {
+    url = prompt('Agent URL (the mt5. host on your VPS, no trailing slash):', 'https://mt5.your-domain');
+    if (url === null) return;
+  }
   const token = prompt('Access token (MT5_TOKEN on the VPS):', MT5?.token || '');
   if (token === null) return;
   MT5 = { url: url.trim().replace(/\/+$/, ''), token: token.trim() };
@@ -1005,7 +1010,7 @@ async function loadMt5() {
   const grid = document.getElementById('mt5grid');
   // shown by default; hidden again only once a read actually succeeds
   document.getElementById('mt5conf').hidden = false;
-  if (!MT5?.url || !MT5?.token) {
+  if (!MT5?.url) {
     stats.textContent = 'not connected — press Connect, or open the setup link from install_public.ps1';
     grid.hidden = true;
     return;
@@ -1013,8 +1018,17 @@ async function loadMt5() {
 
   let d;
   try {
-    const r = await fetch(MT5.url + '/api/mt5', { headers: { Authorization: 'Bearer ' + MT5.token } });
-    if (r.status === 401) { stats.textContent = 'token rejected by the agent'; grid.hidden = true; mt5Fail(); return; }
+    // credentials: the agent hands out a year-long cookie after the first token
+    // auth, so later visits need nothing typed in
+    const r = await fetch(MT5.url + '/api/mt5', {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    });
+    if (r.status === 401) {
+      stats.textContent = MT5.token ? 'token rejected by the agent'
+        : 'this device is not authorised yet — press Connect and paste the token once';
+      grid.hidden = true; mt5Fail(); return;
+    }
     // A web page instead of JSON almost always means the dashboard URL was pasted
     // where the agent URL belongs - say that instead of a parser error.
     if (!(r.headers.get('content-type') || '').includes('json')) {
@@ -1155,7 +1169,8 @@ async function startMt5Stream() {
   mt5Stream = ctl;
   try {
     const r = await fetch(MT5.url + '/api/stream', {
-      headers: { Authorization: 'Bearer ' + MT5.token },
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
       signal: ctl.signal,
     });
     if (!r.ok || !r.body) throw new Error('stream unavailable (' + r.status + ')');

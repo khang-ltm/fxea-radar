@@ -339,7 +339,8 @@ def run_once(run_no: int, port: int) -> None:
         from app.export_static import render
         static_html = render({"posts": [], "matched": 0, "summary": {}, "state": {}, "sync": {}})
         check("window.__FXEA__" in static_html, "static build inlines the payload")
-        check("window.fetch = (url)" in static_html, "static build stubs fetch")
+        check("realFetch" in static_html and "/api/posts" in static_html,
+              "static build answers only the catalog fetch, passing others through")
         check("setInterval(load," not in static_html, "static build drops the polling timer")
         check("id=\"grid\"" in static_html and "detailHtml" in static_html,
               "static build reuses the real UI (no second dashboard to maintain)")

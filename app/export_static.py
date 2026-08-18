@@ -67,16 +67,32 @@ def build_payload(limit: int = 3000) -> dict:
 
 
 def render(payload: dict) -> str:
+    import os
+
+    agent_url = (os.environ.get("MT5_AGENT_URL") or "").strip().rstrip("/")
     html = (config.PUBLIC_DIR / "index.html").read_text(encoding="utf-8")
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
 
     shim = f"""<script>
-/* static build: the page keeps its own logic, fetch is answered from this constant */
+/* Static build: the catalog request is answered from this constant, but every
+   OTHER fetch must reach the network - the MT5 panel talks to your own agent.
+   Swallowing those broke it with "Cannot read properties of undefined (reading
+   'get')", because this stub has no headers. */
 window.__FXEA__ = {data};
-window.fetch = (url) => Promise.resolve({{
-  ok: true, status: 200,
-  json: () => Promise.resolve(window.__FXEA__),
-}});
+// agent hostname baked in at build time so only the token is ever asked for;
+// the token is NEVER built in - this file is public
+window.__MT5_URL__ = {agent_url!r};
+(() => {{
+  const realFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {{
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (!url.includes('/api/posts')) return realFetch(input, init);
+    return Promise.resolve(new Response(JSON.stringify(window.__FXEA__), {{
+      status: 200,
+      headers: {{ 'Content-Type': 'application/json' }},
+    }}));
+  }};
+}})();
 </script>
 """
     if "</head>" not in html:

@@ -93,6 +93,24 @@ def _iso(ts) -> str | None:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
 
 
+# Origins allowed to read with credentials. "*" cannot be used once cookies are
+# involved, so the site origin is named explicitly.
+ALLOWED_ORIGINS = [
+    o.strip().rstrip("/")
+    for o in (os.environ.get("MT5_ALLOWED_ORIGINS")
+              or "https://fxea-radar.linkpc.net,http://127.0.0.1:8787,http://localhost:8787").split(",")
+    if o.strip()
+]
+COOKIE_NAME = "mt5auth"
+COOKIE_MAX_AGE = 60 * 60 * 24 * 365      # a year: log in once per device
+
+
+def _cookie_value(token: str) -> str:
+    """Opaque, derived from the token: rotating the token invalidates every cookie."""
+    import hmac
+    return hmac.new(token.encode(), b"fxea-mt5-cookie-v1", hashlib.sha256).hexdigest()
+
+
 _digits_cache: dict[str, int] = {}
 
 
@@ -261,9 +279,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self):
         # The dashboard is served from another origin (GitHub Pages), so it needs
-        # CORS to read this. Safe here: every /api/ read still requires the bearer
-        # token, and the agent has no state-changing endpoint at all.
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # CORS to read this. With cookies in play the wildcard is not allowed, so
+        # only a known origin is reflected - which is also tighter than before.
+        origin = (self.headers.get("Origin") or "").rstrip("/")
+        if origin in ALLOWED_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Vary", "Origin")
+        else:
+            self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
         self.send_header("Access-Control-Max-Age", "600")
@@ -275,8 +299,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self._cors()
+        self._maybe_set_cookie()
         self.end_headers()
         self.wfile.write(body)
+
+    def _maybe_set_cookie(self):
+        """After a successful token auth, hand the browser a year-long cookie so the
+        token never has to be entered again on that device."""
+        if not getattr(self, "_set_cookie", False) or not self.token:
+            return
+        self.send_header(
+            "Set-Cookie",
+            f"{COOKIE_NAME}={_cookie_value(self.token)}; Max-Age={COOKIE_MAX_AGE}; "
+            "Path=/; Secure; HttpOnly; SameSite=None",
+        )
 
     def do_OPTIONS(self):  # noqa: N802 - preflight for the Authorization header
         self.send_response(204)
@@ -287,8 +323,16 @@ class Handler(BaseHTTPRequestHandler):
     def _authorized(self) -> bool:
         if not self.token:
             return True                       # localhost-only mode
-        sent = (self.headers.get("Authorization") or "").strip()
-        return sent == f"Bearer {self.token}"
+        if (self.headers.get("Authorization") or "").strip() == f"Bearer {self.token}":
+            self._set_cookie = True           # remember this device
+            return True
+        qs = parse_qs(urlparse(self.path).query)
+        if qs.get("token", [""])[0] == self.token:
+            self._set_cookie = True
+            return True
+        cookie = (self.headers.get("Cookie") or "")
+        want = f"{COOKIE_NAME}={_cookie_value(self.token)}"
+        return any(c.strip() == want for c in cookie.split(";"))
 
     def _stream(self):
         """Server-Sent Events: push a snapshot only when something changed.

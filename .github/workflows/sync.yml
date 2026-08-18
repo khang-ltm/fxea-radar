@@ -79,6 +79,8 @@ jobs:
           # set repo variable PAGES_DOMAIN (e.g. fxea-radar.linkpc.net) AFTER the
           # DNS record exists - Pages redirects the github.io URL once it is set
           PAGES_DOMAIN: ${{ vars.PAGES_DOMAIN }}
+          # agent hostname baked into the page so only the token is ever asked for
+          MT5_AGENT_URL: ${{ vars.MT5_AGENT_URL }}
         run: python -m app.export_static
 
       - name: Save store
