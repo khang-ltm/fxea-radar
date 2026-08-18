@@ -928,6 +928,45 @@ def nudge_navigator() -> str:
     return "MT5 rescanned but the manager has not answered yet"
 
 
+def agent_health() -> dict:
+    """Version, watchdog, disk. The three things worth knowing about the VPS.
+
+    All three have bitten this setup: an agent running older code than it thought,
+    a watchdog task that had silently unregistered, and a disk at 0.01 GB free
+    which stopped MT5 writing history at all. None of it was visible from the page.
+    """
+    import shutil
+    import subprocess
+
+    out = {"ok": True, "code": _current_sha()[:7] or "unknown"}
+
+    try:
+        usage = shutil.disk_usage(str(config.ROOT))
+        out["disk_free_gb"] = round(usage.free / 1024 ** 3, 2)
+        out["disk_total_gb"] = round(usage.total / 1024 ** 3, 2)
+    except OSError:
+        pass
+
+    if os.name == "nt":
+        try:
+            q = subprocess.run(["schtasks", "/Query", "/TN", WATCHDOG_TASK],
+                               capture_output=True, text=True, creationflags=0x08000000)
+            out["watchdog"] = q.returncode == 0
+        except OSError:
+            out["watchdog"] = None
+
+    with _ipc_lock:
+        mt5 = _connect()
+        if mt5 is not None:
+            try:
+                info = mt5.terminal_info()
+                out["terminal_build"] = getattr(info, "build", None)
+                out["terminal_disk_gb"] = None
+            except Exception:                                  # noqa: BLE001
+                pass
+    return out
+
+
 def uninstall_ea(rel_path: str) -> dict:
     """Take an EA out of MQL5/Experts, keeping a copy in case it was a mistake.
 
@@ -1211,6 +1250,12 @@ class Handler(BaseHTTPRequestHandler):
                 want = 60
             self._json(read_terminal_log(want, qs.get("q", [""])[0],
                                         qs.get("which", ["experts"])[0]))
+            return
+        if path == "/api/agent":
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            self._json(agent_health())
             return
         if path == "/api/health":
             self._json({"ok": True, "agent": "read-only", "terminal_running": _terminal_running()})

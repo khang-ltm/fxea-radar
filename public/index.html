@@ -532,6 +532,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
         <button class="chip" id="mt5conf" title="Change the agent URL or token">Connect</button>
       </div>
       <div class="mt5bar__grid" id="mt5grid" hidden></div>
+      <p class="hint" id="agenthealth" hidden></p>
     </section>
 
     <!-- Three readings of one account. Controlling EAs is its own tab. -->
@@ -1412,6 +1413,8 @@ function renderMt5(d) {
     loadEas(true).then(() => loadCharts(true)).catch(() => {});
   }
 
+  loadAgentHealth();
+
   const pos = d.positions || [];
   document.getElementById('mt5poscount').textContent = pos.length ? `(${pos.length})` : '';
   setHtml('mt5positions', pos.length ? `<table class="mt5">
@@ -1443,6 +1446,37 @@ function renderMt5(d) {
       <td>${esc(o.comment || '')}</td>
       <td class="mono">${esc(mt5Time(o.placed_at))}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No pending orders.</div>');
+}
+
+/* The VPS answers for itself: which build the agent runs, whether the restart
+   watchdog is registered, and how much disk is left - each of which has broken
+   this setup once while looking fine from here. */
+let healthAt = 0;
+
+async function loadAgentHealth() {
+  if (!MT5?.url || Date.now() - healthAt < 60000) return;
+  healthAt = Date.now();
+  let d;
+  try {
+    d = await (await fetch(`${MT5.url}/api/agent`, {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    })).json();
+  } catch { return; }
+  if (!d?.ok) return;
+
+  const low = d.disk_free_gb != null && d.disk_free_gb < 3;
+  const parts = [`agent ${esc(d.code)}`];
+  if (d.watchdog === false) parts.push('<span style="color:var(--color-warn)">watchdog not registered</span>');
+  if (d.disk_free_gb != null) {
+    parts.push(low
+      ? `<span style="color:var(--color-warn)">disk ${d.disk_free_gb} GB free - MT5 stops writing history</span>`
+      : `disk ${d.disk_free_gb} GB free`);
+  }
+  if (d.terminal_build) parts.push(`MT5 build ${d.terminal_build}`);
+  const el = document.getElementById('agenthealth');
+  el.innerHTML = parts.join(' · ');
+  el.hidden = false;
 }
 
 /* ── MT5 history sub-tab ───────────────────────────────────────────────────
