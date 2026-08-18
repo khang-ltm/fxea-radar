@@ -574,7 +574,7 @@ def _stage_inputs(pairs, chart) -> object:
 
 
 # Actions that can make the terminal trade with code it was not already running.
-GUARDED = ("attach",)
+GUARDED = ("attach", "install")
 AGENT_PIN = (os.environ.get("MT5_PIN") or "").strip()
 
 TIMEFRAMES = {1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30,
@@ -705,6 +705,29 @@ def _check_attach(body: dict) -> str:
         if isinstance(staged, str):
             return staged
     return ""
+
+
+def experts_dir() -> pathlib.Path | None:
+    """MQL5/Experts of the terminal this agent is attached to."""
+    d = _mql5_files_dir()
+    return None if d is None else d.parent / "Experts"
+
+
+def install_ea(channel: str, message_id) -> dict:
+    """Fetch one message's EA archive and install what is inside it.
+
+    Kept out of this module: the download, unpacking and file filtering all live
+    in app/installer.py, which is written to distrust the archive.
+    """
+    from . import installer
+
+    root = experts_dir()
+    if root is None:
+        return {"ok": False, "error": _init_error or "terminal not readable"}
+    result = installer.install_from_channel(channel, message_id, root)
+    _audit(result if result.get("ok") else {"ok": False, "action": "install"},
+           {"channel": channel, "message_id": message_id})
+    return result
 
 
 def manager_command(action: str, **fields) -> dict:
@@ -915,6 +938,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(read_state())
             return
+        if path == "/api/installable":
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            from . import installer
+            self._json({"ok": True, "telegram": installer.session_ready(),
+                        "extractor": installer._extractor() is not None,
+                        "pin": bool(AGENT_PIN), "channels": config.CHANNELS})
+            return
         if path == "/api/health":
             self._json({"ok": True, "agent": "read-only", "terminal_running": _terminal_running()})
             return
@@ -956,10 +988,11 @@ class Handler(BaseHTTPRequestHandler):
                         "need_pin": bool(AGENT_PIN)}, 403)
             return
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
-                          "attach", "forget"):
+                          "attach", "forget", "install"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
-        if action in ("pause", "unload", "setinputs", "attach", "forget") and not body.get("confirm"):
+        if action in ("pause", "unload", "setinputs", "attach", "forget",
+                      "install") and not body.get("confirm"):
             self._json({"ok": False, "error": f"{action} requires confirm: true"}, 400)
             return
 
@@ -968,6 +1001,10 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(written, str):
                 self._json({"ok": False, "error": written}, 400)
                 return
+
+        if action == "install":
+            self._json(install_ea(str(body.get("channel") or ""), body.get("message_id")))
+            return
 
         if action == "attach":
             problem = _check_attach(body)

@@ -881,6 +881,7 @@ detailDlg.addEventListener('close', () => document.body.classList.remove('modal-
    sides down to their words and accept only when one contains the other, so a
    row offers Attach exactly when that EA really is installed. */
 let INSTALLED = [];             // {name, path} from /api/experts
+let INSTALLABLE = { telegram: false, extractor: false, pin: false };
 let installedAsked = false;
 
 const eaSlug = t => String(t || '').toLowerCase()
@@ -915,7 +916,13 @@ async function loadInstalled() {
       headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
     });
     const d = await r.json();
-    if (d.ok) { INSTALLED = d.experts; render(); }     // rows can offer Attach now
+    if (d.ok) INSTALLED = d.experts;
+    const can = await fetch(`${MT5.url}/api/installable`, {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    }).then(x => x.json()).catch(() => null);
+    if (can?.ok) INSTALLABLE = can;
+    render();                                          // rows can offer buttons now
   } catch { /* catalog works fine without it */ }
 }
 
@@ -924,13 +931,21 @@ const TF_BY_NAME = Object.fromEntries(
   Object.entries(TF_NAMES).map(([num, name]) => [name, Number(num)]));
 
 function attachBtn(p) {
-  const hit = installedFor(p.name);
-  if (!hit) return '';
   const pair = (p.pairs || []).find(x => /^[A-Z0-9.]{5,12}$/.test(x)) || '';
   const tf = (p.timeframes || []).map(x => TF_BY_NAME[String(x).toUpperCase()]).find(Boolean) || '';
-  return `<button class="chip chip--icon" data-attach="${esc(hit.name)}" data-path="${esc(hit.path)}"
-     data-sym="${esc(pair)}" data-tf="${tf}"
-     title="Put ${esc(hit.name)} on a chart">${ICON.chart}</button>`;
+  const hit = installedFor(p.name);
+  if (hit) {
+    return `<button class="chip chip--icon" data-attach="${esc(hit.name)}" data-path="${esc(hit.path)}"
+       data-sym="${esc(pair)}" data-tf="${tf}"
+       title="Put ${esc(hit.name)} on a chart">${ICON.chart}</button>`;
+  }
+  // not on the VPS yet: the agent can fetch this very message and install it
+  const file = (p.files || []).find(f => /\.(rar|zip|ex5)$/i.test(f.name || ''));
+  if (!file || !INSTALLABLE.telegram || !p.message_id) return '';
+  return `<button class="chip chip--icon" data-install="${esc(String(p.message_id))}"
+     data-channel="${esc(p.channel || '')}" data-ea="${esc(p.name)}"
+     data-sym="${esc(pair)}" data-tf="${tf}" data-file="${esc(file.name)}"
+     title="Install ${esc(file.name)} on the VPS, then put it on a chart">${ICON.download}</button>`;
 }
 
 function row(p) {
@@ -1013,6 +1028,11 @@ function wireCards() {
   document.querySelectorAll('[data-attach]').forEach(b => b.onclick = () => openAttach({
     expert: b.dataset.attach, path: b.dataset.path,
     symbol: b.dataset.sym, period: Number(b.dataset.tf) || 0,
+  }));
+  document.querySelectorAll('[data-install]').forEach(b => b.onclick = () => openAttach({
+    symbol: b.dataset.sym, period: Number(b.dataset.tf) || 0,
+    install: { channel: b.dataset.channel, message_id: Number(b.dataset.install),
+               name: b.dataset.ea, file: b.dataset.file },
   }));
 }
 
@@ -1719,6 +1739,7 @@ function symbolSearch(text) {
 }
 
 const attachDlg = document.getElementById('attachdlg');
+let PENDING_INSTALL = null;      // {channel, message_id, name, file} until installed
 let ACCOUNT = null;                        // last account seen, for the confirm
 
 const TF_ORDER = [1, 5, 15, 30, 16385, 16388, 16408, 32769, 49153];
@@ -1729,6 +1750,10 @@ async function openAttach(pre) {
   const tf = document.getElementById('attach-tf');
   tf.innerHTML = TF_ORDER.map(v =>                      // needs no terminal
     `<option value="${v}" ${v === 16385 ? 'selected' : ''}>${TF_NAMES[v]}</option>`).join('');
+  PENDING_INSTALL = pre?.install || null;
+  document.getElementById('attach-go').textContent = PENDING_INSTALL ? 'Install' : 'Attach';
+  document.getElementById('attach-title').textContent = PENDING_INSTALL
+    ? `Install ${PENDING_INSTALL.name}` : 'Attach an EA to a chart';
   if (pre?.period && TF_NAMES[pre.period]) tf.value = String(pre.period);
   document.getElementById('attach-sym').value = pre?.symbol || '';
   attachDlg.showModal();
@@ -1758,10 +1783,12 @@ async function openAttach(pre) {
 
   fillSymbols(syms);
 
-  note.textContent = eas.ok
-    ? `${eas.count} EA${eas.count === 1 ? '' : 's'} installed · type to search your broker symbols`
-      + (syms.ok ? '' : ' · symbol search unavailable, type the exact name')
-    : `could not list EAs - ${eas.error || 'unknown error'}`;
+  note.textContent = PENDING_INSTALL
+    ? `${PENDING_INSTALL.file} will be downloaded from ${PENDING_INSTALL.channel} and installed on the VPS`
+    : eas.ok
+      ? `${eas.count} EA${eas.count === 1 ? '' : 's'} installed · type to search your broker symbols`
+        + (syms.ok ? '' : ' · symbol search unavailable, type the exact name')
+      : `could not list EAs - ${eas.error || 'unknown error'}`;
   document.getElementById('attach-note').textContent = ACCOUNT
     ? `Attaches to ${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} · ${ACCOUNT.server}.`
       + ' The EA starts trading as soon as it loads.'
@@ -1774,13 +1801,49 @@ document.getElementById('attach-cancel').onclick = () => attachDlg.close();
 attachDlg.addEventListener('click', e => { if (e.target === attachDlg) attachDlg.close(); });
 
 document.getElementById('attach-go').onclick = async () => {
+  const warnBox = document.getElementById('attach-warn');
+  const goBtn = document.getElementById('attach-go');
+
+  // An EA that is not on the VPS has to arrive there first. Downloading is its
+  // own confirm: it fetches a stranger's archive and writes an executable.
+  if (PENDING_INSTALL) {
+    const pin = document.getElementById('attach-pin').value;
+    if (!pin) { warnBox.textContent = 'the PIN is required to install'; return; }
+    if (!confirm(`Download ${PENDING_INSTALL.file} from ${PENDING_INSTALL.channel}`
+        + ` and install it on the VPS?${String.fromCharCode(10, 10)}`
+        + 'It is compiled code from a public channel. Nothing attaches yet.')) return;
+
+    goBtn.disabled = true;
+    warnBox.textContent = 'downloading and unpacking...';
+    const r = await managerPost({ action: 'install', confirm: true, pin,
+                                  channel: PENDING_INSTALL.channel,
+                                  message_id: PENDING_INSTALL.message_id });
+    goBtn.disabled = false;
+    if (!r.ok) { warnBox.textContent = 'install failed: ' + (r.error || r.message); return; }
+
+    const eas = r.experts || [];
+    const sets = r.presets || [];
+    document.getElementById('attach-ea').innerHTML = eas
+      .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}">${esc(e.file)}</option>`)
+      .join('') || '<option value="">no .ex5 in that archive</option>';
+    warnBox.textContent = `installed ${eas.length} EA${eas.length === 1 ? '' : 's'}`
+      + (sets.length ? ` and ${sets.length} .set file${sets.length === 1 ? '' : 's'}` : '')
+      + (eas.length > 1 ? ' - pick which one to attach' : '');
+    PENDING_INSTALL = null;
+    installedAsked = false;
+    loadInstalled();                       // the row becomes a chart button
+    goBtn.textContent = 'Attach';
+    document.getElementById('attach-title').textContent = 'Attach an EA to a chart';
+    return;
+  }
+
   const opt = document.getElementById('attach-ea').selectedOptions[0];
   const expert = opt?.dataset.name || '';
   const path = opt?.value || '';
   const symbol = document.getElementById('attach-sym').value.trim();
   const period = Number(document.getElementById('attach-tf').value);
   const pin = document.getElementById('attach-pin').value;
-  const warn = document.getElementById('attach-warn');
+  const warn = warnBox;
 
   if (!expert || !symbol) { warn.textContent = 'pick an EA and a symbol'; return; }
   if (!pin) { warn.textContent = 'the PIN is required to attach'; return; }
@@ -1789,7 +1852,7 @@ document.getElementById('attach-go').onclick = async () => {
   if (!confirm(`Attach "${expert}" to ${symbol} ${TF_NAMES[period]} on ${where}?`
       + String.fromCharCode(10, 10) + 'It starts trading as soon as it loads.')) return;
 
-  const go = document.getElementById('attach-go');
+  const go = goBtn;
   go.disabled = true;
   warn.textContent = 'attaching...';
   const r = await managerPost({ action: 'attach', confirm: true, pin, expert, path, symbol, period });
