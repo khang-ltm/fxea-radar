@@ -302,6 +302,7 @@ body.modal-open { overflow: hidden; }
 .mt5cell dd { margin: 2px 0 0; font-family: var(--font-head); font-variant-numeric: tabular-nums; font-size: 14px; }
 .mt5cell dd.pos { color: var(--color-accent); }
 .mt5cell dd.neg { color: var(--color-destructive); }
+.subtabs { margin-bottom: var(--space-3); }
 .mt5sect { margin-top: var(--space-4); }
 /* card look, so an empty section reads as "nothing here" instead of broken text */
 .mt5sect .empty { padding: var(--space-6) var(--space-4); background: var(--color-surface);
@@ -416,6 +417,12 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
   </div>
 
   <div id="view-mt5" hidden style="min-width: 0">
+    <div class="segmented subtabs" role="tablist" aria-label="MT5 view">
+      <button class="btn" id="sub-live" role="tab" aria-selected="true">Live</button>
+      <button class="btn" id="sub-hist" role="tab" aria-selected="false">History</button>
+    </div>
+
+    <div id="mt5-live">
     <section class="mt5bar">
       <div class="mt5bar__head">
         <span class="mt5bar__title">
@@ -439,6 +446,32 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <div class="wrap" id="mt5manual"></div></section>
     <section class="mt5sect"><h2>Pending orders <span class="num" id="mt5ordcount"></span></h2>
       <div class="wrap" id="mt5orders"></div></section>
+    </div>
+
+    <div id="mt5-hist" hidden>
+      <section class="mt5bar">
+        <div class="mt5bar__head">
+          <span class="mt5bar__title">Realised P&amp;L</span>
+          <span class="mt5bar__stats" id="histstats">loading…</span>
+          <span class="toolbar__spacer"></span>
+          <label class="sr-only" for="histdays">History window</label>
+          <select id="histdays">
+            <option value="7">last 7 days</option>
+            <option value="30" selected>last 30 days</option>
+            <option value="90">last 90 days</option>
+            <option value="365">last year</option>
+          </select>
+        </div>
+        <div class="mt5bar__grid" id="histtiles" hidden></div>
+      </section>
+
+      <section class="mt5sect"><h2>By EA <span class="num" id="histeacount"></span></h2>
+        <div class="wrap" id="histbyea"></div></section>
+      <section class="mt5sect"><h2>Manual trades <span class="num" id="histmancount"></span></h2>
+        <div class="wrap" id="histmanual"></div></section>
+      <section class="mt5sect"><h2>Closed trades <span class="num" id="histclosedcount"></span></h2>
+        <div class="wrap" id="histclosed"></div></section>
+    </div>
   </div>
 </main>
 <footer id="foot"></footer>
@@ -1136,6 +1169,106 @@ function renderMt5(d) {
     : '<div class="empty">No pending orders.</div>');
 }
 
+/* ── MT5 history sub-tab ───────────────────────────────────────────────────
+   Realised results, i.e. closed deals. Deliberately a separate request from the
+   live stream: it changes rarely, so it is fetched on demand and cached agent
+   side rather than pushed every second. */
+let SUBTAB = localStorage.getItem('fxea_subtab') || 'live';
+let histTimer = 0;
+
+function showSub(name) {
+  SUBTAB = name;
+  localStorage.setItem('fxea_subtab', name);
+  const live = name === 'live';
+  document.getElementById('mt5-live').hidden = !live;
+  document.getElementById('mt5-hist').hidden = live;
+  document.getElementById('sub-live').setAttribute('aria-selected', String(live));
+  document.getElementById('sub-hist').setAttribute('aria-selected', String(!live));
+  document.getElementById('sub-live').setAttribute('aria-pressed', String(live));
+  document.getElementById('sub-hist').setAttribute('aria-pressed', String(!live));
+  if (!live) loadHistory();
+}
+
+async function loadHistory() {
+  if (TAB !== 'mt5' || SUBTAB !== 'hist' || !MT5?.url) return;
+  const stats = document.getElementById('histstats');
+  const days = document.getElementById('histdays').value;
+  let d;
+  try {
+    const r = await fetch(`${MT5.url}/api/history?days=${days}`, {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    });
+    if (!(r.headers.get('content-type') || '').includes('json')) throw new Error('HTTP ' + r.status);
+    d = await r.json();
+  } catch (e) {
+    stats.textContent = 'history unavailable — ' + e.message;
+    return;
+  }
+  if (!d.ok) { stats.textContent = 'agent: ' + (d.error || 'unknown error'); return; }
+  renderHistory(d);
+}
+
+function renderHistory(d) {
+  const t = d.totals || {};
+  document.getElementById('histstats').innerHTML =
+    `<b>${t.trades || 0}</b> closed · win rate <b>${t.win_rate == null ? '—' : t.win_rate + '%'}</b>`
+    + ` · net <b class="${mt5Cls(t.profit)}">${mt5Money(t.profit, '')}</b> over ${d.days}d`;
+
+  const tiles = [
+    ['Today', mt5Money(t.today, ''), mt5Cls(t.today)],
+    ['7 days', mt5Money(t.week, ''), mt5Cls(t.week)],
+    ['30 days', mt5Money(t.month, ''), mt5Cls(t.month)],
+    ['Window net', mt5Money(t.profit, ''), mt5Cls(t.profit)],
+    ['Wins', String(t.wins ?? 0), ''],
+    ['Losses', String(t.losses ?? 0), ''],
+  ].map(([k, v, c]) => `<dl class="mt5cell"><dt>${k}</dt><dd class="${c}">${esc(v)}</dd></dl>`).join('');
+  document.getElementById('histtiles').hidden = false;
+  setHtml('histtiles', tiles);
+
+  const rows = list => list.map(e => {
+    const rate = e.trades ? Math.round(100 * e.wins / e.trades) : 0;
+    return `<tr><td class="n">${mt5Magic(e.magic)}</td><td>${esc((e.symbols || []).join(', '))}</td>
+      <td class="n">${e.trades}</td><td class="n">${e.wins}/${e.losses}</td><td class="n">${rate}%</td>
+      <td class="n ${mt5Cls(e.profit)}">${mt5Money(e.profit, '')}</td>
+      <td>${esc((e.comments || []).slice(0, 2).join(', '))}</td></tr>`;
+  }).join('');
+  const head = `<thead><tr><th class="n">Magic</th><th>Symbols</th><th class="n">Trades</th>
+    <th class="n">W/L</th><th class="n">Win%</th><th class="n">Net</th><th>Comment</th></tr></thead>`;
+
+  const groups = d.by_ea || [];
+  const eas = groups.filter(e => Number(e.magic));
+  const manual = groups.filter(e => !Number(e.magic));
+
+  document.getElementById('histeacount').textContent = eas.length ? `(${eas.length})` : '';
+  setHtml('histbyea', eas.length ? `<table class="mt5">${head}<tbody>${rows(eas)}</tbody></table>`
+    : '<div class="empty">No closed EA trades in this window.</div>');
+
+  document.getElementById('histmancount').textContent = manual.length ? `(${manual.length})` : '';
+  setHtml('histmanual', manual.length ? `<table class="mt5">${head}<tbody>${rows(manual)}</tbody></table>`
+    : '<div class="empty">No closed manual trades in this window.</div>');
+
+  const closed = d.closed || [];
+  document.getElementById('histclosedcount').textContent = closed.length ? `(${closed.length})` : '';
+  setHtml('histclosed', closed.length ? `<table class="mt5">
+    <thead><tr><th>Closed</th><th>Symbol</th><th>Side</th><th class="n">Lots</th>
+      <th class="n">Net</th><th class="n">Magic</th><th>Comment</th></tr></thead>
+    <tbody>${closed.map(c => `<tr>
+      <td class="n">${esc((c.closed_at || '').slice(0, 16).replace('T', ' '))}</td>
+      <td>${esc(c.symbol)}</td>
+      <td><span class="badge ${c.type === 'buy' ? 'badge--pass' : 'badge--loss'}">${esc(c.type)}</span></td>
+      <td class="n">${mt5Lots(c.volume)}</td>
+      <td class="n ${mt5Cls(c.profit)}">${mt5Money(c.profit, '')}</td>
+      <td class="n">${mt5Magic(c.magic)}</td><td>${esc(c.comment || '')}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">No closed trades in this window.</div>');
+}
+
+document.getElementById('sub-live').onclick = () => showSub('live');
+document.getElementById('sub-hist').onclick = () => showSub('hist');
+document.getElementById('histdays').onchange = loadHistory;
+clearInterval(histTimer);
+histTimer = setInterval(loadHistory, 60000);   // no-op unless the History sub-tab is open
+
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 const TAB_KEY = 'fxea_tab';
 let TAB = oneOf(urlParams.get('tab'), ['eas', 'mt5'], localStorage.getItem(TAB_KEY) || 'eas');
@@ -1158,7 +1291,7 @@ function showTab(name) {
   document.getElementById('tab-mt5').setAttribute('aria-selected', String(!isEas));
   document.getElementById('tab-eas').setAttribute('aria-pressed', String(isEas));
   document.getElementById('tab-mt5').setAttribute('aria-pressed', String(!isEas));
-  if (!isEas) loadMt5();
+  if (!isEas) { showSub(SUBTAB); loadMt5(); }
 }
 document.getElementById('tab-eas').onclick = () => showTab('eas');
 document.getElementById('tab-mt5').onclick = () => showTab('mt5');

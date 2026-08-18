@@ -41,6 +41,8 @@ STREAM_TICK_SECONDS = 1         # how often the stream re-reads the terminal
 STREAM_HEARTBEAT_SECONDS = 20   # keeps proxies from dropping an idle connection
 STREAM_MAX_SECONDS = 3600       # close after an hour; the browser reconnects
 _cache: dict = {"at": 0.0, "data": None}
+HISTORY_CACHE_SECONDS = 30      # closed trades change rarely; keep the IPC lock free
+_hist_cache: dict = {"at": 0.0, "days": 0, "data": None}
 _mt5 = None
 _init_error: str | None = None
 
@@ -269,6 +271,107 @@ def _read_state_locked(now: float) -> dict:
     return data
 
 
+DEAL_ENTRY_OUT = (1, 3)          # OUT and OUT_BY: the leg that realises a result
+
+
+def read_history(days: int = 30) -> dict:
+    """Realised results from closed deals, grouped per EA.
+
+    Read-only like everything else: history_deals_get only reports what already
+    happened. Times are UTC; a broker on another server time can shift day
+    boundaries slightly, which matters for "today" but not for the totals.
+    """
+    from datetime import timedelta
+
+    now = time.time()
+    if (_hist_cache["data"] is not None and _hist_cache["days"] == days
+            and now - _hist_cache["at"] < HISTORY_CACHE_SECONDS):
+        return _hist_cache["data"]
+
+    with _ipc_lock:
+        mt5 = _connect()
+        if mt5 is None:
+            return {"ok": False, "error": _init_error, "at": datetime.now(timezone.utc).isoformat()}
+        try:
+            until = datetime.now(timezone.utc) + timedelta(days=1)
+            since = datetime.now(timezone.utc) - timedelta(days=days)
+            deals = mt5.history_deals_get(since, until) or ()
+        except Exception as exc:  # noqa: BLE001 - never kill the agent over history
+            return {"ok": False, "error": f"history read failed: {exc}",
+                    "at": datetime.now(timezone.utc).isoformat()}
+
+    by_ea: dict[int, dict] = {}
+    by_day: dict[str, float] = {}
+    closed: list[dict] = []
+    today = datetime.now(timezone.utc).date()
+
+    for dl in deals:
+        d = _as_dict(dl)
+        if d.get("entry") not in DEAL_ENTRY_OUT:
+            continue                                    # skip the opening leg
+        # a trade's true result is profit plus its costs
+        net = round(float(d.get("profit") or 0) + float(d.get("swap") or 0)
+                    + float(d.get("commission") or 0) + float(d.get("fee") or 0), 2)
+        when = datetime.fromtimestamp(int(d.get("time") or 0), tz=timezone.utc)
+        magic = int(d.get("magic") or 0)
+
+        e = by_ea.setdefault(magic, {"magic": magic, "trades": 0, "wins": 0, "losses": 0,
+                                     "profit": 0.0, "symbols": [], "comments": []})
+        e["trades"] += 1
+        e["wins" if net > 0 else "losses"] += 1
+        e["profit"] = round(e["profit"] + net, 2)
+        sym = d.get("symbol")
+        if sym and sym not in e["symbols"]:
+            e["symbols"].append(sym)
+        cm = (d.get("comment") or "").strip()
+        if cm and cm not in e["comments"]:
+            e["comments"].append(cm)
+
+        day = when.date().isoformat()
+        by_day[day] = round(by_day.get(day, 0.0) + net, 2)
+        closed.append({
+            "ticket": d.get("position_id") or d.get("ticket"),
+            "symbol": sym,
+            "type": POSITION_TYPE.get(d.get("type"), str(d.get("type"))),
+            "volume": round(float(d.get("volume") or 0), 2),
+            "price": d.get("price"),
+            "profit": net,
+            "magic": magic,
+            "comment": cm,
+            "closed_at": when.isoformat(),
+        })
+
+    closed.sort(key=lambda c: c["closed_at"], reverse=True)
+    wins = sum(e["wins"] for e in by_ea.values())
+    trades = sum(e["trades"] for e in by_ea.values())
+
+    def window(n: int) -> float:
+        cutoff = today - timedelta(days=n - 1)
+        return round(sum(v for k, v in by_day.items()
+                         if datetime.fromisoformat(k).date() >= cutoff), 2)
+
+    data = {
+        "ok": True,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "days": days,
+        "totals": {
+            "trades": trades,
+            "wins": wins,
+            "losses": trades - wins,
+            "win_rate": round(100 * wins / trades, 1) if trades else None,
+            "profit": round(sum(e["profit"] for e in by_ea.values()), 2),
+            "today": by_day.get(today.isoformat(), 0.0),
+            "week": window(7),
+            "month": window(30),
+        },
+        "by_ea": sorted(by_ea.values(), key=lambda e: e["profit"]),
+        "by_day": [{"date": k, "profit": v} for k, v in sorted(by_day.items(), reverse=True)][:60],
+        "closed": closed[:100],
+    }
+    _hist_cache.update(at=now, days=days, data=data)
+    return data
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "fxea-mt5-agent"
     token = ""
@@ -387,6 +490,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "unauthorized"}, 401)
                 return
             self._stream()
+            return
+        if path == "/api/history":
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                days = max(1, min(365, int(qs.get("days", ["30"])[0])))
+            except ValueError:
+                days = 30
+            self._json(read_history(days))
             return
         if path in ("/api/mt5", "/api/state"):
             if not self._authorized():
