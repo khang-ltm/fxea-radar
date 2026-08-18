@@ -545,6 +545,82 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": False, "error": "this agent is read-only; no commands are accepted"}, 405)
 
 
+UPDATE_URL = os.environ.get(
+    "MT5_UPDATE_URL", "https://api.github.com/repos/khang-ltm/fxea-radar/commits/main")
+ZIP_URL = os.environ.get(
+    "MT5_ZIP_URL", "https://codeload.github.com/khang-ltm/fxea-radar/zip/refs/heads/main")
+UPDATE_EVERY_MINUTES = int(os.environ.get("MT5_UPDATE_MINUTES", "20") or 20)
+
+
+def _current_sha() -> str:
+    f = config.ROOT / "data" / ".agent_version"
+    try:
+        return f.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _remote_sha() -> str:
+    import urllib.request
+
+    req = urllib.request.Request(UPDATE_URL, headers={"User-Agent": "fxea-agent"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.load(r).get("sha", "")[:40]
+
+
+def _apply_update(sha: str) -> bool:
+    """Download the repo and refresh app/ and public/ in place. Data is untouched."""
+    import io
+    import shutil
+    import urllib.request
+    import zipfile
+
+    req = urllib.request.Request(ZIP_URL, headers={"User-Agent": "fxea-agent"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        blob = r.read()
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        root = z.namelist()[0].split("/")[0]
+        staged = config.ROOT / "data" / "_update"
+        if staged.exists():
+            shutil.rmtree(staged, ignore_errors=True)
+        z.extractall(staged)
+        src = staged / root
+        for folder in ("app", "public"):
+            if (src / folder).is_dir():
+                shutil.copytree(src / folder, config.ROOT / folder, dirs_exist_ok=True)
+        shutil.rmtree(staged, ignore_errors=True)
+    (config.ROOT / "data" / ".agent_version").write_text(sha, encoding="utf-8")
+    return True
+
+
+def _self_update_loop() -> None:
+    """Pull new code and re-exec, so shipping a fix never needs a manual restart.
+
+    Re-exec replaces this process with a fresh interpreter running the same
+    command, which keeps the scheduled task's supervision intact. Any failure is
+    swallowed: a broken update check must never take the monitor down.
+    """
+    if UPDATE_EVERY_MINUTES <= 0:
+        return
+    import subprocess
+    import sys
+
+    while True:
+        time.sleep(UPDATE_EVERY_MINUTES * 60)
+        try:
+            remote = _remote_sha()
+            if not remote or remote == _current_sha():
+                continue
+            print(f"[self-update] new version {remote[:7]} - updating", flush=True)
+            _apply_update(remote)
+            print("[self-update] restarting agent", flush=True)
+            if _mt5 is not None:
+                _mt5.shutdown()          # drop our IPC pipe; the terminal keeps running
+            os.execv(sys.executable, [sys.executable, "-m", "app.mt5_agent", *sys.argv[1:]])
+        except Exception as exc:  # noqa: BLE001 - never let updating kill the monitor
+            print(f"[self-update] skipped: {exc}", flush=True)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Read-only MT5 monitor")
     ap.add_argument("--host", default="127.0.0.1")
@@ -571,6 +647,10 @@ def main() -> None:
     else:
         print(f"  terminal not readable yet: {state.get('error')}")
         print("  (the agent keeps serving and will attach as soon as the terminal is up)")
+
+    threading.Thread(target=_self_update_loop, daemon=True).start()
+    print(f"  self-update: every {UPDATE_EVERY_MINUTES} min from GitHub"
+          if UPDATE_EVERY_MINUTES > 0 else "  self-update: off")
 
     try:
         # Threading matters: one SSE connection would otherwise block every other

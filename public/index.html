@@ -470,10 +470,6 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
         <div class="mt5bar__grid" id="histtiles" hidden></div>
       </section>
 
-      <section class="mt5sect"><h2>By EA <span class="num" id="histeacount"></span></h2>
-        <div class="wrap" id="histbyea"></div></section>
-      <section class="mt5sect"><h2>Manual trades <span class="num" id="histmancount"></span></h2>
-        <div class="wrap" id="histmanual"></div></section>
       <section class="mt5sect"><h2>Closed trades <span class="num" id="histclosedcount"></span></h2>
         <div class="wrap" id="histclosed"></div></section>
     </div>
@@ -1231,28 +1227,6 @@ function renderHistory(d) {
   ].map(([k, v, c]) => `<dl class="mt5cell"><dt>${k}</dt><dd class="${c}">${esc(v)}</dd></dl>`).join('');
   document.getElementById('histtiles').hidden = false;
   setHtml('histtiles', tiles);
-
-  const rows = list => list.map(e => {
-    const rate = e.trades ? Math.round(100 * e.wins / e.trades) : 0;
-    return `<tr><td class="n">${mt5Magic(e.magic)}</td><td>${esc((e.symbols || []).join(', '))}</td>
-      <td class="n">${e.trades}</td><td class="n">${e.wins}/${e.losses}</td><td class="n">${rate}%</td>
-      <td class="n ${mt5Cls(e.profit)}">${mt5Money(e.profit, '')}</td>
-      <td>${esc((e.comments || []).slice(0, 2).join(', '))}</td></tr>`;
-  }).join('');
-  const head = `<thead><tr><th class="n">Magic</th><th>Symbols</th><th class="n">Trades</th>
-    <th class="n">W/L</th><th class="n">Win%</th><th class="n">Net</th><th>Comment</th></tr></thead>`;
-
-  const groups = d.by_ea || [];
-  const eas = groups.filter(e => Number(e.magic));
-  const manual = groups.filter(e => !Number(e.magic));
-
-  document.getElementById('histeacount').textContent = eas.length ? `(${eas.length})` : '';
-  setHtml('histbyea', eas.length ? `<table class="mt5">${head}<tbody>${rows(eas)}</tbody></table>`
-    : '<div class="empty">No closed EA trades in this window.</div>');
-
-  document.getElementById('histmancount').textContent = manual.length ? `(${manual.length})` : '';
-  setHtml('histmanual', manual.length ? `<table class="mt5">${head}<tbody>${rows(manual)}</tbody></table>`
-    : '<div class="empty">No closed manual trades in this window.</div>');
 
   const closed = d.closed || [];
   document.getElementById('histclosedcount').textContent = closed.length ? `(${closed.length})` : '';
