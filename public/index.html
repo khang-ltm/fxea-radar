@@ -638,6 +638,13 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 let mt5Stream = null;   // declared up here: functions below run before the
 let EA_ROWS = [];       // old declaration site was ever evaluated (TDZ)
 
+/* MQL5 numbers its timeframes 1..30 for minutes and then jumps: H1 is 16385,
+   D1 is 16408. The raw number tells nobody anything. */
+const TF_NAMES = { 1: 'M1', 2: 'M2', 3: 'M3', 4: 'M4', 5: 'M5', 6: 'M6', 10: 'M10', 12: 'M12',
+  15: 'M15', 20: 'M20', 30: 'M30', 16385: 'H1', 16386: 'H2', 16387: 'H3', 16388: 'H4',
+  16390: 'H6', 16392: 'H8', 16396: 'H12', 16408: 'D1', 32769: 'W1', 49153: 'MN1' };
+const tfName = p => TF_NAMES[Number(p)] || String(p ?? '');
+
 const PAGE = 60;                     // render in batches; hundreds of rows at once is not viable
 const urlParams = new URLSearchParams(location.search);
 const oneOf = (v, allowed, fallback) => (allowed.includes(v) ? v : fallback);
@@ -866,6 +873,63 @@ detailDlg.addEventListener('click', e => { if (e.target === detailDlg) detailDlg
 // 'close' also fires on Esc, so the lock is released on every exit path
 detailDlg.addEventListener('close', () => document.body.classList.remove('modal-open'));
 
+/* ── catalog row -> installed EA ──────────────────────────────────────
+   "Quantum Athena" in the channel is "Quantum Athena_1.1_fix@free_fx_pro.ex5" on
+   disk: same product, decorated with a version and the channel tag. Strip both
+   sides down to their words and accept only when one contains the other, so a
+   row offers Attach exactly when that EA really is installed. */
+let INSTALLED = [];             // {name, path} from /api/experts
+let installedAsked = false;
+
+const eaSlug = t => String(t || '').toLowerCase()
+  .replace(/@\S+/g, ' ')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .replace(/\b(ea|mt4|mt5|v|ver|version|final|fix|unlimited|full|pro|robot|free|fx)\b/g, ' ')
+  .replace(/\b\d+(\s+\d+)*\b/g, ' ')
+  .trim().split(/\s+/).filter(Boolean).join(' ');
+
+function installedFor(name) {
+  const want = eaSlug(name);
+  if (!want || want.length < 4) return null;
+  let best = null;
+  for (const e of INSTALLED) {
+    const have = eaSlug(e.name);
+    if (!have) continue;
+    if (have === want) return e;                       // exact wins outright
+    if (have.includes(want) || want.includes(have)) {
+      // prefer the shortest match: "quantum queen" over "quantum queen x"
+      if (!best || eaSlug(best.name).length > have.length) best = e;
+    }
+  }
+  return best;
+}
+
+async function loadInstalled() {
+  if (installedAsked || !MT5?.url) return;
+  installedAsked = true;
+  try {
+    const r = await fetch(`${MT5.url}/api/experts`, {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    });
+    const d = await r.json();
+    if (d.ok) { INSTALLED = d.experts; render(); }     // rows can offer Attach now
+  } catch { /* catalog works fine without it */ }
+}
+
+/* the post says M15 or H1; the manager wants MQL5's number for it */
+const TF_BY_NAME = Object.fromEntries(
+  Object.entries(TF_NAMES).map(([num, name]) => [name, Number(num)]));
+
+function attachBtn(p) {
+  const hit = installedFor(p.name);
+  if (!hit) return '';
+  const pair = (p.pairs || []).find(x => /^[A-Z0-9.]{5,12}$/.test(x)) || '';
+  const tf = (p.timeframes || []).map(x => TF_BY_NAME[String(x).toUpperCase()]).find(Boolean) || '';
+  return `<button class="chip" data-attach="${esc(hit.name)}" data-path="${esc(hit.path)}"
+     data-sym="${esc(pair)}" data-tf="${tf}" title="installed as ${esc(hit.name)}">chart</button>`;
+}
+
 function row(p) {
   const n = p.version_count || 1;
   const chips = (p.pairs || []).slice(0, 2).map(x => `<span class="badge badge--pair">${esc(x)}</span>`).join('')
@@ -882,7 +946,7 @@ function row(p) {
     <div class="row__num row__hide2">${esc(p.deposit || '—')}</div>
     <div class="row__num row__hide2">${n > 1 ? n + ' vers' : '—'}</div>
     <div class="row__num row__hide">${esc(p.date_iso.slice(0, 10))}</div>
-    <div class="row__act">${downloadBtn(p)}</div>
+    <div class="row__act">${attachBtn(p)}${downloadBtn(p)}</div>
   </div>`;
 }
 
@@ -896,9 +960,10 @@ function render() {
         <div>Name</div><div>Test</div><div class="row__hide">Myfxbook</div>
         <div class="row__hide2">Pairs / TF</div><div class="row__hide2">Deposit</div>
         <div class="row__hide2">Versions</div><div class="row__hide">Posted</div>
-        <div style="text-align:right">File</div>
+        <div style="text-align:right">Chart / file</div>
       </div>` + page.map(row).join('');
   wireCards();
+  loadInstalled();      // fills INSTALLED once, then re-renders with Attach buttons
 
   const moreBox = document.getElementById('more');
   moreBox.innerHTML = list.length > page.length
@@ -942,6 +1007,10 @@ function emptyState() {
 
 function wireCards() {
   document.querySelectorAll('.row__open').forEach(b => b.onclick = () => openDetail(b.dataset.key));
+  document.querySelectorAll('[data-attach]').forEach(b => b.onclick = () => openAttach({
+    expert: b.dataset.attach, path: b.dataset.path,
+    symbol: b.dataset.sym, period: Number(b.dataset.tf) || 0,
+  }));
 }
 
 /* ── tag dropdown ──────────────────────────────────────────────────────── */
@@ -1616,12 +1685,6 @@ const inputCell = i => {
     <dd title="${esc(v)}">${esc(v)}</dd></dl>`;
 };
 
-/* MQL5 numbers its timeframes 1..30 for minutes and then jumps: H1 is 16385,
-   D1 is 16408. The raw number tells nobody anything. */
-const TF_NAMES = { 1: 'M1', 2: 'M2', 3: 'M3', 4: 'M4', 5: 'M5', 6: 'M6', 10: 'M10', 12: 'M12',
-  15: 'M15', 20: 'M20', 30: 'M30', 16385: 'H1', 16386: 'H2', 16387: 'H3', 16388: 'H4',
-  16390: 'H6', 16392: 'H8', 16396: 'H12', 16408: 'D1', 32769: 'W1', 49153: 'MN1' };
-const tfName = p => TF_NAMES[Number(p)] || String(p ?? '');
 
 /* ── attaching an EA ────────────────────────────────────────────
    The EA list and the symbol list both come from the terminal, so neither a
@@ -1657,12 +1720,14 @@ let ACCOUNT = null;                        // last account seen, for the confirm
 
 const TF_ORDER = [1, 5, 15, 30, 16385, 16388, 16408, 32769, 49153];
 
-async function openAttach() {
+async function openAttach(pre) {
   const note = document.getElementById('attach-warn');
   note.textContent = 'loading what is installed...';
   const tf = document.getElementById('attach-tf');
   tf.innerHTML = TF_ORDER.map(v =>                      // needs no terminal
     `<option value="${v}" ${v === 16385 ? 'selected' : ''}>${TF_NAMES[v]}</option>`).join('');
+  if (pre?.period && TF_NAMES[pre.period]) tf.value = String(pre.period);
+  document.getElementById('attach-sym').value = pre?.symbol || '';
   attachDlg.showModal();
 
   // Independently: a symbol lookup that fails must still leave a usable EA list,
@@ -1685,6 +1750,8 @@ async function openAttach() {
     .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}">`
       + esc(e.folder ? `${e.folder}/${e.name}` : e.name) + '</option>').join('')
     || '<option value="">no .ex5 found</option>';
+  if (pre?.path) eaSel.value = pre.path;               // came from a catalog row
+  if (pre?.symbol) symbolSearch(pre.symbol);
 
   fillSymbols(syms);
 
@@ -1698,7 +1765,7 @@ async function openAttach() {
     : 'The EA starts trading as soon as it loads.';
 }
 
-document.getElementById('attach-open').onclick = openAttach;
+document.getElementById('attach-open').onclick = () => openAttach();
 document.getElementById('attach-sym').oninput = e => symbolSearch(e.target.value);
 document.getElementById('attach-cancel').onclick = () => attachDlg.close();
 attachDlg.addEventListener('click', e => { if (e.target === attachDlg) attachDlg.close(); });
