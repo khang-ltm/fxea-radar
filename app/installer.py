@@ -26,7 +26,11 @@ import zipfile
 
 from . import config
 
-INSTALL_FOLDER = "FxeaRadar"          # under MQL5/Experts
+# Straight into MQL5/Experts, under the name the archive used. Cracked EAs are
+# known to check their own file name or look for a licence file beside them, and
+# every EA on this terminal that works was installed exactly like this - a
+# subfolder and a tidied name are differences with nothing to gain.
+INSTALL_FOLDER = ""
 KEEP_SUFFIXES = (".ex5", ".set")
 MAX_ARCHIVE_BYTES = 60 * 1024 * 1024
 MAX_MEMBERS = 200
@@ -189,18 +193,24 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
                     "error": f"no .ex5 inside {archive.name} (found {others})"
                              " - it may be an MT4 EA, a source-only release, or an indicator"}
 
-        target = experts_dir / INSTALL_FOLDER
+        target = experts_dir / INSTALL_FOLDER if INSTALL_FOLDER else experts_dir
         target.mkdir(parents=True, exist_ok=True)
         installed, skipped = [], []
         for f in found:
-            dst = target / _tidy_name(f.name)
-            if dst.exists() and dst.read_bytes() == f.read_bytes():
-                skipped.append(f.name)                     # already installed, unchanged
+            dst = target / f.name
+            if dst.exists():
+                if dst.read_bytes() == f.read_bytes():
+                    skipped.append(f.name)                 # already installed, unchanged
+                    continue
+                # a different file under the same name: replacing it could swap an
+                # EA that is running right now, so leave it and say so
+                skipped.append(f.name + " (kept the installed version)")
                 continue
             shutil.copy2(f, dst)
             installed.append({"name": dst.stem if dst.suffix.lower() == ".ex5" else dst.name,
                               "file": dst.name,
-                              "path": str(pathlib.PurePath("Experts") / INSTALL_FOLDER / dst.name),
+                              "path": str(pathlib.PurePath("Experts") / INSTALL_FOLDER / dst.name)
+                                      if INSTALL_FOLDER else str(pathlib.PurePath("Experts") / dst.name),
                               "kind": "ea" if dst.suffix.lower() == ".ex5" else "set",
                               "size_bytes": dst.stat().st_size})
 
