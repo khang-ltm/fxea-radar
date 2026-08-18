@@ -1227,7 +1227,9 @@ async function loadHistory() {
   const days = document.getElementById('histdays').value;
   let d;
   try {
-    const r = await fetch(`${MT5.url}/api/history?days=${days}`, {
+    // send our UTC offset so 'today' follows your clock, not the server's
+    const tz = -new Date().getTimezoneOffset();
+    const r = await fetch(`${MT5.url}/api/history?days=${days}&tz=${tz}`, {
       credentials: 'include',
       headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
     });

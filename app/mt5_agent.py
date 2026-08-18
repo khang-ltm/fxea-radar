@@ -25,7 +25,7 @@ import json
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -274,17 +274,16 @@ def _read_state_locked(now: float) -> dict:
 DEAL_ENTRY_OUT = (1, 3)          # OUT and OUT_BY: the leg that realises a result
 
 
-def read_history(days: int = 30) -> dict:
+def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
     """Realised results from closed deals, grouped per EA.
 
     Read-only like everything else: history_deals_get only reports what already
     happened. Times are UTC; a broker on another server time can shift day
     boundaries slightly, which matters for "today" but not for the totals.
     """
-    from datetime import timedelta
-
     now = time.time()
-    if (_hist_cache["data"] is not None and _hist_cache["days"] == days
+    key = (days, tz_minutes)
+    if (_hist_cache["data"] is not None and _hist_cache["days"] == key
             and now - _hist_cache["at"] < HISTORY_CACHE_SECONDS):
         return _hist_cache["data"]
 
@@ -303,7 +302,11 @@ def read_history(days: int = 30) -> dict:
     by_ea: dict[int, dict] = {}
     by_day: dict[str, float] = {}
     closed: list[dict] = []
-    today = datetime.now(timezone.utc).date()
+    # day boundaries follow the viewer's clock: with a UTC day, "today" was wrong
+    # for the first seven hours of every morning in UTC+7
+    local = timezone(timedelta(minutes=tz_minutes))
+    today = datetime.now(local).date()
+    seen_positions: dict[int, dict] = {}
 
     # An EA stamps its magic on the deal that OPENS a position; the closing deal
     # frequently carries 0, which made real EA trades look manual. Build the
@@ -342,8 +345,13 @@ def read_history(days: int = 30) -> dict:
 
         e = by_ea.setdefault(magic, {"magic": magic, "trades": 0, "wins": 0, "losses": 0,
                                      "profit": 0.0, "symbols": [], "comments": []})
-        e["trades"] += 1
-        e["wins" if net > 0 else "losses"] += 1
+        # a position closed in chunks yields several OUT deals; count the position
+        # once and accumulate its parts, or trade counts and win rate drift from MT5
+        first_leg = pid not in seen_positions
+        if first_leg:
+            seen_positions[pid] = {"net": 0.0, "ea": e}
+            e["trades"] += 1
+        seen_positions[pid]["net"] = round(seen_positions[pid]["net"] + net, 2)
         e["profit"] = round(e["profit"] + net, 2)
         sym = d.get("symbol")
         if sym and sym not in e["symbols"]:
@@ -354,7 +362,7 @@ def read_history(days: int = 30) -> dict:
         if cm and cm not in e["comments"]:
             e["comments"].append(cm)
 
-        day = when.date().isoformat()
+        day = when.astimezone(local).date().isoformat()
         by_day[day] = round(by_day.get(day, 0.0) + net, 2)
         closed.append({
             "ticket": d.get("position_id") or d.get("ticket"),
@@ -368,6 +376,9 @@ def read_history(days: int = 30) -> dict:
             "close_reason": close_reason if close_reason != cm else "",
             "closed_at": when.isoformat(),
         })
+
+    for agg in seen_positions.values():
+        agg["ea"]["wins" if agg["net"] > 0 else "losses"] += 1
 
     closed.sort(key=lambda c: c["closed_at"], reverse=True)
     wins = sum(e["wins"] for e in by_ea.values())
@@ -396,7 +407,7 @@ def read_history(days: int = 30) -> dict:
         "by_day": [{"date": k, "profit": v} for k, v in sorted(by_day.items(), reverse=True)][:60],
         "closed": closed[:2000],
     }
-    _hist_cache.update(at=now, days=days, data=data)
+    _hist_cache.update(at=now, days=key, data=data)
     return data
 
 
@@ -528,7 +539,11 @@ class Handler(BaseHTTPRequestHandler):
                 days = max(1, min(365, int(qs.get("days", ["30"])[0])))
             except ValueError:
                 days = 30
-            self._json(read_history(days))
+            try:
+                tzmin = max(-840, min(840, int(qs.get("tz", ["0"])[0])))
+            except ValueError:
+                tzmin = 0
+            self._json(read_history(days, tzmin))
             return
         if path in ("/api/mt5", "/api/state"):
             if not self._authorized():
