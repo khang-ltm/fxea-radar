@@ -923,9 +923,9 @@ def uninstall_ea(rel_path: str) -> dict:
 
     Only an EA that is not on a chart: deleting the .ex5 of a running EA would
     leave a chart trading a file that no longer exists, and MT5 would drop it at
-    the next reload with no way to put it back. The file is moved into
-    data/removed rather than deleted, so a wrong click costs nothing but a copy
-    step - and moving it out of the Experts tree is what makes MT5 forget it.
+    the next reload with no way to put it back. Otherwise the file goes for real -
+    every EA here came from a channel post that can be installed again in a click,
+    so keeping copies on a disk that ran out of space today buys nothing.
     """
     root = experts_dir()
     if root is None:
@@ -956,17 +956,12 @@ def uninstall_ea(rel_path: str) -> dict:
         return {"ok": False,
                 "error": f"{target.stem} is on a chart - pause and discard it first"}
 
-    keep = config.DATA_DIR / "removed"
     try:
-        keep.mkdir(parents=True, exist_ok=True)
-        dest = keep / target.name
-        if dest.exists():
-            dest.unlink()
-        target.replace(dest)
+        target.unlink()
     except OSError as exc:
-        return {"ok": False, "error": f"could not remove it: {exc}"}
+        return {"ok": False, "error": f"could not delete it: {exc}"}
 
-    out = {"ok": True, "message": f"removed {target.name} (a copy is kept in data/removed)"}
+    out = {"ok": True, "message": f"deleted {target.name}"}
     _audit(out, {"uninstall": rel})
     return out
 

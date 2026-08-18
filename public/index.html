@@ -689,6 +689,7 @@ const ICON = {
   download: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 12l5 5 5-5"/><path d="M4 21h16"/></svg>',
   link: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7L11 7"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 1 0 11 18.7L13 17"/></svg>',
   chevronDown: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+  gear: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 5 8.9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9.6a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   folder: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   chart: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
@@ -1818,8 +1819,8 @@ function renderInstalled(charts, paused) {
 async function removeInstalled(path, name) {
   const pin = prompt(`Delete "${name}" from the VPS?`
     + String.fromCharCode(10, 10)
-    + 'It is not on a chart, so nothing stops trading. A copy is kept in'
-    + ' data/removed on the VPS.'
+    + 'It is not on a chart, so nothing stops trading. The file is deleted -'
+    + ' installing it again from the catalog is one click.'
     + String.fromCharCode(10, 10) + 'Enter the PIN to confirm:');
   if (!pin) return;
   const r = await managerPost({ action: 'uninstall', confirm: true, pin, path });
@@ -2182,7 +2183,8 @@ async function loadCharts(quiet) {
   setHtml('chartstable', charts.length ? `<table class="mt5">
     <thead><tr><th>Expert</th><th>Symbol</th><th class="n">TF</th><th class="n">Open</th><th class="n">Floating</th>
       <th class="n">Trades</th><th class="n">Win%</th><th class="n">Realised 30d</th>
-      <th>Last trade<span data-tz></span></th><th style="text-align:right">Action</th></tr></thead>
+      <th>Last trade<span data-tz></span></th><th style="text-align:center">Settings</th>
+      <th style="text-align:right">Action</th></tr></thead>
     <tbody>${charts.map(c => {
       const m = matchMagic(c, EA_ROWS, takenBy(c));
       const r = sumRows(m.rows);
@@ -2204,12 +2206,12 @@ async function loadCharts(quiet) {
           : linkBtn('ghost', m.how === 'manual' ? 'linked' : 'auto',
                     `guessed magic ${magics} from the trade comments - click to change`);
       const settings = (c.inputs || []).length
-        ? `<button class="chip ghost" data-inputs="${esc(String(c.chart))}"
-             title="see and change what this EA is set to">settings</button>`
-        : '';
+        ? `<button class="chip chip--icon ghost" data-inputs="${esc(String(c.chart))}"
+             title="see and change what this EA is set to">${ICON.gear}</button>`
+        : '<span class="shot-none">—</span>';
       return `<tr>
       <td>${c.expert ? esc(c.expert) : '<span class="shot-none">empty chart</span>'}
-        ${c.expert ? link : ''} ${settings}</td>
+        ${c.expert ? link : ''}</td>
       <td>${esc(c.symbol)}</td>
       <td class="n">${esc(tfName(c.period))}</td>
       <td class="n">${r && r.open ? r.open : '—'}</td>
@@ -2218,6 +2220,7 @@ async function loadCharts(quiet) {
       <td class="n">${rate == null ? '—' : rate + '%'}</td>
       <td class="n ${r ? mt5Cls(r.realised) : ''}">${r && r.trades ? mt5Money(r.realised, '') : '—'}</td>
       <td class="mono">${r ? esc(mt5Time(r.last)) : '—'}</td>
+      <td style="text-align:center">${settings}</td>
       <td style="text-align:right">${c.expert
         ? `<button class="chip" data-pause="${esc(String(c.chart))}"
              data-name="${esc(c.expert)} on ${esc(c.symbol)}">Pause</button>`
