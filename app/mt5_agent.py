@@ -731,6 +731,10 @@ def install_ea(channel: str, message_id) -> dict:
     if root is None:
         return {"ok": False, "error": _init_error or "terminal not readable"}
     result = installer.install_from_channel(channel, message_id, root)
+    if result.get("ok") and result.get("experts"):
+        # a file MT5 has not registered cannot be attached, and it registers on
+        # its own schedule - so ask it to look now
+        result["rescan"] = nudge_navigator()
     _audit(result if result.get("ok") else {"ok": False, "action": "install"},
            {"channel": channel, "message_id": message_id})
     return result
@@ -877,6 +881,41 @@ def stage_attach_template(expert: str, path: str, inputs: dict | None) -> str:
     except OSError as exc:
         return f"cannot write the attach template: {exc}"
     return ""
+
+
+def nudge_navigator() -> str:
+    """Get MT5 to rescan MQL5/Experts after a file arrives from outside.
+
+    MT5 keeps its own list of experts and does not necessarily notice an .ex5 that
+    another process copied in - a template naming an unknown EA then loads
+    nothing, silently. Compiling a source file in that folder is a change MT5 does
+    watch for, so recompiling the manager is used as a rescan trigger. The manager
+    reloads as a side effect, which is why this waits for it to answer again
+    before returning.
+    """
+    import subprocess
+
+    files = _mql5_files_dir()
+    editor = _metaeditor()
+    if files is None or editor is None:
+        return "no MetaEditor to nudge with"
+    src = files.parent / "Experts" / MANAGER_SOURCE
+    if not src.exists():
+        return "manager source is not in Experts"
+
+    try:
+        src.touch()                       # make the timestamp newer than the .ex5
+        subprocess.run([str(editor), f"/compile:{src}"], capture_output=True,
+                       timeout=120, creationflags=0x08000000)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"compile could not run: {exc}"
+
+    for _ in range(30):                   # the manager restarts; wait for it back
+        time.sleep(0.5)
+        status = read_charts()
+        if status.get("ok") and status.get("attached"):
+            return "MT5 rescanned and the manager is back"
+    return "MT5 rescanned but the manager has not answered yet"
 
 
 def uninstall_ea(rel_path: str) -> dict:
