@@ -1516,12 +1516,15 @@ function renderHistory(d) {
     all.length ? `(${closed.length} of ${all.length})` : '';
   setHtml('histclosed', closed.length ? `<table class="mt5">
     <thead><tr><th>Closed<span data-tz></span></th><th>Symbol</th><th>Side</th><th class="n">Lots</th>
+      <th class="n">Open</th><th class="n">Close</th>
       <th class="n">Net</th><th class="n">Magic</th><th>Comment</th></tr></thead>
     <tbody>${closed.map(c => `<tr>
       <td class="mono">${esc(mt5Time(c.closed_at))}</td>
       <td>${esc(c.symbol)}</td>
       <td><span class="badge ${c.type === 'buy' ? 'badge--pass' : 'badge--loss'}">${esc(c.type)}</span></td>
       <td class="n">${mt5Lots(c.volume)}</td>
+      <td class="n" title="${c.opened_at ? esc(mt5Time(c.opened_at)) : ''}">${mt5Px(c.price_open)}</td>
+      <td class="n">${mt5Px(c.price_close ?? c.price)}</td>
       <td class="n ${mt5Cls(c.profit)}">${mt5Money(c.profit, '')}</td>
       <td class="n">${mt5Magic(c.magic)}</td><td>${esc(c.comment || '')}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No closed trades in this window.</div>');

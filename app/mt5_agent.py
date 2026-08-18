@@ -316,6 +316,9 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
     # position -> magic map first, then attribute each close to its opener.
     magic_of_position: dict[int, int] = {}
     comment_of_position: dict[int, str] = {}
+    # the entry price and time live on the opening deal; the closing deal only
+    # knows what it closed at, which on its own says nothing about the trade
+    open_of_position: dict[int, tuple[float, str]] = {}
     for dl in deals:
         d = _as_dict(dl)
         pid = int(d.get("position_id") or 0)
@@ -331,6 +334,9 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
             cm = (d.get("comment") or "").strip()
             if cm and pid not in comment_of_position:
                 comment_of_position[pid] = cm
+            if pid not in open_of_position:
+                opened = datetime.fromtimestamp(int(d.get("time") or 0), tz=timezone.utc)
+                open_of_position[pid] = (float(d.get("price") or 0), opened.isoformat())
 
     for dl in deals:
         d = _as_dict(dl)
@@ -367,12 +373,16 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
 
         day = when.astimezone(local).date().isoformat()
         by_day[day] = round(by_day.get(day, 0.0) + net, 2)
+        entry_price, opened_at = open_of_position.get(pid, (None, ""))
         closed.append({
             "ticket": d.get("position_id") or d.get("ticket"),
             "symbol": sym,
             "type": POSITION_TYPE.get(d.get("type"), str(d.get("type"))),
             "volume": round(float(d.get("volume") or 0), 2),
-            "price": d.get("price"),
+            "price": d.get("price"),              # kept: the close price
+            "price_open": entry_price,
+            "price_close": d.get("price"),
+            "opened_at": opened_at,
             "profit": net,
             "magic": magic,
             "comment": cm,
