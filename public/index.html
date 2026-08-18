@@ -112,6 +112,8 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .chip.ghost { min-height: 0; padding: 1px 6px; font-size: 11px; border-color: transparent;
    background: none; color: var(--color-muted-fg); }
 .chip.ghost:hover { border-color: var(--color-border); }
+.chip.as-text { cursor: default; }
+.chip.as-text:hover { border-color: transparent; color: var(--color-muted-fg); }
 .chip[aria-pressed="true"] { background: color-mix(in srgb, var(--color-info) 18%, var(--color-surface));
   border-color: var(--color-info); color: var(--color-foreground); }
 
@@ -1422,7 +1424,7 @@ const eaWords = t => String(t || '').toLowerCase()
 
 const eaAcronym = name => eaWords(name).map(w => w[0]).join('');
 
-function matchMagic(chart, rows) {
+function matchMagic(chart, rows, taken = new Set()) {
   const manual = eaMap()[chart.chart];
   if (manual !== undefined) {
     const hit = rows.filter(r => r.magic === manual);
@@ -1430,12 +1432,14 @@ function matchMagic(chart, rows) {
   }
 
   // FxeaManager 1.11+ reads the magic straight out of the EA inputs, which
-  // beats any name guessing. One EA often numbers its strategies off a round
-  // base (8000 -> 8001, 8002), so a round base claims its block of 100.
+  // beats any name guessing. EAs number their strategies around that base -
+  // Wave Rider is set to 77701 and trades 77701, 77704, 77705 - so the base
+  // claims its hundred, minus any magic another chart claims as its own base.
   const base = Number(chart.magic) || 0;
   if (base) {
+    const block = Math.floor(base / 100) * 100;
     const hit = rows.filter(r => r.magic === base
-      || (base % 100 === 0 && r.magic > base && r.magic < base + 100));
+      || (r.magic >= block && r.magic < block + 100 && !taken.has(r.magic)));
     return { rows: hit, how: 'magic' };
   }
 
@@ -1525,10 +1529,14 @@ async function loadCharts(quiet) {
   }
 
   const charts = (d.charts || []).filter(c => !c.is_manager);
+  // every base another chart reported stays that chart's own, never absorbed
+  // into a neighbour's block
+  const bases = new Set(charts.map(c => Number(c.magic)).filter(Boolean));
+  const takenBy = c => new Set([...bases].filter(m => m !== Number(c.magic)));
   EA_BY_MAGIC = {};
   for (const c of charts) {
     if (!c.expert) continue;
-    for (const r of matchMagic(c, EA_ROWS).rows) EA_BY_MAGIC[r.magic] = c.expert;
+    for (const r of matchMagic(c, EA_ROWS, takenBy(c)).rows) EA_BY_MAGIC[r.magic] = c.expert;
   }
   if (quiet) return;                       // called only to learn the mapping
   const withEa = charts.filter(c => c.expert);
@@ -1542,7 +1550,7 @@ async function loadCharts(quiet) {
       <th class="n">Trades</th><th class="n">Win%</th><th class="n">Realised 30d</th>
       <th>Last trade<span data-tz></span></th><th style="text-align:right">Action</th></tr></thead>
     <tbody>${charts.map(c => {
-      const m = matchMagic(c, EA_ROWS);
+      const m = matchMagic(c, EA_ROWS, takenBy(c));
       const r = sumRows(m.rows);
       const rate = r && r.trades ? Math.round(100 * r.wins / r.trades) : null;
       // a matched row only offers a quiet way to correct the match; an unmatched
@@ -1550,11 +1558,17 @@ async function loadCharts(quiet) {
       const linkBtn = (cls, label, tip) => `<button class="chip ${cls}"
           data-link="${esc(String(c.chart))}" data-name="${esc(c.expert || '')}"
           data-sym="${esc(c.symbol)}" title="${tip}">${label}</button>`;
-      const label = { manual: 'linked', magic: 'magic ' + chart_magic(c), auto: 'auto' }[m.how];
-      const link = label
-        ? linkBtn('ghost', label,
-                  `magic ${m.rows.map(x => x.magic).join(', ') || chart_magic(c) || '?'} - click to change`)
-        : linkBtn('', 'link', 'pick which magic number this chart trades under');
+      // a magic read from the EA's own inputs is a fact, so it is a label, not
+      // a button; a name guess or a hand link can be wrong, so those stay
+      // clickable, and a row with no match at all asks outright
+      const magics = m.rows.map(x => x.magic).join(', ');
+      const link = m.how === 'magic'
+        ? `<span class="chip ghost as-text" title="magic ${esc(magics || String(chart_magic(c)))}
+             read from the EA inputs">magic ${chart_magic(c)}</span>`
+        : m.how === 'none'
+          ? linkBtn('', 'link', 'pick which magic number this chart trades under')
+          : linkBtn('ghost', m.how === 'manual' ? 'linked' : 'auto',
+                    `guessed magic ${magics} from the trade comments - click to change`);
       return `<tr>
       <td>${esc(c.expert || '—')} ${c.expert ? link : ''}</td>
       <td>${esc(c.symbol)}</td>
