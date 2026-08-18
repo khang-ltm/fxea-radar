@@ -212,8 +212,11 @@ Start-ScheduledTask -TaskName '$taskName'
 $wdName = 'fxea-mt5-updater'
 $wdAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$updater`""
+# RepetitionDuration is required: without it Windows registers the trigger as a
+# one-shot and the task never repeats.
 $wdTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
-    -RepetitionInterval (New-TimeSpan -Minutes 20)
+    -RepetitionInterval (New-TimeSpan -Minutes 20) `
+    -RepetitionDuration ([TimeSpan]::MaxValue)
 Unregister-ScheduledTask -TaskName $wdName -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName $wdName -Action $wdAction -Trigger $wdTrigger `
     -RunLevel Highest -Force | Out-Null
