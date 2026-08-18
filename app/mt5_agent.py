@@ -444,6 +444,10 @@ MANAGER_CMD = "fxea_cmd.txt"
 MANAGER_RESULT = "fxea_result.txt"
 MANAGER_STATUS = "fxea_status.json"
 MANAGER_TIMEOUT = 8            # seconds to wait for the EA to answer
+# Attaching opens a chart, applies a template and then watches for nine seconds
+# to see whether the EA stays: that is deliberately slow, and timing it out at
+# eight seconds reported failure for attaches that had actually worked.
+MANAGER_TIMEOUTS = {"attach": 45, "install": 45, "setinputs": 25}
 _manager_seq = [0]
 
 
@@ -748,9 +752,12 @@ def read_terminal_log(lines: int = 60, needle: str = "", which: str = "experts")
     logs = []
     for folder in folders:
         if folder.is_dir():
-            logs += [f for f in folder.glob("*.log") if f.is_file()]
+            # metaeditor.log lives here too and is newest whenever something was
+            # compiled, which is never the log anyone means
+            logs += [f for f in folder.glob("*.log")
+                     if f.is_file() and f.stem.isdigit()]
     if not logs:
-        return {"ok": False, "error": "no log files found"}
+        return {"ok": False, "error": "no dated log files found"}
 
     newest = max(logs, key=lambda f: f.stat().st_mtime)
     try:
@@ -789,7 +796,7 @@ def manager_command(action: str, **fields) -> dict:
     (d / MANAGER_CMD).write_text(chr(10).join(lines_out) + chr(10),
                                  encoding="ascii", errors="replace")
 
-    deadline = time.time() + MANAGER_TIMEOUT
+    deadline = time.time() + MANAGER_TIMEOUTS.get(action, MANAGER_TIMEOUT)
     while time.time() < deadline:
         if result.exists():
             try:
