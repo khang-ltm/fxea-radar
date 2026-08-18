@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.24"
+#property version   "1.25"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.24", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.25", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -153,11 +153,13 @@ long   g_pm_chart[];
 string g_pm_expert[];
 long   g_pm_magic[];
 string g_pm_inputs[];
+int    g_pm_mode[];
 
-bool ReadInputsFromTemplate(const long id, long &magic, string &json)
+bool ReadInputsFromTemplate(const long id, long &magic, string &json, int &mode)
   {
    magic = 0;
    json  = "";
+   mode  = 0;
 
    string file = PROBE_NAME + ".tpl";
    if(FileIsExist(file))
@@ -189,6 +191,12 @@ bool ReadInputsFromTemplate(const long id, long &magic, string &json)
       StringTrimRight(line);
       string low = line;
       StringToLower(low);
+
+      // expertmode is how MT5 records per-EA permissions - including whether algo
+      // trading is allowed for it. A template written without it loads the EA with
+      // trading switched off, which is what every attach from the page did.
+      if(in_expert && StringFind(low, "expertmode=") == 0)
+         mode = (int)StringToInteger(StringSubstr(line, 11));
 
       if(low == "<expert>")
          in_expert = true;
@@ -229,10 +237,11 @@ bool ReadInputsFromTemplate(const long id, long &magic, string &json)
    return(true);
   }
 
-void ChartProbe(const long id, const string expert, long &magic, string &inputs)
+void ChartProbe(const long id, const string expert, long &magic, string &inputs, int &mode)
   {
    magic  = 0;
    inputs = "";
+   mode   = 0;
    if(!ReportInputs || StringLen(expert) == 0)
       return;
 
@@ -241,20 +250,23 @@ void ChartProbe(const long id, const string expert, long &magic, string &inputs)
         {
          magic  = g_pm_magic[i];           // recomputed only when the EA changes
          inputs = g_pm_inputs[i];
+         mode   = g_pm_mode[i];
          return;
         }
 
-   ReadInputsFromTemplate(id, magic, inputs);
+   ReadInputsFromTemplate(id, magic, inputs, mode);
 
    int n = ArraySize(g_pm_chart);
    ArrayResize(g_pm_chart, n + 1);
    ArrayResize(g_pm_expert, n + 1);
    ArrayResize(g_pm_magic, n + 1);
    ArrayResize(g_pm_inputs, n + 1);
+   ArrayResize(g_pm_mode, n + 1);
    g_pm_chart[n]  = id;
    g_pm_expert[n] = expert;
    g_pm_magic[n]  = magic;
    g_pm_inputs[n] = inputs;
+   g_pm_mode[n]   = mode;
    if(VerboseLog)
       PrintFormat("settings for %s on chart %I64d: magic %s",
                   StringLen(expert) > 0 ? expert : "(no EA)", id,
@@ -280,15 +292,16 @@ void WriteStatus()
 
       long   magic  = 0;
       string inputs = "";
+      int    mode   = 0;
       if(id != g_self_chart)
-         ChartProbe(id, expert, magic, inputs);
+         ChartProbe(id, expert, magic, inputs, mode);
 
       if(n > 0)
          rows += ",";
       rows += StringFormat(
                  "{\"chart\":%I64d,\"symbol\":\"%s\",\"period\":%I64d,\"expert\":\"%s\","
-                 "\"magic\":%I64d,\"inputs\":[%s],\"is_manager\":%s}",
-                 id, JsonEscape(symbol), period, JsonEscape(expert), magic, inputs,
+                 "\"magic\":%I64d,\"expertmode\":%d,\"inputs\":[%s],\"is_manager\":%s}",
+                 id, JsonEscape(symbol), period, JsonEscape(expert), magic, mode, inputs,
                  (id == g_self_chart) ? "true" : "false");
       n++;
       id = ChartNext(id);
@@ -309,7 +322,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.24",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.25",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -563,7 +576,8 @@ void DoSetInputs(const string id, const long chart, const bool force)
 
    long   magic = 0;
    string dump  = "";
-   ChartProbe(chart, expert, magic, dump);
+   int    dmode = 0;
+   ChartProbe(chart, expert, magic, dump, dmode);
    int held = CountOpenFor(magic);
    if(held > 0 && !force)
      {

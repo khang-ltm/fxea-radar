@@ -807,6 +807,21 @@ def _templates_dir() -> pathlib.Path | None:
     return None if d is None else d.parent / "Profiles" / "Templates"
 
 
+def _working_expertmode() -> int:
+    """The expertmode value MT5 uses for an EA that is already running here.
+
+    expertmode carries the per-EA permissions, algo trading among them, and an
+    attach template written without it loads the EA with trading switched off. The
+    manager reports the value it reads from each running chart, so copy whatever
+    the EAs on this terminal are actually using rather than inventing a number.
+    """
+    status = read_charts()
+    modes = [int(c.get("expertmode") or 0) for c in (status.get("charts") or [])
+             if c.get("expert") and not c.get("is_manager")]
+    modes = [m for m in modes if m > 0]
+    return max(modes) if modes else 33
+
+
 def stage_attach_template(expert: str, path: str, inputs: dict | None) -> str:
     """Write fxea_attach.tpl with this EA in it. Returns "" or a reason."""
     tdir = _templates_dir()
@@ -839,7 +854,7 @@ def stage_attach_template(expert: str, path: str, inputs: dict | None) -> str:
         if not placed and low == "<window>":
             out.append("<expert>")
             out.append(f"name={expert}")
-            out.append("flags=343")
+            out.append(f"expertmode={_working_expertmode()}")
             if path:
                 out.append(f"path={path}")
             if inputs:
@@ -851,7 +866,7 @@ def stage_attach_template(expert: str, path: str, inputs: dict | None) -> str:
         out.append(line)
 
     if not placed:                             # no window section: append at the end
-        out += ["<expert>", f"name={expert}", "flags=343"]
+        out += ["<expert>", f"name={expert}", f"expertmode={_working_expertmode()}"]
         if path:
             out.append(f"path={path}")
         out.append("</expert>")
