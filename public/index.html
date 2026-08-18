@@ -348,7 +348,10 @@ body.modal-open { overflow: hidden; }
 .mt5cell dd.pos { color: var(--color-accent); }
 .mt5cell dd.neg { color: var(--color-destructive); }
 .subtabs { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
-   margin: var(--space-6) 0 var(--space-3); }
+   margin-bottom: var(--space-3); }
+.subtabs__control { margin-left: auto;
+   border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); }
+.subtabs__control .btn[aria-selected="false"] { color: var(--color-accent); }
 .mt5sect { margin-top: var(--space-4); }
 /* card look, so an empty section reads as "nothing here" instead of broken text */
 .mt5sect .empty { padding: var(--space-6) var(--space-4); background: var(--color-surface);
@@ -483,9 +486,33 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <div class="mt5bar__grid" id="mt5grid" hidden></div>
     </section>
 
-    <!-- Three readings of one account. The EA panel above is not one of them:
-         it is the only view that changes anything, so it never shares this row. -->
-    <div id="mt5-eas">
+    <!-- Positions, Orders and History are three readings of one account. EA
+         control is the only view that changes anything, so it keeps its own
+         frame at the end of the row rather than sitting in with them. -->
+
+    <div class="subtabs" role="tablist" aria-label="MT5 view">
+      <div class="segmented">
+        <button class="btn" id="sub-pos" role="tab" aria-selected="true">Positions</button>
+        <button class="btn" id="sub-ord" role="tab" aria-selected="false">Orders</button>
+        <button class="btn" id="sub-hist" role="tab" aria-selected="false">History</button>
+      </div>
+      <div class="segmented subtabs__control">
+        <button class="btn" id="sub-eas" role="tab" aria-selected="false">EA control</button>
+      </div>
+    </div>
+
+    <div id="mt5-pos">
+
+    <section class="mt5sect"><h2>Open positions <span class="num" id="mt5poscount"></span></h2>
+      <div class="wrap" id="mt5positions"></div></section>
+    </div>
+
+    <div id="mt5-ord" hidden>
+      <section class="mt5sect"><h2>Pending orders <span class="num" id="mt5ordcount"></span></h2>
+        <div class="wrap" id="mt5orders"></div></section>
+    </div>
+
+    <div id="mt5-eas" hidden>
       <section class="mt5bar">
         <div class="mt5bar__head">
           <span class="mt5bar__title">Expert Advisors</span>
@@ -501,25 +528,6 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
         <h2>Paused</h2>
         <div class="wrap" id="pausedtable"></div>
       </section>
-    </div>
-
-    <div class="subtabs" role="tablist" aria-label="MT5 view">
-      <div class="segmented">
-        <button class="btn" id="sub-pos" role="tab" aria-selected="true">Positions</button>
-        <button class="btn" id="sub-ord" role="tab" aria-selected="false">Orders</button>
-        <button class="btn" id="sub-hist" role="tab" aria-selected="false">History</button>
-      </div>
-    </div>
-
-    <div id="mt5-pos">
-
-    <section class="mt5sect"><h2>Open positions <span class="num" id="mt5poscount"></span></h2>
-      <div class="wrap" id="mt5positions"></div></section>
-    </div>
-
-    <div id="mt5-ord" hidden>
-      <section class="mt5sect"><h2>Pending orders <span class="num" id="mt5ordcount"></span></h2>
-        <div class="wrap" id="mt5orders"></div></section>
     </div>
 
     <div id="mt5-hist" hidden>
@@ -1247,6 +1255,11 @@ function renderMt5(d) {
   // connected and reading fine: the button is only clutter now
   document.getElementById('mt5conf').hidden = true;
 
+  if (!chartsPrefetched) {                 // learn magic -> EA name once, quietly,
+    chartsPrefetched = true;               // so the By column can name the EA
+    loadEas(true).then(() => loadCharts(true)).catch(() => {});
+  }
+
   const pos = d.positions || [];
   document.getElementById('mt5poscount').textContent = pos.length ? `(${pos.length})` : '';
   setHtml('mt5positions', pos.length ? `<table class="mt5">
@@ -1284,14 +1297,14 @@ function renderMt5(d) {
    Realised results, i.e. closed deals. Deliberately a separate request from the
    live stream: it changes rarely, so it is fetched on demand and cached agent
    side rather than pushed every second. */
-let SUBTAB = oneOf(urlParams.get('sub'), ['pos', 'ord', 'hist'],
-                  localStorage.getItem('fxea_subtab') || 'pos');   // 'eas' migrates to 'pos'
+let SUBTAB = oneOf(urlParams.get('sub'), ['pos', 'ord', 'hist', 'eas'],
+                  localStorage.getItem('fxea_subtab') || 'pos');
 let histTimer = 0;
 const HIST_PAGE = 50;      // closed trades rendered at a time
 let histVisible = HIST_PAGE;
 let HIST = null;
 
-const SUBS = ['pos', 'ord', 'hist'];          // account views; the EA panel is always on
+const SUBS = ['pos', 'ord', 'hist', 'eas'];    // account views, then EA control
 function showSub(name) {
   SUBTAB = SUBS.includes(name) ? name : 'pos';
   localStorage.setItem('fxea_subtab', SUBTAB);
@@ -1302,6 +1315,7 @@ function showSub(name) {
     btn.setAttribute('aria-pressed', String(s === SUBTAB));
   }
   if (SUBTAB === 'hist') loadHistory();
+  if (SUBTAB === 'eas') loadEas().then(loadCharts);
 
 }
 
@@ -1380,7 +1394,7 @@ histTimer = setInterval(loadHistory, 60000);   // no-op unless the History sub-t
    made. Built from the two endpoints already in use, so nothing new is needed
    on the agent - and this is the surface the management actions will attach to. */
 async function loadEas(quiet) {
-  if (TAB !== 'mt5' || !MT5?.url) return;
+  if (TAB !== 'mt5' || (!quiet && SUBTAB !== 'eas') || !MT5?.url) return;
   const stats = document.getElementById('easstats');
   const auth = { credentials: 'include', headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {} };
   const tz = -new Date().getTimezoneOffset();
@@ -1712,7 +1726,7 @@ document.getElementById('ea-save').onclick = async () => {
    comments do not reliably match, so charts are listed separately rather than
    guessed onto the per-EA rows. */
 async function loadCharts(quiet) {
-  if (TAB !== 'mt5' || !MT5?.url) return;
+  if (TAB !== 'mt5' || (!quiet && SUBTAB !== 'eas') || !MT5?.url) return;
   if (!EA_ROWS.length) await loadEas();      // matching needs the per-EA rows
   const stats = document.getElementById('chartstats');
   let d;
@@ -1878,7 +1892,7 @@ function showTab(name) {
   document.getElementById('tab-mt5').setAttribute('aria-selected', String(!isEas));
   document.getElementById('tab-eas').setAttribute('aria-pressed', String(isEas));
   document.getElementById('tab-mt5').setAttribute('aria-pressed', String(!isEas));
-  if (!isEas) { showSub(SUBTAB); loadMt5(); loadEas().then(loadCharts); }
+  if (!isEas) { showSub(SUBTAB); loadMt5(); }
 }
 document.getElementById('tab-eas').onclick = () => showTab('eas');
 document.getElementById('tab-mt5').onclick = () => showTab('mt5');
