@@ -7,7 +7,7 @@
 #
 # What it does:
 #   * downloads this repo to C:\fxea-radar (keeping any existing .env.mt5)
-#   * ensures Python 3.12, creates a venv, installs the MetaTrader5 package
+#   * ensures Python 3.12, creates a venv, installs MetaTrader5 and telethon
 #   * generates an access token
 #   * registers a scheduled task: starts at boot, self-updates on every start
 #   * starts the agent now, bound to 127.0.0.1
@@ -105,7 +105,9 @@ Say 'installing MetaTrader5 package'
 # numpy pinned to 1.26.4: numpy 2.x is built for the x86-64-v2 CPU baseline and
 # raises "your machine doesn't support (X86_V2)" on older VPS CPUs, which breaks
 # MetaTrader5 too since it imports numpy.
-& cmd /c "`"$py`" -m pip install `"numpy==1.26.4`" MetaTrader5 > `"$pipLog`" 2>&1"
+# telethon as well: the agent installs EA files straight from the channel, and
+# app/tg_login_vps.py needs it for the one-time login
+& cmd /c "`"$py`" -m pip install `"numpy==1.26.4`" MetaTrader5 `"telethon==1.36.0`" > `"$pipLog`" 2>&1"
 Get-Content $pipLog -ErrorAction SilentlyContinue |
     Where-Object { $_ -match 'ERROR|error:|Successfully|already satisfied|no matching distribution' } |
     ForEach-Object { Say $_ }
