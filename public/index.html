@@ -1660,19 +1660,25 @@ const TF_ORDER = [1, 5, 15, 30, 16385, 16388, 16408, 32769, 49153];
 async function openAttach() {
   const note = document.getElementById('attach-warn');
   note.textContent = 'loading what is installed...';
+  const tf = document.getElementById('attach-tf');
+  tf.innerHTML = TF_ORDER.map(v =>                      // needs no terminal
+    `<option value="${v}" ${v === 16385 ? 'selected' : ''}>${TF_NAMES[v]}</option>`).join('');
   attachDlg.showModal();
 
-  const auth = { credentials: 'include', headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {} };
-  let eas, syms;
-  try {
-    [eas, syms] = await Promise.all([
-      fetch(`${MT5.url}/api/experts`, auth).then(r => r.json()),
-      fetch(`${MT5.url}/api/symbols`, auth).then(r => r.json()),
-    ]);
-  } catch (e) {
-    note.textContent = 'agent unreachable - ' + e.message;
-    return;
-  }
+  // Independently: a symbol lookup that fails must still leave a usable EA list,
+  // and a symbol can always be typed by hand.
+  const ask = async path => {
+    try {
+      const r = await fetch(`${MT5.url}${path}`, {
+        credentials: 'include',
+        headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+      });
+      return await r.json();
+    } catch (e) {
+      return { ok: false, error: `${path}: ${e.message}` };
+    }
+  };
+  const [eas, syms] = await Promise.all([ask('/api/experts'), ask('/api/symbols')]);
 
   const eaSel = document.getElementById('attach-ea');
   eaSel.innerHTML = (eas.ok ? eas.experts : [])
@@ -1682,13 +1688,10 @@ async function openAttach() {
 
   fillSymbols(syms);
 
-  const tf = document.getElementById('attach-tf');
-  tf.innerHTML = TF_ORDER.map(v =>
-    `<option value="${v}" ${v === 16385 ? 'selected' : ''}>${TF_NAMES[v]}</option>`).join('');
-
   note.textContent = eas.ok
     ? `${eas.count} EA${eas.count === 1 ? '' : 's'} installed · type to search your broker symbols`
-    : (eas.error || syms.error || '');
+      + (syms.ok ? '' : ' · symbol search unavailable, type the exact name')
+    : `could not list EAs - ${eas.error || 'unknown error'}`;
   document.getElementById('attach-note').textContent = ACCOUNT
     ? `Attaches to ${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} · ${ACCOUNT.server}.`
       + ' The EA starts trading as soon as it loads.'
