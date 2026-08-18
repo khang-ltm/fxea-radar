@@ -1741,6 +1741,13 @@ const inputCell = i => {
 /* What is on the VPS, grouped the way it sits on disk. MT5's own samples are
    hidden: nobody here installed them, and forty rows of Examples buries the
    handful that matter. */
+/* MT5 ships Advisors and Examples, and this terminal came with a 28-EA Free
+   Robots folder. None of it was installed from here and all of it buries the few
+   that were, in the installed list and in the attach picker alike. */
+const HIDE_FOLDERS = /^(Advisors|Examples|Free Robots|Market)\b/i;
+const notMine = e => HIDE_FOLDERS.test(e.folder || '')
+  || /^Experts?FxeaManager$|^FxeaManager$/i.test(e.name);
+
 const TREE_KEY = 'fxea_tree_shut';
 const TREE_SHUT = new Set((() => {
   try { return JSON.parse(localStorage.getItem(TREE_KEY) || '[]'); } catch { return []; }
@@ -1751,9 +1758,7 @@ function renderInstalled(charts, paused) {
     ...charts.filter(c => c.expert).map(c => c.expert),
     ...paused.map(p => p.expert),
   ]);
-  const mine = INSTALLED.filter(e =>
-    !/^(Advisors|Examples)\b/i.test(e.folder || '')
-    && !/^Experts?FxeaManager$|^FxeaManager$/i.test(e.name));
+  const mine = INSTALLED.filter(e => !notMine(e));
 
   const byFolder = new Map();
   for (const e of mine) {
@@ -1894,7 +1899,7 @@ async function openAttach(pre) {
   const [eas, syms] = await Promise.all([ask('/api/experts'), ask('/api/symbols')]);
 
   const eaSel = document.getElementById('attach-ea');
-  eaSel.innerHTML = (eas.ok ? eas.experts : [])
+  eaSel.innerHTML = (eas.ok ? eas.experts.filter(e => !notMine(e)) : [])
     .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}">`
       + esc(e.folder ? `${e.folder}/${e.name}` : e.name) + '</option>').join('')
     || '<option value="">no .ex5 found</option>';
@@ -1909,11 +1914,12 @@ async function openAttach(pre) {
 
   fillSymbols(syms);
 
+  const listed = eas.ok ? eas.experts.filter(e => !notMine(e)).length : 0;
   note.textContent = PENDING_INSTALL
     ? `not on the VPS yet - ${PENDING_INSTALL.file} gets downloaded from`
       + ` ${PENDING_INSTALL.channel} and installed as part of attaching`
     : eas.ok
-      ? `${eas.count} EA${eas.count === 1 ? '' : 's'} installed · type to search your broker symbols`
+      ? `${listed} EA${listed === 1 ? '' : 's'} to choose from · type to search your broker symbols`
         + (syms.ok ? '' : ' · symbol search unavailable, type the exact name')
       : `could not list EAs - ${eas.error || 'unknown error'}`;
   document.getElementById('attach-note').textContent = ACCOUNT
