@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.17"
+#property version   "1.18"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.17", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.18", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -304,7 +304,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.17",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.18",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -767,7 +767,13 @@ void DoAttach(const string id, const string expert, const string path,
    string inputs = StagedInputs();
    string out[];
    int    written   = 0;
-   bool   in_expert = false, done = false;
+   bool   in_expert = false, in_inputs = false, done = false;
+
+   // Only name, path and the inputs are ours to change. Everything else the
+   // template carries - expertmode, window_num, whatever a future build adds -
+   // stays exactly as MT5 wrote it: an expert block missing fields is a block
+   // MT5 is entitled to ignore, and an EA that never loads is what that looks
+   // like from outside.
    for(int i = 0; i < ArraySize(lines); i++)
      {
       string low = lines[i];
@@ -779,38 +785,88 @@ void DoAttach(const string id, const string expert, const string path,
         {
          in_expert = true;
          done      = true;
-         ArrayResize(out, written + 4);
-         out[written++] = "<expert>";
-         out[written++] = "name=" + expert;
-         out[written++] = (path != "") ? "path=" + path : "window_num=0";
-         out[written++] = "<inputs>";
-         if(inputs != "")
-           {
-            string pairs[];
-            int np = StringSplit(inputs, (ushort)10, pairs);
-            for(int j = 0; j < np; j++)
-               if(StringFind(pairs[j], "=") > 0)
-                 {
-                  ArrayResize(out, written + 1);
-                  out[written++] = pairs[j];
-                 }
-           }
          ArrayResize(out, written + 1);
-         out[written++] = "</inputs>";
+         out[written++] = "<expert>";
          continue;
         }
+      if(low == "</expert>")
+        {
+         in_expert = false;
+         ArrayResize(out, written + 1);
+         out[written++] = "</expert>";
+         continue;
+        }
+
       if(in_expert)
         {
-         if(low == "</expert>")
+         if(low == "<inputs>")
            {
-            in_expert = false;
+            in_inputs = true;
             ArrayResize(out, written + 1);
-            out[written++] = "</expert>";
+            out[written++] = "<inputs>";
+            if(inputs != "")                       // a .set file, or nothing
+              {
+               string pairs[];
+               int np = StringSplit(inputs, (ushort)10, pairs);
+               for(int j = 0; j < np; j++)
+                  if(StringFind(pairs[j], "=") > 0)
+                    {
+                     ArrayResize(out, written + 1);
+                     out[written++] = pairs[j];
+                    }
+              }
+            continue;
            }
-         continue;                        // drop the manager own expert lines
+         if(low == "</inputs>")
+           {
+            in_inputs = false;
+            ArrayResize(out, written + 1);
+            out[written++] = "</inputs>";
+            continue;
+           }
+         if(in_inputs)
+            continue;                              // drop the manager settings
+
+         if(StringFind(low, "name=") == 0)
+           {
+            ArrayResize(out, written + 1);
+            out[written++] = "name=" + expert;
+            continue;
+           }
+         if(StringFind(low, "path=") == 0)
+           {
+            if(path != "")
+              {
+               ArrayResize(out, written + 1);
+               out[written++] = "path=" + path;
+              }
+            continue;
+           }
         }
+
       ArrayResize(out, written + 1);
       out[written++] = lines[i];
+     }
+
+   // the borrowed template has no path line when the manager sits in Experts
+   // root, so add one rather than leaving MT5 to guess where the EA lives
+   if(path != "")
+     {
+      bool has_path = false;
+      for(int i = 0; i < written; i++)
+         if(StringFind(out[i], "path=") == 0)
+            has_path = true;
+      if(!has_path)
+         for(int i = 0; i < written; i++)
+            if(StringFind(out[i], "name=") == 0)
+              {
+               ArrayResize(out, written + 1);
+               for(int j = written; j > i + 1; j--)
+                  out[j] = out[j - 1];
+               out[i + 1] = "path=" + path;
+               written++;
+               break;
+              }
      }
    if(!done)
      {
@@ -835,7 +891,10 @@ void DoAttach(const string id, const string expert, const string path,
       WriteResult(id, false, StringFormat("ChartApplyTemplate failed (error %d)", GetLastError()));
       return;
      }
-   ChartSetSymbolPeriod(target, symbol, (ENUM_TIMEFRAMES)period);
+   // Only if the template moved it: ChartSetSymbolPeriod reloads the EA, and an
+   // EA whose second OnInit fails is gone with nothing logged.
+   if(ChartSymbol(target) != symbol || ChartPeriod(target) != period)
+      ChartSetSymbolPeriod(target, symbol, (ENUM_TIMEFRAMES)period);
 
    for(int wait = 0; wait < 40; wait++)
      {
@@ -850,9 +909,20 @@ void DoAttach(const string id, const string expert, const string path,
       return;
      }
 
+   // an EA can load and then remove itself; the caller deserves to know
+   string loaded = ChartGetString(target, CHART_EXPERT_NAME);
+   Sleep(2000);
+   string still = ChartGetString(target, CHART_EXPERT_NAME);
    ForgetProbe(target);
-   WriteResult(id, true, StringFormat("attached %s to %s (chart %I64d)",
-                                      ChartGetString(target, CHART_EXPERT_NAME), symbol, target));
+   if(still == "")
+     {
+      WriteResult(id, false, StringFormat(
+                     "%s loaded on %s then removed itself - check the Experts log", loaded, symbol));
+      WriteStatus();
+      return;
+     }
+   WriteResult(id, true, StringFormat("attached %s to %s %s (chart %I64d)",
+                                      still, symbol, EnumToString((ENUM_TIMEFRAMES)period), target));
    WriteStatus();
   }
 
