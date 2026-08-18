@@ -1022,6 +1022,11 @@ const mt5Px = (v, digits) => {
   return Number.isFinite(digits) ? n.toFixed(digits) : String(parseFloat(n.toPrecision(12)));
 };
 const mt5Lots = v => (v == null ? '—' : Number(v).toFixed(2));
+const mt5Time = iso => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d) ? '—' : d.toLocaleString('sv-SE', { hour12: false }).slice(0, 16);
+};
 // MT5 stamps EA orders with a magic number; anything placed by hand carries 0.
 const mt5Magic = v => (!Number(v) ? '<span class="badge">manual</span>' : esc(String(v)));
 
@@ -1050,11 +1055,11 @@ async function loadMt5() {
 
   const stats = document.getElementById('mt5stats');
   const grid = document.getElementById('mt5grid');
-  // shown by default; hidden again only once a read actually succeeds
-  document.getElementById('mt5conf').hidden = false;
+  const showConnect = () => { document.getElementById('mt5conf').hidden = false; };
   if (!MT5?.url) {
     stats.textContent = 'not connected — press Connect, or open the setup link from install_public.ps1';
     grid.hidden = true;
+    showConnect();
     return;
   }
 
@@ -1069,7 +1074,7 @@ async function loadMt5() {
     if (r.status === 401) {
       stats.textContent = MT5.token ? 'token rejected by the agent'
         : 'this device is not authorised yet — press Connect and paste the token once';
-      grid.hidden = true; mt5Fail(); return;
+      grid.hidden = true; mt5Fail(); showConnect(); return;
     }
     // A web page instead of JSON almost always means the dashboard URL was pasted
     // where the agent URL belongs - say that instead of a parser error.
@@ -1078,6 +1083,7 @@ async function loadMt5() {
       stats.textContent = `that URL returned a web page, not the agent (HTTP ${r.status}). `
         + 'Press Connect and use the agent address, e.g. https://mt5.<your-domain>';
       grid.hidden = true;
+      showConnect();
       return;
     }
     d = await r.json();
@@ -1086,18 +1092,27 @@ async function loadMt5() {
     const wait = Math.round((mt5Backoff.until - Date.now()) / 1000);
     stats.textContent = `agent unreachable — ${e.message} (retrying in ${wait}s)`;
     grid.hidden = true;
+    showConnect();
     return;
   }
-  if (!d.ok) { stats.textContent = 'agent: ' + (d.error || 'unknown error'); grid.hidden = true; mt5Fail(); return; }
+  if (!d.ok) {
+    stats.textContent = 'agent: ' + (d.error || 'unknown error');
+    grid.hidden = true; mt5Fail(); showConnect(); return;
+  }
   mt5Ok();
   renderMt5(d);
 }
 
 /* Writing innerHTML on every frame flickered and lost text selection, so each
    block is only touched when its markup actually differs. */
+function stampTimezone() {
+  const z = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+  for (const el of document.querySelectorAll('[data-tz]:empty')) el.textContent = ` (${z})`;
+}
+
 function setHtml(id, html) {
   const el = document.getElementById(id);
-  if (el && el.innerHTML !== html) el.innerHTML = html;
+  if (el && el.innerHTML !== html) { el.innerHTML = html; stampTimezone(); }
 }
 
 function renderMt5(d) {
@@ -1130,7 +1145,8 @@ function renderMt5(d) {
   document.getElementById('mt5poscount').textContent = pos.length ? `(${pos.length})` : '';
   setHtml('mt5positions', pos.length ? `<table class="mt5">
     <thead><tr><th>Symbol</th><th>Side</th><th class="n">Lots</th><th class="n">Entry</th><th class="n">Now</th>
-      <th class="n">SL</th><th class="n">TP</th><th class="n">P&amp;L</th><th class="n">Magic</th><th>Comment</th></tr></thead>
+      <th class="n">SL</th><th class="n">TP</th><th class="n">P&amp;L</th><th class="n">Magic</th>
+      <th>Comment</th><th>Opened<span data-tz></span></th></tr></thead>
     <tbody>${pos.map(p => `<tr>
       <td>${esc(p.symbol)}</td>
       <td><span class="badge ${p.type === 'buy' ? 'badge--pass' : 'badge--loss'}">${esc(p.type)}</span></td>
@@ -1138,7 +1154,8 @@ function renderMt5(d) {
       <td class="n">${mt5Px(p.price_open, p.digits)}</td><td class="n">${mt5Px(p.price_current, p.digits)}</td>
       <td class="n">${mt5Px(p.sl, p.digits)}</td><td class="n">${mt5Px(p.tp, p.digits)}</td>
       <td class="n ${mt5Cls(p.profit)}">${mt5Money(p.profit, '')}</td>
-      <td class="n">${mt5Magic(p.magic)}</td><td>${esc(p.comment || '')}</td></tr>`).join('')}</tbody></table>`
+      <td class="n">${mt5Magic(p.magic)}</td><td>${esc(p.comment || '')}</td>
+      <td class="mono">${esc(mt5Time(p.opened_at))}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No open positions.</div>');
 
   // magic 0 is a hand-placed trade, not an EA - keep the two apart
@@ -1167,12 +1184,12 @@ function renderMt5(d) {
   document.getElementById('mt5ordcount').textContent = ords.length ? `(${ords.length})` : '';
   setHtml('mt5orders', ords.length ? `<table class="mt5">
     <thead><tr><th>Symbol</th><th>Type</th><th class="n">Lots</th><th class="n">Price</th><th class="n">SL</th>
-      <th class="n">TP</th><th class="n">Magic</th><th>Comment</th><th>Placed</th></tr></thead>
+      <th class="n">TP</th><th class="n">Magic</th><th>Comment</th><th>Placed<span data-tz></span></th></tr></thead>
     <tbody>${ords.map(o => `<tr><td>${esc(o.symbol)}</td><td>${esc(o.type)}</td><td class="n">${mt5Lots(o.volume)}</td>
       <td class="n">${mt5Px(o.price_open, o.digits)}</td><td class="n">${mt5Px(o.sl, o.digits)}</td>
       <td class="n">${mt5Px(o.tp, o.digits)}</td><td class="n">${mt5Magic(o.magic)}</td>
       <td>${esc(o.comment || '')}</td>
-      <td>${esc((o.placed_at || '').slice(0, 16).replace('T', ' '))}</td></tr>`).join('')}</tbody></table>`
+      <td class="mono">${esc(mt5Time(o.placed_at))}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No pending orders.</div>');
 }
 
@@ -1243,10 +1260,10 @@ function renderHistory(d) {
   document.getElementById('histclosedcount').textContent =
     all.length ? `(${closed.length} of ${all.length})` : '';
   setHtml('histclosed', closed.length ? `<table class="mt5">
-    <thead><tr><th>Closed</th><th>Symbol</th><th>Side</th><th class="n">Lots</th>
+    <thead><tr><th>Closed<span data-tz></span></th><th>Symbol</th><th>Side</th><th class="n">Lots</th>
       <th class="n">Net</th><th class="n">Magic</th><th>Comment</th></tr></thead>
     <tbody>${closed.map(c => `<tr>
-      <td class="mono">${esc((c.closed_at || '').slice(0, 16).replace('T', ' '))}</td>
+      <td class="mono">${esc(mt5Time(c.closed_at))}</td>
       <td>${esc(c.symbol)}</td>
       <td><span class="badge ${c.type === 'buy' ? 'badge--pass' : 'badge--loss'}">${esc(c.type)}</span></td>
       <td class="n">${mt5Lots(c.volume)}</td>
