@@ -1581,13 +1581,14 @@ const inputCell = i => {
 const eaDlg = document.getElementById('eadlg');
 let EA_EDIT = null;      // { chart, expert, inputs: [{k, v}], held }
 
-/* Reloading an EA that is in a trade loses the state it manages that trade
-   with, so settings are read-only until it is flat. The manager refuses this
-   too - this is the half that explains why. */
+/* Reloading an EA that is in a position loses the state it manages it with, so
+   settings are read-only until it is flat. Pending orders do not block: they
+   hold no state, they just sit at a price the old settings chose - worth
+   saying out loud, not worth refusing over. */
 function heldBy(chart) {
   const r = sumRows(matchMagic(chart, EA_ROWS, new Set(
     CHARTS.map(c => Number(c.magic)).filter(m => m && m !== Number(chart.magic)))).rows);
-  return r ? (r.open || 0) + (r.pending || 0) : 0;
+  return { open: r ? r.open || 0 : 0, pending: r ? r.pending || 0 : 0 };
 }
 
 /* InpLotsFixed -> "Lots Fixed", inp_RiskPercent -> "Risk Percent" */
@@ -1605,7 +1606,7 @@ const headingText = k => String(k).replace(/^[>#*=~\s-]+|[:=\s]+$/g, '')
 function openEaSettings(chartId) {
   const c = CHARTS.find(x => String(x.chart) === String(chartId));
   if (!c) return;
-  EA_EDIT = { chart: c.chart, expert: c.expert, held: heldBy(c),
+  EA_EDIT = { chart: c.chart, expert: c.expert, ...heldBy(c),
               inputs: (c.inputs || []).map(i => ({ ...i })) };
 
   document.getElementById('ea-title').textContent = shortEa(c.expert);
@@ -1618,7 +1619,7 @@ function openEaSettings(chartId) {
     return `<div class="setrow${long ? ' text' : ''}" data-row="${n}">
       <label for="ea-in-${n}">${esc(prettyKey(i.k))}<small>${esc(i.k)}</small></label>
       <input id="ea-in-${n}" data-idx="${n}" value="${esc(i.v)}" spellcheck="false"
-        ${EA_EDIT.held ? 'readonly' : ''}></div>`;
+        ${EA_EDIT.open ? 'readonly' : ''}></div>`;
   }).join('');
 
   for (const el of document.querySelectorAll('#ea-inputs input')) {
@@ -1645,14 +1646,17 @@ function eaChanges() {
 function refreshEaButtons() {
   const n = Object.keys(eaChanges()).length;
   const save = document.getElementById('ea-save');
-  const held = EA_EDIT?.held || 0;
-  save.disabled = held > 0 || n === 0;
+  const open = EA_EDIT?.open || 0, pending = EA_EDIT?.pending || 0;
+  save.disabled = open > 0 || n === 0;
   save.textContent = n ? `Apply ${n} change${n === 1 ? '' : 's'}` : 'Apply';
   document.getElementById('ea-reset').hidden = n === 0;
-  document.getElementById('ea-note').textContent = held
-    ? `${held} open trade${held === 1 ? '' : 's'} on this EA - settings are read-only`
+  document.getElementById('ea-note').textContent = open
+    ? `${open} open position${open === 1 ? '' : 's'} on this EA - settings are read-only`
       + ' until it is flat, because reloading it loses the state it manages them with.'
-    : 'Applying reloads the EA: open trades stay, its memory of them does not.';
+    : pending
+      ? `Applying reloads the EA. Its ${pending} pending order${pending === 1 ? '' : 's'} stay`
+        + ' at the price the old settings chose - cancel them in MT5 if that is wrong.'
+      : 'Applying reloads the EA: open trades stay, its memory of them does not.';
 }
 
 document.getElementById('ea-close').onclick = () => eaDlg.close();
@@ -1670,7 +1674,7 @@ document.getElementById('ea-save').onclick = async () => {
 
   const note = document.getElementById('ea-note');
   const save = document.getElementById('ea-save');
-  if (EA_EDIT.held) return;              // belt and braces: the button is disabled
+  if (EA_EDIT.open) return;              // belt and braces: the button is disabled
   save.disabled = true;
   note.textContent = 'applying...';
   // no force from here: if the EA opened a trade since the dialog was drawn,

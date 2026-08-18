@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.13"
+#property version   "1.14"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -54,7 +54,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.13", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.14", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -487,6 +487,8 @@ void DoRun(const string id, const string key)
 //+------------------------------------------------------------------+
 int CountOpenFor(const long magic)
   {
+   // positions only: a pending order carries no EA state, it just sits at its
+   // price, so it is a warning on the page rather than a reason to refuse
    int n = 0;
    if(magic <= 0)
       return(0);
@@ -494,12 +496,6 @@ int CountOpenFor(const long magic)
      {
       ulong ticket = PositionGetTicket(i);
       if(ticket > 0 && PositionGetInteger(POSITION_MAGIC) == magic)
-         n++;
-     }
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
-     {
-      ulong ticket = OrderGetTicket(i);
-      if(ticket > 0 && OrderGetInteger(ORDER_MAGIC) == magic)
          n++;
      }
    return(n);
@@ -565,7 +561,7 @@ void DoSetInputs(const string id, const long chart, const bool force)
    if(held > 0 && !force)
      {
       WriteResult(id, false, StringFormat(
-                     "%s has %d open trade(s) on magic %I64d - reloading it drops its state. Confirm to apply anyway.",
+                     "%s has %d open position(s) on magic %I64d - reloading it drops the state it manages them with.",
                      expert, held, magic));
       return;
      }
