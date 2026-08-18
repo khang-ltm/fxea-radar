@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.19"
+#property version   "1.20"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.19", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.20", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -304,7 +304,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.19",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.20",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -802,24 +802,29 @@ void DoAttach(const string id, const string expert, const string path,
          if(low == "<inputs>")
            {
             in_inputs = true;
+            // An EMPTY <inputs></inputs> is not the same as no block at all: MT5
+            // reads it as "this expert has no settings", the EA comes up with
+            // nothing configured and drops off the chart seconds later. Every EA
+            // attached that way reported "magic not found" for the same reason.
+            if(inputs == "")
+               continue;                           // let the EA use its own defaults
             ArrayResize(out, written + 1);
             out[written++] = "<inputs>";
-            if(inputs != "")                       // a .set file, or nothing
-              {
-               string pairs[];
-               int np = StringSplit(inputs, (ushort)10, pairs);
-               for(int j = 0; j < np; j++)
-                  if(StringFind(pairs[j], "=") > 0)
-                    {
-                     ArrayResize(out, written + 1);
-                     out[written++] = pairs[j];
-                    }
-              }
+            string pairs[];
+            int np = StringSplit(inputs, (ushort)10, pairs);
+            for(int j = 0; j < np; j++)
+               if(StringFind(pairs[j], "=") > 0)
+                 {
+                  ArrayResize(out, written + 1);
+                  out[written++] = pairs[j];
+                 }
             continue;
            }
          if(low == "</inputs>")
            {
             in_inputs = false;
+            if(inputs == "")
+               continue;                           // the block was never opened
             ArrayResize(out, written + 1);
             out[written++] = "</inputs>";
             continue;
