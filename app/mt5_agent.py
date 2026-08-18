@@ -1098,7 +1098,9 @@ def _apply_update(sha: str) -> bool:
             shutil.rmtree(staged, ignore_errors=True)
         z.extractall(staged)
         src = staged / root
-        for folder in ("app", "public"):
+        # mql5/ matters too: the agent compiles FxeaManager itself, and it can
+        # only do that if the source arrives with the update
+        for folder in ("app", "public", "mql5"):
             if (src / folder).is_dir():
                 shutil.copytree(src / folder, config.ROOT / folder, dirs_exist_ok=True)
         shutil.rmtree(staged, ignore_errors=True)
@@ -1174,11 +1176,61 @@ def _ensure_watchdog() -> str:
     return f"could not register: {(made.stderr or made.stdout).strip()[:120]}"
 
 
+class _Tee:
+    """Write to the console and to data/agent.log at once.
+
+    The boot task starts the agent without redirecting output, so the only logs
+    on the VPS were stale files from install time - which made "why did the
+    self-update not run" unanswerable without watching a console nobody has.
+    """
+
+    def __init__(self, stream, path):
+        self._stream = stream
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists() and path.stat().st_size > 2_000_000:
+                path.replace(path.with_suffix(".log.1"))     # one rotation is plenty
+            self._file = open(path, "a", encoding="utf-8", buffering=1)
+        except OSError:
+            self._file = None
+
+    def write(self, text):
+        try:
+            self._stream.write(text)
+        except Exception:                                    # noqa: BLE001
+            pass
+        if self._file is not None:
+            try:
+                self._file.write(text)
+            except Exception:                                # noqa: BLE001
+                pass
+        return len(text)
+
+    def flush(self):
+        for target in (self._stream, self._file):
+            try:
+                target.flush()
+            except Exception:                                # noqa: BLE001
+                pass
+
+
+def _start_logging() -> pathlib.Path:
+    import sys
+
+    log = config.DATA_DIR / "agent.log"
+    sys.stdout = _Tee(sys.stdout, log)
+    sys.stderr = _Tee(sys.stderr, log)
+    print(f"--- agent starting {datetime.now(timezone.utc).isoformat()} ---", flush=True)
+    return log
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Read-only MT5 monitor")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8788)
     args = ap.parse_args()
+
+    log = _start_logging()
 
     token = (os.environ.get("MT5_TOKEN") or "").strip()
     host = args.host
@@ -1191,6 +1243,7 @@ def main() -> None:
     Handler.token = token
 
     print(f"MT5 monitor (READ-ONLY) on http://{host}:{args.port}")
+    print(f"  log: {log}")
     print(f"  auth: {'Bearer token required' if token else 'none (localhost only)'}")
     state = read_state()
     if state.get("ok"):
