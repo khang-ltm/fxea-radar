@@ -317,8 +317,10 @@ def run_once(run_no: int, port: int) -> None:
         check(r.status == 200 and "FX EA Radar" in html, "GET / serves dashboard")
         check("/api/posts" in html and 'id="grid"' in html, "dashboard wired to API")
         check('id="syncbox"' in html, "dashboard shows sync status")
-        check('id="sync"' not in html and "method: 'POST'" not in html,
-              "no manual sync control (auto-sync only)")
+        # the ban is on a manual CATALOG sync trigger, not on POST in general -
+        # unloading an EA legitimately posts to the agent
+        check('id="sync"' not in html and "'/api/sync'" not in html,
+              "no manual catalog sync control (auto-sync only)")
         check("prefers-reduced-motion" in html, "dashboard respects reduced motion")
         check("verdicts refreshed" in html or "verdicts not refreshed" in html,
               "dashboard reports verdict-index freshness")

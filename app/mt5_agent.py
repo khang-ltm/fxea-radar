@@ -23,6 +23,7 @@ import argparse
 import hashlib
 import json
 import os
+import pathlib
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -411,6 +412,101 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
     return data
 
 
+# --- manager EA channel -----------------------------------------------------
+# FxeaManager.mq5 sits on a spare chart and exchanges files with us inside the
+# terminal's MQL5\Files sandbox. Same machine, no network, no token in MQL5.
+MANAGER_CMD = "fxea_cmd.txt"
+MANAGER_RESULT = "fxea_result.txt"
+MANAGER_STATUS = "fxea_status.json"
+MANAGER_TIMEOUT = 8            # seconds to wait for the EA to answer
+_manager_seq = [0]
+
+
+def _mql5_files_dir():
+    """The terminal's own Files folder; the EA cannot read anywhere else."""
+    mt5 = _connect()
+    if mt5 is None:
+        return None
+    term = mt5.terminal_info()
+    data_path = getattr(term, "data_path", "") if term else ""
+    if not data_path:
+        return None
+    d = pathlib.Path(data_path) / "MQL5" / "Files"
+    return d if d.is_dir() else None
+
+
+def read_charts() -> dict:
+    """Whatever FxeaManager last wrote. Absent file means it is not attached."""
+    d = _mql5_files_dir()
+    if d is None:
+        return {"ok": False, "error": _init_error or "terminal not readable"}
+    f = d / MANAGER_STATUS
+    if not f.exists():
+        return {"ok": False, "attached": False,
+                "error": "FxeaManager is not attached to a chart (no status file yet)"}
+    try:
+        data = json.loads(f.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "attached": False, "error": f"unreadable status file: {exc}"}
+    age = time.time() - f.stat().st_mtime
+    data["ok"] = True
+    data["attached"] = age < 60          # the EA rewrites it every few seconds
+    data["age_seconds"] = round(age, 1)
+    return data
+
+
+def manager_command(action: str, **fields) -> dict:
+    """Drop a command file, wait for the EA to answer, return its verdict."""
+    d = _mql5_files_dir()
+    if d is None:
+        return {"ok": False, "error": _init_error or "terminal not readable"}
+
+    _manager_seq[0] += 1
+    cmd_id = f"{int(time.time())}-{_manager_seq[0]}"
+    lines_out = [f"id={cmd_id}", f"action={action}"]
+    lines_out += [f"{k}={v}" for k, v in fields.items() if v not in (None, "")]
+
+    result = d / MANAGER_RESULT
+    if result.exists():
+        result.unlink(missing_ok=True)          # ignore a stale answer
+    (d / MANAGER_CMD).write_text(chr(10).join(lines_out) + chr(10),
+                                 encoding="ascii", errors="replace")
+
+    deadline = time.time() + MANAGER_TIMEOUT
+    while time.time() < deadline:
+        if result.exists():
+            try:
+                body = result.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                time.sleep(0.2)
+                continue
+            got = dict(
+                line.split("=", 1) for line in body.splitlines() if "=" in line
+            )
+            if got.get("id") == cmd_id:
+                out = {"ok": got.get("ok") == "1", "message": got.get("message", ""),
+                       "id": cmd_id, "action": action}
+                _audit(out, fields)
+                return out
+        time.sleep(0.2)
+
+    out = {"ok": False, "error": "FxeaManager did not answer in time - is it attached?",
+           "id": cmd_id, "action": action}
+    _audit(out, fields)
+    return out
+
+
+def _audit(result: dict, fields: dict) -> None:
+    """Every command is recorded: this is the only path that changes anything."""
+    try:
+        line = json.dumps({"at": datetime.now(timezone.utc).isoformat(),
+                           **result, "fields": fields}, ensure_ascii=False)
+        with open(config.DATA_DIR / "manager.log", "a", encoding="utf-8") as fh:
+            fh.write(line + chr(10))
+    except OSError:
+        pass
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "fxea-mt5-agent"
     token = ""
@@ -530,6 +626,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._stream()
             return
+        if path == "/api/charts":
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            self._json(read_charts())
+            return
         if path == "/api/history":
             if not self._authorized():
                 self._json({"ok": False, "error": "unauthorized"}, 401)
@@ -569,8 +671,36 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": False, "error": "not found"}, 404)
 
     def do_POST(self):  # noqa: N802
-        # Phase 1 is a monitor. Nothing here can place, modify or close a trade.
-        self._json({"ok": False, "error": "this agent is read-only; no commands are accepted"}, 405)
+        """Manager commands only. There is still no path here that can place,
+        modify or close a TRADE - unloading an EA leaves its positions open."""
+        if urlparse(self.path).path != "/api/manager":
+            self._json({"ok": False, "error": "no trade endpoints exist on this agent"}, 405)
+            return
+        if not self._authorized():
+            self._json({"ok": False, "error": "unauthorized"}, 401)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            self._json({"ok": False, "error": "bad JSON body"}, 400)
+            return
+
+        action = str(body.get("action") or "")
+        if action not in ("status", "unload", "pause", "resume"):
+            self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
+            return
+        if action == "unload" and not body.get("confirm"):
+            self._json({"ok": False, "error": "unload requires confirm: true"}, 400)
+            return
+
+        self._json(manager_command(
+            action,
+            chart=body.get("chart"),
+            symbol=body.get("symbol"),
+            expert=body.get("expert"),
+            magic=body.get("magic"),
+        ))
 
 
 UPDATE_URL = os.environ.get(

@@ -467,6 +467,10 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
         </div>
       </section>
       <section class="mt5sect"><div class="wrap" id="eastable"></div></section>
+      <section class="mt5sect">
+        <h2>Charts in the terminal <span class="num" id="chartstats"></span></h2>
+        <div class="wrap" id="chartstable"></div>
+      </section>
     </div>
 
     <div id="mt5-hist" hidden>
@@ -1230,7 +1234,7 @@ function showSub(name) {
     btn.setAttribute('aria-pressed', String(s === SUBTAB));
   }
   if (SUBTAB === 'hist') loadHistory();
-  if (SUBTAB === 'eas') loadEas();
+  if (SUBTAB === 'eas') { loadEas(); loadCharts(); }
 }
 
 async function loadHistory() {
@@ -1384,7 +1388,79 @@ async function loadEas() {
     : '<div class="empty">No EA activity in the last 30 days.</div>');
 }
 
-document.getElementById('sub-eas') && setInterval(loadEas, 30000);   // only runs while the tab is open
+setInterval(() => { loadEas(); loadCharts(); }, 30000);   // both no-op unless the EAs tab is open
+
+/* ── charts / unload ───────────────────────────────────────────────────────
+   FxeaManager.mq5 reports which EA sits on which chart and can close one, which
+   is the only way to stop a compiled EA from outside. Chart names and trade
+   comments do not reliably match, so charts are listed separately rather than
+   guessed onto the per-EA rows. */
+async function loadCharts() {
+  if (TAB !== 'mt5' || SUBTAB !== 'eas' || !MT5?.url) return;
+  const stats = document.getElementById('chartstats');
+  let d;
+  try {
+    d = await (await fetch(`${MT5.url}/api/charts`, {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    })).json();
+  } catch (e) {
+    stats.textContent = '(agent unreachable)';
+    return;
+  }
+  if (!d.ok) {
+    stats.textContent = '';
+    setHtml('chartstable', `<div class="empty">${esc(d.error || 'manager EA not reporting')}<br>
+      <span class="hint">Attach FxeaManager.mq5 to a spare chart to control EAs from here.</span></div>`);
+    return;
+  }
+
+  const charts = (d.charts || []).filter(c => !c.is_manager);
+  stats.textContent = `(${charts.length}) · manager ${d.attached ? 'attached' : 'stale'}`;
+  setHtml('chartstable', charts.length ? `<table class="mt5">
+    <thead><tr><th class="n">Chart</th><th>Symbol</th><th class="n">TF</th><th>Expert</th>
+      <th style="text-align:right">Action</th></tr></thead>
+    <tbody>${charts.map(c => `<tr>
+      <td class="n">${esc(String(c.chart))}</td>
+      <td>${esc(c.symbol)}</td>
+      <td class="n">${esc(String(c.period))}</td>
+      <td>${esc(c.expert || '—')}</td>
+      <td style="text-align:right">${c.expert
+        ? `<button class="chip" data-unload="${esc(String(c.chart))}"
+             data-name="${esc(c.expert)} on ${esc(c.symbol)}">Unload</button>`
+        : '<span class="shot-none">no EA</span>'}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">No other charts open.</div>');
+
+  for (const b of document.querySelectorAll('[data-unload]')) {
+    b.onclick = () => unloadChart(b.dataset.unload, b.dataset.name);
+  }
+}
+
+async function unloadChart(chart, label) {
+  // unloading stops the EA; it does NOT close whatever it already has open
+  if (!confirm(`Unload ${label}?
+
+This closes its chart, which stops the EA.
+`
+    + 'Any positions or pending orders it already placed stay open.')) return;
+  try {
+    const r = await fetch(`${MT5.url}/api/manager`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {}),
+      },
+      body: JSON.stringify({ action: 'unload', chart: Number(chart), confirm: true }),
+    });
+    const d = await r.json();
+    alert(d.ok ? `Done: ${d.message}` : `Failed: ${d.error || d.message}`);
+  } catch (e) {
+    alert('Request failed: ' + e.message);
+  }
+  loadCharts();
+  loadEas();
+}
 
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 const TAB_KEY = 'fxea_tab';
