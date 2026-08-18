@@ -1751,9 +1751,9 @@ async function openAttach(pre) {
   tf.innerHTML = TF_ORDER.map(v =>                      // needs no terminal
     `<option value="${v}" ${v === 16385 ? 'selected' : ''}>${TF_NAMES[v]}</option>`).join('');
   PENDING_INSTALL = pre?.install || null;
-  document.getElementById('attach-go').textContent = PENDING_INSTALL ? 'Install' : 'Attach';
+  document.getElementById('attach-go').textContent = 'Attach';
   document.getElementById('attach-title').textContent = PENDING_INSTALL
-    ? `Install ${PENDING_INSTALL.name}` : 'Attach an EA to a chart';
+    ? `Attach ${PENDING_INSTALL.name}` : 'Attach an EA to a chart';
   if (pre?.period && TF_NAMES[pre.period]) tf.value = String(pre.period);
   document.getElementById('attach-sym').value = pre?.symbol || '';
   attachDlg.showModal();
@@ -1778,13 +1778,20 @@ async function openAttach(pre) {
     .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}">`
       + esc(e.folder ? `${e.folder}/${e.name}` : e.name) + '</option>').join('')
     || '<option value="">no .ex5 found</option>';
+  if (PENDING_INSTALL) {
+    eaSel.innerHTML = `<option value="">${esc(PENDING_INSTALL.name)} - installs when you attach</option>`;
+    eaSel.disabled = true;
+  } else {
+    eaSel.disabled = false;
+  }
   if (pre?.path) eaSel.value = pre.path;               // came from a catalog row
   if (pre?.symbol) symbolSearch(pre.symbol);
 
   fillSymbols(syms);
 
   note.textContent = PENDING_INSTALL
-    ? `${PENDING_INSTALL.file} will be downloaded from ${PENDING_INSTALL.channel} and installed on the VPS`
+    ? `not on the VPS yet - ${PENDING_INSTALL.file} gets downloaded from`
+      + ` ${PENDING_INSTALL.channel} and installed as part of attaching`
     : eas.ok
       ? `${eas.count} EA${eas.count === 1 ? '' : 's'} installed · type to search your broker symbols`
         + (syms.ok ? '' : ' · symbol search unavailable, type the exact name')
@@ -1801,66 +1808,77 @@ document.getElementById('attach-cancel').onclick = () => attachDlg.close();
 attachDlg.addEventListener('click', e => { if (e.target === attachDlg) attachDlg.close(); });
 
 document.getElementById('attach-go').onclick = async () => {
-  const warnBox = document.getElementById('attach-warn');
-  const goBtn = document.getElementById('attach-go');
-
-  // An EA that is not on the VPS has to arrive there first. Downloading is its
-  // own confirm: it fetches a stranger's archive and writes an executable.
-  if (PENDING_INSTALL) {
-    const pin = document.getElementById('attach-pin').value;
-    if (!pin) { warnBox.textContent = 'the PIN is required to install'; return; }
-    if (!confirm(`Download ${PENDING_INSTALL.file} from ${PENDING_INSTALL.channel}`
-        + ` and install it on the VPS?${String.fromCharCode(10, 10)}`
-        + 'It is compiled code from a public channel. Nothing attaches yet.')) return;
-
-    goBtn.disabled = true;
-    warnBox.textContent = 'downloading and unpacking...';
-    const r = await managerPost({ action: 'install', confirm: true, pin,
-                                  channel: PENDING_INSTALL.channel,
-                                  message_id: PENDING_INSTALL.message_id });
-    goBtn.disabled = false;
-    if (!r.ok) { warnBox.textContent = 'install failed: ' + (r.error || r.message); return; }
-
-    const eas = r.experts || [];
-    const sets = r.presets || [];
-    document.getElementById('attach-ea').innerHTML = eas
-      .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}">${esc(e.file)}</option>`)
-      .join('') || '<option value="">no .ex5 in that archive</option>';
-    warnBox.textContent = `installed ${eas.length} EA${eas.length === 1 ? '' : 's'}`
-      + (sets.length ? ` and ${sets.length} .set file${sets.length === 1 ? '' : 's'}` : '')
-      + (eas.length > 1 ? ' - pick which one to attach' : '');
-    PENDING_INSTALL = null;
-    installedAsked = false;
-    loadInstalled();                       // the row becomes a chart button
-    goBtn.textContent = 'Attach';
-    document.getElementById('attach-title').textContent = 'Attach an EA to a chart';
-    return;
-  }
-
-  const opt = document.getElementById('attach-ea').selectedOptions[0];
-  const expert = opt?.dataset.name || '';
-  const path = opt?.value || '';
+  const warn = document.getElementById('attach-warn');
+  const go = document.getElementById('attach-go');
+  const eaSel = document.getElementById('attach-ea');
   const symbol = document.getElementById('attach-sym').value.trim();
   const period = Number(document.getElementById('attach-tf').value);
   const pin = document.getElementById('attach-pin').value;
-  const warn = warnBox;
 
-  if (!expert || !symbol) { warn.textContent = 'pick an EA and a symbol'; return; }
-  if (!pin) { warn.textContent = 'the PIN is required to attach'; return; }
+  if (!symbol) { warn.textContent = 'pick a symbol'; return; }
+  if (!pin) { warn.textContent = 'the PIN is required'; return; }
+  if (!PENDING_INSTALL && !eaSel.selectedOptions[0]?.dataset.name) {
+    warn.textContent = 'pick an EA'; return;
+  }
 
-  const where = ACCOUNT ? `${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} (${ACCOUNT.server})` : 'this account';
-  if (!confirm(`Attach "${expert}" to ${symbol} ${TF_NAMES[period]} on ${where}?`
-      + String.fromCharCode(10, 10) + 'It starts trading as soon as it loads.')) return;
+  const where = ACCOUNT
+    ? `${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} (${ACCOUNT.server})` : 'this account';
+  const what = PENDING_INSTALL ? PENDING_INSTALL.name : eaSel.selectedOptions[0].dataset.name;
+  // one confirm for the whole thing: downloading a stranger's EA and starting it
+  // trading is a single decision, not two
+  const lines = [
+    `Attach "${what}" to ${symbol} ${TF_NAMES[period]} on ${where}?`, '',
+    ...(PENDING_INSTALL
+      ? [`It is not on the VPS yet: ${PENDING_INSTALL.file} will be downloaded from`,
+         `${PENDING_INSTALL.channel} and installed first.`, '']
+      : []),
+    'It starts trading as soon as it loads.',
+  ];
+  if (!confirm(lines.join(String.fromCharCode(10)))) return;
 
-  const go = goBtn;
   go.disabled = true;
-  warn.textContent = 'attaching...';
-  const r = await managerPost({ action: 'attach', confirm: true, pin, expert, path, symbol, period });
-  go.disabled = false;
-  warn.textContent = r.ok ? (r.message || 'attached') : ('failed: ' + (r.error || r.message));
-  if (r.ok) {
-    document.getElementById('attach-pin').value = '';
-    setTimeout(() => { attachDlg.close(); loadEas().then(loadCharts); }, 1200);
+  try {
+    if (PENDING_INSTALL) {
+      warn.textContent = 'downloading and unpacking...';
+      const r = await managerPost({ action: 'install', confirm: true, pin,
+                                    channel: PENDING_INSTALL.channel,
+                                    message_id: PENDING_INSTALL.message_id });
+      if (!r.ok) { warn.textContent = 'install failed: ' + (r.error || r.message); return; }
+
+      const found = r.experts || [];
+      const sets = r.presets || [];
+      eaSel.disabled = false;
+      eaSel.innerHTML = found
+        .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}">${esc(e.file)}</option>`)
+        .join('') || '<option value="">no .ex5 in that archive</option>';
+      PENDING_INSTALL = null;
+      installedAsked = false;
+      loadInstalled();                    // the catalog row becomes a chart button
+
+      if (found.length !== 1) {
+        // several EAs in one archive, or none: which one to run is not ours to guess
+        warn.textContent = found.length
+          ? `installed ${found.length} EAs${sets.length ? ` and ${sets.length} .set files` : ''}`
+            + ' - choose which one to attach, then press Attach again'
+          : 'that archive held no .ex5 - nothing attached';
+        return;
+      }
+      warn.textContent = `installed ${found[0].file}`
+        + (sets.length ? ` and ${sets.length} .set file${sets.length === 1 ? '' : 's'}` : '')
+        + ' - attaching...';
+    }
+
+    const opt = eaSel.selectedOptions[0];
+    warn.textContent = warn.textContent.endsWith('attaching...') ? warn.textContent : 'attaching...';
+    const r = await managerPost({ action: 'attach', confirm: true, pin,
+                                  expert: opt.dataset.name, path: opt.value, symbol, period });
+    warn.textContent = r.ok ? (r.message || 'attached') : ('failed: ' + (r.error || r.message));
+    if (r.ok) {
+      document.getElementById('attach-pin').value = '';
+      setTimeout(() => { attachDlg.close(); loadEas().then(loadCharts); }, 1200);
+    }
+  } finally {
+    go.disabled = false;
   }
 };
 
