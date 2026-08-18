@@ -141,6 +141,9 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .tree__folder > td { color: var(--color-muted-fg); font-size: 11px; letter-spacing: .05em;
    text-transform: uppercase; font-family: var(--font-head); padding-top: var(--space-4); }
 .tree__folder svg { vertical-align: -2px; margin-right: 4px; }
+.tree__folder .chip { text-transform: inherit; letter-spacing: inherit; font: inherit;
+   color: inherit; padding: 2px 6px; }
+.tree__folder .chip:hover { color: var(--color-foreground); }
 .tree__leaf { padding-left: var(--space-5); }
 .inputrow > td { background: var(--color-surface); padding: var(--space-3) var(--space-4); }
 .inputs { display: grid; gap: 2px var(--space-4); font-size: 12px;
@@ -418,6 +421,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div class="segmented" role="tablist" aria-label="View">
       <button class="btn" id="tab-eas" role="tab" aria-selected="true">EA catalog</button>
       <button class="btn" id="tab-mt5" role="tab" aria-selected="false">My MT5</button>
+      <button class="btn" id="tab-myea" role="tab" aria-selected="false">My EA</button>
     </div>
 
     <label class="search" id="search-box">
@@ -476,6 +480,44 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div class="more" id="more"></div>
   </div>
 
+  <div id="view-myea" hidden style="min-width: 0">
+    <section class="mt5bar">
+      <div class="mt5bar__head">
+        <span class="mt5bar__title">Expert Advisors</span>
+        <span class="mt5bar__stats" id="easstats">loading…</span>
+        <button class="btn" id="attach-open">Attach EA</button>
+      </div>
+    </section>
+
+    <!-- what is trading right now, and what is merely on the machine: different
+         questions, and the second one is a long list nobody needs while checking
+         the first -->
+    <div class="subtabs" role="tablist" aria-label="EA view">
+      <div class="segmented">
+        <button class="btn" id="easub-run" role="tab" aria-selected="true">Running</button>
+        <button class="btn" id="easub-list" role="tab" aria-selected="false">Installed</button>
+      </div>
+    </div>
+
+    <div id="myea-run">
+      <section class="mt5sect">
+        <h2>Running now <span class="num" id="chartstats"></span></h2>
+        <div class="wrap" id="chartstable"></div>
+      </section>
+      <section class="mt5sect" id="pausedwrap" hidden>
+        <h2>Paused</h2>
+        <div class="wrap" id="pausedtable"></div>
+      </section>
+    </div>
+
+    <div id="myea-list" hidden>
+      <section class="mt5sect">
+        <h2>Installed on the VPS <span class="num" id="instcount"></span></h2>
+        <div class="wrap" id="insttable"></div>
+      </section>
+    </div>
+  </div>
+
   <div id="view-mt5" hidden style="min-width: 0">
     <section class="mt5bar">
       <div class="mt5bar__head">
@@ -492,18 +534,13 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <div class="mt5bar__grid" id="mt5grid" hidden></div>
     </section>
 
-    <!-- Positions, Orders and History are three readings of one account. EA
-         control is the only view that changes anything, so it keeps its own
-         frame at the end of the row rather than sitting in with them. -->
+    <!-- Three readings of one account. Controlling EAs is its own tab. -->
 
     <div class="subtabs" role="tablist" aria-label="MT5 view">
       <div class="segmented">
         <button class="btn" id="sub-pos" role="tab" aria-selected="true">Positions</button>
         <button class="btn" id="sub-ord" role="tab" aria-selected="false">Orders</button>
         <button class="btn" id="sub-hist" role="tab" aria-selected="false">History</button>
-      </div>
-      <div class="segmented subtabs__control">
-        <button class="btn" id="sub-eas" role="tab" aria-selected="false">EA control</button>
       </div>
     </div>
 
@@ -516,28 +553,6 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div id="mt5-ord" hidden>
       <section class="mt5sect"><h2>Pending orders <span class="num" id="mt5ordcount"></span></h2>
         <div class="wrap" id="mt5orders"></div></section>
-    </div>
-
-    <div id="mt5-eas" hidden>
-      <section class="mt5bar">
-        <div class="mt5bar__head">
-          <span class="mt5bar__title">Expert Advisors</span>
-          <span class="mt5bar__stats" id="easstats">loading…</span>
-          <button class="btn" id="attach-open">Attach EA</button>
-        </div>
-      </section>
-      <section class="mt5sect">
-        <h2>Running now <span class="num" id="chartstats"></span></h2>
-        <div class="wrap" id="chartstable"></div>
-      </section>
-      <section class="mt5sect" id="pausedwrap" hidden>
-        <h2>Paused</h2>
-        <div class="wrap" id="pausedtable"></div>
-      </section>
-      <section class="mt5sect">
-        <h2>Installed on the VPS <span class="num" id="instcount"></span></h2>
-        <div class="wrap" id="insttable"></div>
-      </section>
     </div>
 
     <div id="mt5-hist" hidden>
@@ -673,6 +688,7 @@ const ICON = {
   chevron: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
   download: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 12l5 5 5-5"/><path d="M4 21h16"/></svg>',
   link: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7L11 7"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 1 0 11 18.7L13 17"/></svg>',
+  chevronDown: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
   folder: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   chart: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
@@ -1432,14 +1448,14 @@ function renderMt5(d) {
    Realised results, i.e. closed deals. Deliberately a separate request from the
    live stream: it changes rarely, so it is fetched on demand and cached agent
    side rather than pushed every second. */
-let SUBTAB = oneOf(urlParams.get('sub'), ['pos', 'ord', 'hist', 'eas'],
+let SUBTAB = oneOf(urlParams.get('sub'), ['pos', 'ord', 'hist'],
                   localStorage.getItem('fxea_subtab') || 'pos');
 let histTimer = 0;
 const HIST_PAGE = 50;      // closed trades rendered at a time
 let histVisible = HIST_PAGE;
 let HIST = null;
 
-const SUBS = ['pos', 'ord', 'hist', 'eas'];    // account views, then EA control
+const SUBS = ['pos', 'ord', 'hist'];           // three readings of the account
 function showSub(name) {
   SUBTAB = SUBS.includes(name) ? name : 'pos';
   localStorage.setItem('fxea_subtab', SUBTAB);
@@ -1450,7 +1466,6 @@ function showSub(name) {
     btn.setAttribute('aria-pressed', String(s === SUBTAB));
   }
   if (SUBTAB === 'hist') loadHistory();
-  if (SUBTAB === 'eas') loadEas().then(loadCharts);
 
 }
 
@@ -1529,7 +1544,7 @@ histTimer = setInterval(loadHistory, 60000);   // no-op unless the History sub-t
    made. Built from the two endpoints already in use, so nothing new is needed
    on the agent - and this is the surface the management actions will attach to. */
 async function loadEas(quiet) {
-  if (TAB !== 'mt5' || (!quiet && SUBTAB !== 'eas') || !MT5?.url) return;
+  if (!MT5?.url || (!quiet && TAB !== 'myea')) return;
   const stats = document.getElementById('easstats');
   const auth = { credentials: 'include', headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {} };
   const tz = -new Date().getTimezoneOffset();
@@ -1726,6 +1741,11 @@ const inputCell = i => {
 /* What is on the VPS, grouped the way it sits on disk. MT5's own samples are
    hidden: nobody here installed them, and forty rows of Examples buries the
    handful that matter. */
+const TREE_KEY = 'fxea_tree_shut';
+const TREE_SHUT = new Set((() => {
+  try { return JSON.parse(localStorage.getItem(TREE_KEY) || '[]'); } catch { return []; }
+})());
+
 function renderInstalled(charts, paused) {
   const running = new Set([
     ...charts.filter(c => c.expert).map(c => c.expert),
@@ -1753,9 +1773,16 @@ function renderInstalled(charts, paused) {
       <th style="text-align:right">Action</th></tr></thead>
     <tbody>${folders.map(folder => {
       const rows = byFolder.get(folder).slice().sort((a, b) => a.name.localeCompare(b.name));
-      return `<tr class="tree__folder"><td colspan="4">${ICON.folder}
-          ${esc(folder)} <span class="num">(${rows.length})</span></td></tr>`
-        + rows.map(e => {
+      const shut = TREE_SHUT.has(folder);
+      return `<tr class="tree__folder"><td colspan="4">
+          <button class="chip ghost" data-folder="${esc(folder)}"
+            aria-expanded="${!shut}">${shut ? ICON.chevron : ICON.chevronDown}
+            ${ICON.folder} ${esc(folder)}
+            <span class="num">(${rows.length}${
+              rows.filter(e => running.has(e.name)).length
+                ? `, ${rows.filter(e => running.has(e.name)).length} live` : ''})</span>
+          </button></td></tr>`
+        + (shut ? '' : rows.map(e => {
           const on = running.has(e.name);
           return `<tr>
             <td class="tree__leaf">${esc(e.name)}</td>
@@ -1766,12 +1793,20 @@ function renderInstalled(charts, paused) {
               ? '<span class="shot-none">pause it first</span>'
               : `<button class="chip ghost" data-remove="${esc(e.path)}"
                    data-name="${esc(e.name)}">Delete</button>`}</td></tr>`;
-        }).join('');
+        }).join(''));
     }).join('')}</tbody></table>`
     : '<div class="empty">Nothing installed from the catalog yet.</div>');
 
   for (const b of document.querySelectorAll('[data-remove]')) {
     b.onclick = () => removeInstalled(b.dataset.remove, b.dataset.name);
+  }
+  for (const b of document.querySelectorAll('[data-folder]')) {
+    b.onclick = () => {
+      const f = b.dataset.folder;
+      if (TREE_SHUT.has(f)) TREE_SHUT.delete(f); else TREE_SHUT.add(f);
+      localStorage.setItem(TREE_KEY, JSON.stringify([...TREE_SHUT]));
+      renderInstalled(charts, paused);
+    };
   }
 }
 
@@ -2099,7 +2134,7 @@ document.getElementById('ea-save').onclick = async () => {
    comments do not reliably match, so charts are listed separately rather than
    guessed onto the per-EA rows. */
 async function loadCharts(quiet) {
-  if (TAB !== 'mt5' || (!quiet && SUBTAB !== 'eas') || !MT5?.url) return;
+  if (!MT5?.url || (!quiet && TAB !== 'myea')) return;
   if (!EA_ROWS.length) await loadEas();      // matching needs the per-EA rows
   const stats = document.getElementById('chartstats');
   let d;
@@ -2262,30 +2297,49 @@ async function managerPost(body) {
 
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 const TAB_KEY = 'fxea_tab';
-let TAB = oneOf(urlParams.get('tab'), ['eas', 'mt5'], localStorage.getItem(TAB_KEY) || 'eas');
+let TAB = oneOf(urlParams.get('tab'), ['eas', 'mt5', 'myea'], localStorage.getItem(TAB_KEY) || 'eas');
+
+const TABS = ['eas', 'mt5', 'myea'];        // catalog | account | EA control
 
 function showTab(name) {
-  TAB = name;
-  localStorage.setItem(TAB_KEY, name);
-  const isEas = name === 'eas';
-  document.getElementById('view-eas').hidden = !isEas;
-  document.getElementById('view-mt5').hidden = isEas;
-  // Channel/sync footer and the EA staleness banner both describe the catalog,
-  // so they have no business on the MT5 tab.
-  document.getElementById('toolbar-eas').hidden = !isEas;
-  document.getElementById('foot').hidden = !isEas;
-  document.getElementById('search-box').hidden = !isEas;   // searches the catalog only
-  document.getElementById('sort').hidden = !isEas;
-  document.getElementById('syncbox').hidden = !isEas;      // catalog sync clock, not MT5's
+  TAB = TABS.includes(name) ? name : 'eas';
+  localStorage.setItem(TAB_KEY, TAB);
+  for (const t of TABS) {
+    document.getElementById('view-' + t).hidden = t !== TAB;
+    const btn = document.getElementById('tab-' + t);
+    btn.setAttribute('aria-selected', String(t === TAB));
+    btn.setAttribute('aria-pressed', String(t === TAB));
+  }
+
+  // the catalog's search, sort, filters and sync clock describe the catalog only
+  const isEas = TAB === 'eas';
+  for (const id of ['toolbar-eas', 'foot', 'search-box', 'sort', 'syncbox']) {
+    document.getElementById(id).hidden = !isEas;
+  }
   if (!isEas) document.getElementById('stale').hidden = true;
-  document.getElementById('tab-eas').setAttribute('aria-selected', String(isEas));
-  document.getElementById('tab-mt5').setAttribute('aria-selected', String(!isEas));
-  document.getElementById('tab-eas').setAttribute('aria-pressed', String(isEas));
-  document.getElementById('tab-mt5').setAttribute('aria-pressed', String(!isEas));
-  if (!isEas) { showSub(SUBTAB); loadMt5(); }
+
+  if (TAB === 'mt5') { showSub(SUBTAB); loadMt5(); }
+  if (TAB === 'myea') { showEaSub(EASUB); loadEas().then(loadCharts); }
 }
+
+const EASUBS = ['run', 'list'];
+let EASUB = oneOf(urlParams.get('easub'), EASUBS, localStorage.getItem('fxea_easub') || 'run');
+
+function showEaSub(name) {
+  EASUB = EASUBS.includes(name) ? name : 'run';
+  localStorage.setItem('fxea_easub', EASUB);
+  for (const v of EASUBS) {
+    document.getElementById('myea-' + v).hidden = v !== EASUB;
+    const btn = document.getElementById('easub-' + v);
+    btn.setAttribute('aria-selected', String(v === EASUB));
+    btn.setAttribute('aria-pressed', String(v === EASUB));
+  }
+}
+for (const v of EASUBS) document.getElementById('easub-' + v).onclick = () => showEaSub(v);
+
 document.getElementById('tab-eas').onclick = () => showTab('eas');
 document.getElementById('tab-mt5').onclick = () => showTab('mt5');
+document.getElementById('tab-myea').onclick = () => showTab('myea');
 showTab(TAB);
 
 /* ── real-time stream ──────────────────────────────────────────────────────
