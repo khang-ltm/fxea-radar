@@ -144,19 +144,19 @@ if ($SkipTask) {
     exit 0
 }
 
-# --- 7-Zip: the channel posts .rar, and Windows' own tar only reads rar4 -----
-# Installed silently, and skipped when it is already there. Without it an
-# install from the catalog fails on any rar5 archive, which is most of them.
-$sevenZip = 'C:\Program Files-Zipz.exe'
+# --- 7-Zip: the channel posts .rar, and Windows' own bsdtar reads rar4 only --
+# Installed silently, skipped when already present. Without it an install from
+# the catalog fails on any rar5 archive, which is most of them.
+$sevenZip = 'C:\Program Files\7-Zip\7z.exe'
 if (-not (Test-Path $sevenZip)) {
     Say 'installing 7-Zip (needed to unpack .rar posts)'
-    $exe = Join-Path $env:TEMP '7z-setup.exe'
+    $sevenSetup = Join-Path $env:TEMP '7z-setup.exe'
     try {
-        Invoke-WebRequest 'https://www.7-zip.org/a/7z2408-x64.exe' -OutFile $exe -UseBasicParsing
-        Start-Process -FilePath $exe -ArgumentList '/S' -Wait
-        Remove-Item $exe -Force -ErrorAction SilentlyContinue
+        Invoke-WebRequest 'https://www.7-zip.org/a/7z2408-x64.exe' -OutFile $sevenSetup -UseBasicParsing
+        Start-Process -FilePath $sevenSetup -ArgumentList '/S' -Wait
+        Remove-Item $sevenSetup -Force -ErrorAction SilentlyContinue
         if (Test-Path $sevenZip) { Say '7-Zip installed' 'Green' }
-        else { Say '7-Zip did not install - .rar archives will need extracting by hand' 'Yellow' }
+        else { Say '7-Zip did not install - .rar posts cannot be unpacked' 'Yellow' }
     } catch {
         Say "7-Zip download failed: $_" 'Yellow'
     }

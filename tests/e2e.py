@@ -369,6 +369,7 @@ def run_once(run_no: int, port: int) -> None:
               "scroll lock is released on close and on Esc")
         check_page_script(html)
         check_agent_names()
+        check_no_control_chars()
 
         status, tagged = http_json(f"http://127.0.0.1:{port}/api/posts?ea=0&group=0&kind=all&tag=has-ea-file")
         check(status == 200, "GET /api/posts?tag=… -> 200")
@@ -432,6 +433,23 @@ def check_agent_names() -> None:
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     unknown = sorted(n for n in called - known if not hasattr(builtins, n))
     check(not unknown, f"agent calls only functions that exist{'' if not unknown else ': missing ' + ', '.join(unknown)}")
+
+
+def check_no_control_chars() -> None:
+    """No stray control bytes in source files.
+
+    Writing patches through Python string literals has now put a backspace into a
+    regex and a BEL into a Windows path, both of which only showed up when a user
+    ran the result. A byte scan costs nothing and catches every repeat.
+    """
+    for rel in ("public/index.html", "app/mt5_agent.py", "app/installer.py",
+                "install_vps.ps1", "mql5/FxeaManager.mq5"):
+        f = ROOT / rel
+        if not f.exists():
+            continue
+        text = f.read_text(encoding="utf-8", errors="replace")
+        bad = sorted({hex(ord(c)) for c in text if ord(c) < 32 and c not in "\n\r\t"})
+        check(not bad, f"{rel} has no stray control bytes{'' if not bad else ' (found ' + ', '.join(bad) + ')'}")
 
 def main() -> int:
     ap = argparse.ArgumentParser()
