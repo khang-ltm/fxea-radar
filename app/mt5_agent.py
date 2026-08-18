@@ -943,12 +943,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "unauthorized"}, 401)
                 return
             from . import installer
-            tool = installer._extractor()
+            # .rar is the case that matters - 161 of the EA posts are rar, and
+            # Windows' own tar reads rar4 only - so report that tool by name
+            rar = installer._extractor(".rar")
+            other = installer._extractor(".zip")
             self._json({"ok": True, "telegram": installer.session_ready(),
-                        "extractor": tool is not None,
-                        # which tool matters: Windows' own tar reads rar4 but not
-                        # rar5, and most channel archives are rar
-                        "extractor_tool": pathlib.Path(tool[0]).name if tool else None,
+                        "extractor": rar is not None,
+                        "extractor_rar": pathlib.Path(rar[0]).name if rar else None,
+                        "extractor_zip": pathlib.Path(other[0]).name if other else None,
+                        "seven_zip": installer._seven_zip() is not None,
                         "pin": bool(AGENT_PIN), "channels": config.CHANNELS})
             return
         if path == "/api/health":
