@@ -475,10 +475,6 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
         <h2>Paused</h2>
         <div class="wrap" id="pausedtable"></div>
       </section>
-      <section class="mt5sect">
-        <h2>Exposure &amp; results <span class="num" id="easkicker"></span></h2>
-        <div class="wrap" id="eastable"></div>
-      </section>
     </div>
 
     <div id="mt5-hist" hidden>
@@ -523,6 +519,9 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 
 <script>
 'use strict';
+let mt5Stream = null;   // declared up here: functions below run before the
+let EA_ROWS = [];       // old declaration site was ever evaluated (TDZ)
+
 const PAGE = 60;                     // render in batches; hundreds of rows at once is not viable
 const urlParams = new URLSearchParams(location.search);
 const oneOf = (v, allowed, fallback) => (allowed.includes(v) ? v : fallback);
@@ -1242,7 +1241,7 @@ function showSub(name) {
     btn.setAttribute('aria-pressed', String(s === SUBTAB));
   }
   if (SUBTAB === 'hist') loadHistory();
-  if (SUBTAB === 'eas') { loadEas(); loadCharts(); }
+  if (SUBTAB === 'eas') loadEas().then(loadCharts);
 }
 
 async function loadHistory() {
@@ -1372,33 +1371,66 @@ async function loadEas() {
   const all = [...rows.values()].sort((a, b) => (b.realised + b.floating) - (a.realised + a.floating));
   // Only what is live: an EA with an open position or a pending order. Everything
   // that merely traded at some point in the window belongs in History, not here.
+  EA_ROWS = all;                                    // charts table matches against these
   const list = all.filter(r => r.open || r.pending);   // live only; History has the rest
-  document.getElementById('easkicker').textContent = `(${list.length} with money at risk)`;
-
-  setHtml('eastable', list.length ? `<table class="mt5">
-    <thead><tr><th class="n">Magic</th><th>Name</th><th>Symbols</th>
-      <th class="n">Open</th><th class="n">Lots</th><th class="n">Floating</th><th class="n">Pending</th>
-      <th class="n">Trades</th><th class="n">Win%</th><th class="n">Realised 30d</th>
-      <th>Last trade<span data-tz></span></th></tr></thead>
-    <tbody>${list.map(r => {
-      const rate = r.trades ? Math.round(100 * r.wins / r.trades) : null;
-      return `<tr>
-        <td class="n">${mt5Magic(r.magic)}</td>
-        <td>${esc(r.name || '—')}</td>
-        <td>${esc(r.symbols.slice(0, 3).join(', ') || '—')}</td>
-        <td class="n">${r.open || '—'}</td>
-        <td class="n">${r.lots ? r.lots.toFixed(2) : '—'}</td>
-        <td class="n ${mt5Cls(r.floating)}">${r.open ? mt5Money(r.floating, '') : '—'}</td>
-        <td class="n">${r.pending || '—'}</td>
-        <td class="n">${r.trades || '—'}</td>
-        <td class="n">${rate == null ? '—' : rate + '%'}</td>
-        <td class="n ${mt5Cls(r.realised)}">${r.trades ? mt5Money(r.realised, '') : '—'}</td>
-        <td class="mono">${esc(mt5Time(r.last))}</td></tr>`;
-    }).join('')}</tbody></table>`
-    : '<div class="empty">No EA is holding a position or order right now.</div>');
+  // no table of its own any more: these rows feed the Running now table
 }
 
-setInterval(() => { loadEas(); loadCharts(); }, 30000);   // both no-op unless the EAs tab is open
+/* ── matching a chart to its magic number ──────────────────────────────────
+   A chart reports the EA FILE name ("Quantum Bitcoin EA_3.2_fix@free_fx_pro")
+   while trades carry the EA COMMENT ("QB (Step: 1)"). Nothing links them
+   officially, so this matches on symbol plus shared words or an acronym, and
+   only when exactly one candidate survives. Anything ambiguous stays blank with
+   a Link button rather than showing another EA numbers. */
+const EAMAP_KEY = 'fxea_chart_magic';
+const eaMap = () => { try { return JSON.parse(localStorage.getItem(EAMAP_KEY) || '{}'); } catch { return {}; } };
+const eaMapSet = (chart, magic) => {
+  const m = eaMap();
+  if (magic === null) delete m[chart]; else m[chart] = magic;
+  localStorage.setItem(EAMAP_KEY, JSON.stringify(m));
+};
+
+const eaWords = t => String(t || '').toLowerCase()
+  .replace(/@\S+/g, ' ')                          // drop the @free_fx_pro tag
+  .replace(/[^a-z0-9]+/g, ' ')                     // _ and . are separators here
+  .replace(/\b(ea|mt4|mt5|version|final|fix|pro|robot|free|fx)\b/g, ' ')
+  .trim().split(/\s+/).filter(w => w.length > 1);
+
+const eaAcronym = name => eaWords(name).map(w => w[0]).join('');
+
+function matchMagic(chart, rows) {
+  const manual = eaMap()[chart.chart];
+  if (manual !== undefined) {
+    const hit = rows.filter(r => r.magic === manual);
+    return { rows: hit, how: 'manual' };
+  }
+
+  const words = eaWords(chart.expert);
+  const acro = eaAcronym(chart.expert);
+  const hits = rows.filter(r => {
+    if (!r.symbols.includes(chart.symbol)) return false;
+    const cw = eaWords(r.name);
+    if (!cw.length) return false;
+    const shared = cw.filter(w => words.includes(w)).length;
+    if (shared >= 2 || (shared === 1 && cw[0].length > 4)) return true;
+    // one EA usually runs several magics, one per strategy, and tags them with
+    // its initials: "Quantum Athena" -> QA[XAUUSD]5442[T2/S04], QQX[T5/S09].
+    return acro.length >= 2 && cw[0].length >= 2 && cw[0].startsWith(acro);
+  });
+  return { rows: hits, how: hits.length ? 'auto' : 'none' };
+}
+
+/* Several magics per chart is the normal case, so the row shows their sum. */
+function sumRows(list) {
+  if (!list.length) return null;
+  const t = { open: 0, floating: 0, trades: 0, wins: 0, realised: 0, last: '' };
+  for (const r of list) {
+    t.open += r.open; t.floating += r.floating; t.trades += r.trades;
+    t.wins += r.wins; t.realised += r.realised;
+    if (r.last && r.last > t.last) t.last = r.last;
+  }
+  return t;
+}
 
 /* ── charts / unload ───────────────────────────────────────────────────────
    FxeaManager.mq5 reports which EA sits on which chart and can close one, which
@@ -1407,6 +1439,7 @@ setInterval(() => { loadEas(); loadCharts(); }, 30000);   // both no-op unless t
    guessed onto the per-EA rows. */
 async function loadCharts() {
   if (TAB !== 'mt5' || SUBTAB !== 'eas' || !MT5?.url) return;
+  if (!EA_ROWS.length) await loadEas();      // matching needs the per-EA rows
   const stats = document.getElementById('chartstats');
   let d;
   try {
@@ -1433,17 +1466,29 @@ async function loadCharts() {
     + ` · manager ${d.attached ? 'connected' : '<span style="color:var(--color-warn)">stale</span>'}`;
   charts.sort((a, b) => (b.expert ? 1 : 0) - (a.expert ? 1 : 0));
   setHtml('chartstable', charts.length ? `<table class="mt5">
-    <thead><tr><th class="n">Chart</th><th>Symbol</th><th class="n">TF</th><th>Expert</th>
-      <th style="text-align:right">Action</th></tr></thead>
-    <tbody>${charts.map(c => `<tr>
-      <td class="n">${esc(String(c.chart))}</td>
+    <thead><tr><th>Expert</th><th>Symbol</th><th class="n">Open</th><th class="n">Floating</th>
+      <th class="n">Trades</th><th class="n">Win%</th><th class="n">Realised 30d</th>
+      <th>Last trade<span data-tz></span></th><th style="text-align:right">Action</th></tr></thead>
+    <tbody>${charts.map(c => {
+      const m = matchMagic(c, EA_ROWS);
+      const r = sumRows(m.rows);
+      const rate = r && r.trades ? Math.round(100 * r.wins / r.trades) : null;
+      const link = `<button class="chip" data-link="${esc(String(c.chart))}"
+          title="no match found - pick the EA by magic number">link</button>`;
+      return `<tr>
+      <td>${esc(c.expert || '—')}${m.how === 'manual' ? ' <span class="badge">linked</span>' : ''}</td>
       <td>${esc(c.symbol)}</td>
-      <td class="n">${esc(String(c.period))}</td>
-      <td>${esc(c.expert || '—')}</td>
+      <td class="n">${r && r.open ? r.open : '—'}</td>
+      <td class="n ${r ? mt5Cls(r.floating) : ''}">${r && r.open ? mt5Money(r.floating, '') : '—'}</td>
+      <td class="n">${r && r.trades ? r.trades : (r ? '—' : link)}</td>
+      <td class="n">${rate == null ? '—' : rate + '%'}</td>
+      <td class="n ${r ? mt5Cls(r.realised) : ''}">${r && r.trades ? mt5Money(r.realised, '') : '—'}</td>
+      <td class="mono">${r ? esc(mt5Time(r.last)) : '—'}</td>
       <td style="text-align:right">${c.expert
         ? `<button class="chip" data-pause="${esc(String(c.chart))}"
              data-name="${esc(c.expert)} on ${esc(c.symbol)}">Pause</button>`
-        : '<span class="shot-none">no EA</span>'}</td></tr>`).join('')}</tbody></table>`
+        : '<span class="shot-none">no EA</span>'}</td></tr>`;
+    }).join('')}</tbody></table>`
     : '<div class="empty">No other charts open.</div>');
 
   const paused = d.paused || [];
@@ -1459,6 +1504,17 @@ async function loadCharts() {
 
   for (const b of document.querySelectorAll('[data-pause]')) {
     b.onclick = () => managerAction('pause', { chart: Number(b.dataset.pause) }, b.dataset.name);
+  }
+  for (const b of document.querySelectorAll('[data-link]')) {
+    b.onclick = () => {
+      const opts = EA_ROWS.map(r => `${r.magic} - ${r.name || 'no comment'}`).join(String.fromCharCode(10));
+      const pick = prompt('Which magic number belongs to this chart?'
+        + String.fromCharCode(10, 10) + opts + String.fromCharCode(10, 10)
+        + 'Enter the magic number, or leave blank to clear.');
+      if (pick === null) return;
+      eaMapSet(b.dataset.link, pick.trim() ? Number(pick.trim()) : null);
+      loadCharts();
+    };
   }
   for (const b of document.querySelectorAll('[data-run]')) {
     b.onclick = () => managerAction('run', { key: b.dataset.run }, b.dataset.name);
@@ -1489,8 +1545,7 @@ ${note}`)) return;
   } catch (e) {
     alert('Request failed: ' + e.message);
   }
-  loadCharts();
-  loadEas();
+  loadEas().then(loadCharts);
 }
 
 /* ── tabs ──────────────────────────────────────────────────────────────── */
@@ -1525,7 +1580,6 @@ showTab(TAB);
    One SSE connection instead of a request every 10s: the agent pushes a snapshot
    only when the account actually changes, so updates arrive in about a second and
    idle costs a heartbeat every 20s. Falls back to polling if streaming fails. */
-let mt5Stream = null;
 
 function stopMt5Stream() {
   if (mt5Stream) { mt5Stream.abort(); mt5Stream = null; }
