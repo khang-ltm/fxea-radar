@@ -530,6 +530,10 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
         <h2>Paused</h2>
         <div class="wrap" id="pausedtable"></div>
       </section>
+      <section class="mt5sect">
+        <h2>Installed on the VPS <span class="num" id="instcount"></span></h2>
+        <div class="wrap" id="insttable"></div>
+      </section>
     </div>
 
     <div id="mt5-hist" hidden>
@@ -1714,6 +1718,52 @@ const inputCell = i => {
 };
 
 
+/* What is on the VPS, and what is safe to remove. MT5's own samples are hidden:
+   they are not EAs anyone here installed, and nobody wants 40 rows of Examples. */
+function renderInstalled(charts, paused) {
+  const running = new Set([
+    ...charts.filter(c => c.expert).map(c => c.expert),
+    ...paused.map(p => p.expert),
+  ]);
+  const mine = INSTALLED.filter(e =>
+    !/^(Advisors|Examples)\b/i.test(e.folder || '') && !/^Experts?FxeaManager$|^FxeaManager$/i.test(e.name));
+
+  document.getElementById('instcount').textContent = mine.length ? `(${mine.length})` : '';
+  setHtml('insttable', mine.length ? `<table class="mt5">
+    <thead><tr><th>Expert</th><th>Folder</th><th class="n">Size</th><th>State</th>
+      <th style="text-align:right">Action</th></tr></thead>
+    <tbody>${mine.map(e => {
+      const live = running.has(e.name);
+      return `<tr>
+        <td>${esc(e.name)}</td>
+        <td class="mono">${esc(e.folder || 'Experts')}</td>
+        <td class="n">${fmtSize(e.size_bytes)}</td>
+        <td>${live ? '<span class="badge badge--pass">on a chart</span>'
+                   : '<span class="shot-none">idle</span>'}</td>
+        <td style="text-align:right">${live
+          ? '<span class="shot-none">pause it first</span>'
+          : `<button class="chip ghost" data-remove="${esc(e.path)}"
+               data-name="${esc(e.name)}">Delete</button>`}</td></tr>`;
+    }).join('')}</tbody></table>`
+    : '<div class="empty">Nothing installed from the catalog yet.</div>');
+
+  for (const b of document.querySelectorAll('[data-remove]')) {
+    b.onclick = () => removeInstalled(b.dataset.remove, b.dataset.name);
+  }
+}
+
+async function removeInstalled(path, name) {
+  const pin = prompt(`Delete "${name}" from the VPS?`
+    + String.fromCharCode(10, 10)
+    + 'It is not on a chart, so nothing stops trading. A copy is kept in'
+    + ' data/removed on the VPS, and MT5 forgets it after a Navigator refresh.'
+    + String.fromCharCode(10, 10) + 'Enter the PIN to confirm:');
+  if (!pin) return;
+  const r = await managerPost({ action: 'uninstall', confirm: true, pin, path });
+  alert(r.ok ? r.message : `Failed: ${r.error || r.message}`);
+  if (r.ok) { installedAsked = false; loadInstalled(); loadCharts(); }
+}
+
 /* ── attaching an EA ────────────────────────────────────────────
    The EA list and the symbol list both come from the terminal, so neither a
    misspelled symbol nor an EA that is not installed can reach the manager. The
@@ -2105,6 +2155,8 @@ async function loadCharts(quiet) {
       ;
     }).join('')}</tbody></table>`
     : '<div class="empty">No other charts open.</div>');
+
+  renderInstalled(charts, d.paused || []);
 
   const paused = d.paused || [];
   setHtml('pausedtable', paused.length ? `<table class="mt5">

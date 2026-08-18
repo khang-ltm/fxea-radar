@@ -578,7 +578,7 @@ def _stage_inputs(pairs, chart) -> object:
 
 
 # Actions that can make the terminal trade with code it was not already running.
-GUARDED = ("attach", "install")
+GUARDED = ("attach", "install", "uninstall")
 AGENT_PIN = (os.environ.get("MT5_PIN") or "").strip()
 
 TIMEFRAMES = {1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30,
@@ -879,6 +879,59 @@ def stage_attach_template(expert: str, path: str, inputs: dict | None) -> str:
     return ""
 
 
+def uninstall_ea(rel_path: str) -> dict:
+    """Take an EA out of MQL5/Experts, keeping a copy in case it was a mistake.
+
+    Only an EA that is not on a chart: deleting the .ex5 of a running EA would
+    leave a chart trading a file that no longer exists, and MT5 would drop it at
+    the next reload with no way to put it back. The file is moved into
+    data/removed rather than deleted, so a wrong click costs nothing but a copy
+    step - and moving it out of the Experts tree is what makes MT5 forget it.
+    """
+    root = experts_dir()
+    if root is None:
+        return {"ok": False, "error": _init_error or "terminal not readable"}
+
+    rel = str(rel_path or "").strip().replace("/", "\\")
+    if rel.lower().startswith("experts\\"):
+        rel = rel[len("experts\\"):]
+    if not rel.lower().endswith(".ex5") or ".." in rel:
+        return {"ok": False, "error": "that is not an installed EA"}
+
+    target = (root / rel)
+    try:
+        target = target.resolve()
+        target.relative_to(root.resolve())          # never outside Experts
+    except (OSError, ValueError):
+        return {"ok": False, "error": "that path is not inside MQL5 Experts"}
+    if not target.exists():
+        return {"ok": False, "error": f"{rel} is not installed"}
+
+    if target.stem.lower() in ("fxeamanager", "expertsfxeamanager"):
+        return {"ok": False, "error": "the manager EA is what lets this page work"}
+
+    status = read_charts()
+    running = {c.get("expert") for c in (status.get("charts") or []) if c.get("expert")}
+    running |= {p.get("expert") for p in (status.get("paused") or []) if p.get("expert")}
+    if target.stem in running:
+        return {"ok": False,
+                "error": f"{target.stem} is on a chart - pause and discard it first"}
+
+    keep = config.DATA_DIR / "removed"
+    try:
+        keep.mkdir(parents=True, exist_ok=True)
+        dest = keep / target.name
+        if dest.exists():
+            dest.unlink()
+        target.replace(dest)
+    except OSError as exc:
+        return {"ok": False, "error": f"could not remove it: {exc}"}
+
+    out = {"ok": True, "message": f"removed {target.name} (a copy is kept in data/removed)"}
+    _audit(out, {"uninstall": rel})
+    return out
+
+
 def manager_command(action: str, **fields) -> dict:
     """Drop a command file, wait for the EA to answer, return its verdict."""
     d = _mql5_files_dir()
@@ -1156,11 +1209,11 @@ class Handler(BaseHTTPRequestHandler):
                         "need_pin": bool(AGENT_PIN)}, 403)
             return
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
-                          "attach", "forget", "install"):
+                          "attach", "forget", "install", "uninstall"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
         if action in ("pause", "unload", "setinputs", "attach", "forget",
-                      "install") and not body.get("confirm"):
+                      "install", "uninstall") and not body.get("confirm"):
             self._json({"ok": False, "error": f"{action} requires confirm: true"}, 400)
             return
 
@@ -1169,6 +1222,10 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(written, str):
                 self._json({"ok": False, "error": written}, 400)
                 return
+
+        if action == "uninstall":
+            self._json(uninstall_ea(str(body.get("path") or "")))
+            return
 
         if action == "install":
             self._json(install_ea(str(body.get("channel") or ""), body.get("message_id")))
