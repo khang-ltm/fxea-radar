@@ -368,6 +368,7 @@ def run_once(run_no: int, port: int) -> None:
         check("addEventListener('close'" in html and "remove('modal-open')" in html,
               "scroll lock is released on close and on Esc")
         check_page_script(html)
+        check_agent_names()
 
         status, tagged = http_json(f"http://127.0.0.1:{port}/api/posts?ea=0&group=0&kind=all&tag=has-ea-file")
         check(status == 200, "GET /api/posts?tag=… -> 200")
@@ -402,6 +403,35 @@ def run_once(run_no: int, port: int) -> None:
         httpd.shutdown()
         httpd.server_close()
 
+
+
+def check_agent_names() -> None:
+    """Every plain function call in the agent must resolve to something real.
+
+    A hand-written `_ensure()` that never existed shipped and turned /api/symbols
+    into a 502 - the endpoint was only reachable on the VPS, so nothing here
+    caught it. This is cheap and would have.
+    """
+    import ast
+    import builtins
+
+    src = (ROOT / "app" / "mt5_agent.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    known = {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    known |= {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            known |= {(a.asname or a.name.split(".")[0]) for a in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            known |= {(a.asname or a.name) for a in node.names}
+        elif isinstance(node, ast.Assign):
+            known |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+
+    called = {n.func.id for n in ast.walk(tree)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    unknown = sorted(n for n in called - known if not hasattr(builtins, n))
+    check(not unknown, f"agent calls only functions that exist{'' if not unknown else ': missing ' + ', '.join(unknown)}")
 
 def main() -> int:
     ap = argparse.ArgumentParser()

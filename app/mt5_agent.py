@@ -597,10 +597,11 @@ def symbol_exists(name: str) -> bool:
     if not name:
         return False
     with _ipc_lock:
-        if not _ensure():
+        mt5 = _connect()
+        if mt5 is None:
             return False
         try:
-            return _mt5.symbol_info(name) is not None
+            return mt5.symbol_info(name) is not None
         except Exception:                                  # noqa: BLE001
             return False
 
@@ -638,10 +639,11 @@ def read_symbols(query: str = "") -> dict:
         return answer
 
     with _ipc_lock:
-        if not _ensure():
+        mt5 = _connect()
+        if mt5 is None:
             return {"ok": False, "error": _init_error or "terminal not readable"}
         try:
-            found = _mt5.symbols_get(group=f"*{q}*") or ()
+            found = mt5.symbols_get(group=f"*{q}*") or ()
         except Exception as exc:                           # noqa: BLE001
             return {"ok": False, "error": f"symbols unreadable: {exc}"}
 
@@ -998,10 +1000,11 @@ MANAGER_SOURCE = "FxeaManager.mq5"
 def _metaeditor() -> pathlib.Path | None:
     """MetaEditor lives next to the terminal executable."""
     with _ipc_lock:
-        if not _ensure():
+        mt5 = _connect()
+        if mt5 is None:
             return None
         try:
-            exe = pathlib.Path(_mt5.terminal_info().path)
+            exe = pathlib.Path(mt5.terminal_info().path)
         except Exception:                                  # noqa: BLE001
             return None
     for name in ("metaeditor64.exe", "metaeditor.exe"):
