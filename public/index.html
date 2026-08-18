@@ -347,7 +347,10 @@ body.modal-open { overflow: hidden; }
 .mt5cell dd { margin: 2px 0 0; font-family: var(--font-head); font-variant-numeric: tabular-nums; font-size: 14px; }
 .mt5cell dd.pos { color: var(--color-accent); }
 .mt5cell dd.neg { color: var(--color-destructive); }
-.subtabs { margin-bottom: var(--space-3); }
+.subtabs { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+   margin-bottom: var(--space-3); }
+.subtabs__control { margin-left: auto; border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); }
+.subtabs__control .btn[aria-selected="false"] { color: var(--color-accent); }
 .mt5sect { margin-top: var(--space-4); }
 /* card look, so an empty section reads as "nothing here" instead of broken text */
 .mt5sect .empty { padding: var(--space-6) var(--space-4); background: var(--color-surface);
@@ -482,11 +485,18 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <div class="mt5bar__grid" id="mt5grid" hidden></div>
     </section>
 
-    <div class="segmented subtabs" role="tablist" aria-label="MT5 view">
-      <button class="btn" id="sub-pos" role="tab" aria-selected="true">Positions</button>
-      <button class="btn" id="sub-ord" role="tab" aria-selected="false">Orders</button>
-      <button class="btn" id="sub-eas" role="tab" aria-selected="false">EAs</button>
-      <button class="btn" id="sub-hist" role="tab" aria-selected="false">History</button>
+    <!-- Positions, Orders and History are three views of the same account.
+         EAs is not: it is the only place that changes anything, so it sits on
+         its own at the end of the row rather than in the same group. -->
+    <div class="subtabs" role="tablist" aria-label="MT5 view">
+      <div class="segmented">
+        <button class="btn" id="sub-pos" role="tab" aria-selected="true">Positions</button>
+        <button class="btn" id="sub-ord" role="tab" aria-selected="false">Orders</button>
+        <button class="btn" id="sub-hist" role="tab" aria-selected="false">History</button>
+      </div>
+      <div class="segmented subtabs__control">
+        <button class="btn" id="sub-eas" role="tab" aria-selected="false">EA control</button>
+      </div>
     </div>
 
     <div id="mt5-pos">
