@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.26"
+#property version   "1.27"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.26", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.27", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -322,7 +322,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.26",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.27",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -655,7 +655,7 @@ void DoSetInputs(const string id, const long chart, const bool force)
    // and there is nothing here to rewrite. Create the block: the values are the
    // EA's own defaults plus whatever was asked for, which is what the chart would
    // have held had it been attached by hand.
-   if(applied == 0 && !seen_inputs)
+   if(applied == 0)
      {
       string rebuilt[];
       int written2 = 0;
@@ -665,6 +665,8 @@ void DoSetInputs(const string id, const long chart, const bool force)
          StringTrimLeft(low2);
          StringTrimRight(low2);
          StringToLower(low2);
+         if(low2 == "<inputs>" || low2 == "</inputs>")
+            continue;                          // drop the empty block, if any
          if(low2 == "</expert>")
            {
             ArrayResize(rebuilt, written2 + 1);
