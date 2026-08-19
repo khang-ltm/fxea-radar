@@ -795,6 +795,32 @@ def _check_attach(body: dict) -> str:
     if settings and not isinstance(settings, dict):
         return "inputs must be a name/value object"
 
+    # A .set is a list of this EA's own input names, so it can go into the template
+    # the EA is loaded from - it comes up configured rather than on defaults and
+    # then rewritten. A magic inside it is dropped when one was asked for, and
+    # refused when it belongs to something else.
+    preset = str(body.get("preset") or "").strip()
+    if preset:
+        loaded = read_preset(preset)
+        if not loaded.get("ok"):
+            return f"cannot read {preset}: {loaded.get('error')}"
+        values = {i["k"]: i["v"] for i in loaded["items"]}
+        if str(body.get("magic") or "").strip():
+            values = {k: v for k, v in values.items() if "magic" not in k.lower()}
+        else:
+            taken = magics_in_use()
+            for key, value in values.items():
+                if "magic" not in key.lower():
+                    continue
+                try:
+                    number = int(str(value).strip())
+                except ValueError:
+                    continue
+                if number in taken and taken[number] != expert:
+                    return (f"{preset} sets {key}={number}, which belongs to {taken[number]}"
+                            " - give this EA its own magic number")
+        settings = {**values, **(settings or {})}
+
     # everything the manager needs is in the template, so build it here where
     # there is no MQL5 sandbox to fight
     return stage_attach_template(expert, path, settings)

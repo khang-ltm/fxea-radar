@@ -690,6 +690,9 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div class="setrow text"><label for="attach-tf">Timeframe
       <small>the chart it opens on</small></label>
       <select id="attach-tf"></select></div>
+    <div class="setrow text"><label for="attach-preset">Settings
+      <small>a .set file, or the EA's own defaults</small></label>
+      <select id="attach-preset"></select></div>
     <div class="setrow text"><label for="attach-magic">Magic number
       <small>optional - leave blank to keep the EA's own, which may clash</small></label>
       <input id="attach-magic" inputmode="numeric" spellcheck="false" placeholder="e.g. 220819"></div>
@@ -2304,6 +2307,7 @@ async function openAttach(pre) {
   if (pre?.period && TF_NAMES[pre.period]) tf.value = String(pre.period);
   document.getElementById('attach-sym').value = pre?.symbol || '';
   document.getElementById('attach-magic').value = '';
+  fillAttachPresets();
   attachDlg.showModal();
 
   // Independently: a symbol lookup that fails must still leave a usable EA list,
@@ -2359,7 +2363,22 @@ function warnIfUnregistered() {
   }
 }
 
-document.getElementById('attach-ea').onchange = warnIfUnregistered;
+/* Presets are named after the EA they came with, so the one that matches the
+   chosen EA is offered first - and the rest stay available, because a set from
+   another build of the same EA is often what actually works. */
+async function fillAttachPresets() {
+  const sel = document.getElementById('attach-preset');
+  if (!PRESETS.length) await loadPresets().catch(() => {});
+  const chosen = document.getElementById('attach-ea').selectedOptions[0]?.dataset.name || '';
+  const mine = PRESETS.filter(x => x.ea === chosen || (chosen && x.name.startsWith(chosen)));
+  const rest = PRESETS.filter(x => !mine.includes(x));
+  const opt = x => `<option value="${esc(x.file)}">${esc(x.name)} (${x.entries})</option>`;
+  sel.innerHTML = `<option value="">the EA's own defaults</option>`
+    + mine.map(opt).join('')
+    + (rest.length ? `<optgroup label="other EAs">${rest.map(opt).join('')}</optgroup>` : '');
+}
+
+document.getElementById('attach-ea').onchange = () => { warnIfUnregistered(); fillAttachPresets(); };
 document.getElementById('attach-open').onclick = () => openAttach();
 document.getElementById('attach-sym').oninput = e => symbolSearch(e.target.value);
 document.getElementById('attach-cancel').onclick = () => attachDlg.close();
@@ -2391,7 +2410,11 @@ document.getElementById('attach-go').onclick = async () => {
   if (!await ask({
     title: `Attach ${shortEa(opt.dataset.name)}`,
     body: `${opt.dataset.name}\nto ${symbol} ${TF_NAMES[period]} on ${where}.\n\n`
-        + 'It starts trading as soon as it loads.'
+        + (document.getElementById('attach-preset').value
+            ? `Settings from ${document.getElementById('attach-preset').selectedOptions[0].text}.\n`
+            : "The EA's own default settings.\n")
+        + (magic ? `Magic ${magic}.\n` : '')
+        + '\nIt starts trading as soon as it loads.'
         + (opt.dataset.new ? '\n\nMT5 has not loaded this EA yet - if nothing appears,'
                              + ' refresh Navigator > Expert Advisors and attach again.' : ''),
     yes: 'Attach', danger: !ACCOUNT?.is_demo,
@@ -2400,7 +2423,8 @@ document.getElementById('attach-go').onclick = async () => {
   go.disabled = true;
   warn.textContent = 'attaching...';
   const magic = document.getElementById('attach-magic').value.trim();
-  const r = await managerPost({ action: 'attach', confirm: true, magic,
+  const preset = document.getElementById('attach-preset').value;
+  const r = await managerPost({ action: 'attach', confirm: true, magic, preset,
                                 expert: opt.dataset.name, path: opt.value, symbol, period });
   go.disabled = false;
   const note = r.magic_note ? `\n${r.magic_note}` : '';
