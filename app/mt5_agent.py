@@ -1287,6 +1287,73 @@ def delete_preset(name: str) -> dict:
     return out
 
 
+def magics_in_use() -> dict:
+    """Magic -> what is using it: charts first, then anything that has traded.
+
+    Two EAs on one magic cannot be told apart in the history and can manage each
+    other's positions, so an attach has to be able to see the whole set before it
+    adds another.
+    """
+    used: dict[int, str] = {}
+    status = read_charts()
+    for c in (status.get("charts") or []):
+        try:
+            magic = int(c.get("magic") or 0)
+        except (TypeError, ValueError):
+            continue
+        if magic and c.get("expert"):
+            used.setdefault(magic, c["expert"])
+
+    hist = read_history(30, 0)
+    if hist.get("ok"):
+        for e in hist.get("by_ea") or []:
+            magic = int(e.get("magic") or 0)
+            if magic:
+                used.setdefault(magic, (e.get("comments") or ["a past EA"])[0])
+    return used
+
+
+def _magic_key_of(inputs: list) -> str:
+    for i in inputs or []:
+        if "magic" in str(i.get("k", "")).lower():
+            return i["k"]
+    return ""
+
+
+def _settle_magic(expert: str, before: set, wanted: int) -> dict:
+    """Set the magic that was asked for, or report a collision with what loaded.
+
+    The EA's magic lives in an input whose name only this EA knows - magic_string,
+    InpMagicNumber, whatever its author chose - so it cannot be written into the
+    attach template beforehand. Once the EA is running the manager can read that
+    name, which is when a value can be set or a clash reported.
+    """
+    status = read_charts()
+    mine = next((c for c in (status.get("charts") or [])
+                 if c.get("expert") == expert and c.get("chart") not in before), None)
+    if mine is None:
+        return {}
+
+    key = _magic_key_of(mine.get("inputs") or [])
+    current = int(mine.get("magic") or 0)
+
+    if wanted:
+        if not key:
+            return {"magic_note": f"this EA exposes no magic input, so {wanted} was not set"}
+        staged = _stage_inputs({key: str(wanted)}, mine["chart"])
+        if isinstance(staged, str):
+            return {"magic_note": f"could not set the magic: {staged}"}
+        done = manager_command("setinputs", chart=mine["chart"])
+        return {"magic_note": f"magic set to {wanted}" if done.get("ok")
+                else f"could not set the magic: {done.get('error') or done.get('message')}"}
+
+    clash = {m: who for m, who in magics_in_use().items() if m == current and who != expert}
+    if current and clash:
+        return {"magic_note": f"warning: magic {current} is also used by {clash[current]}"
+                              " - their trades cannot be told apart"}
+    return {}
+
+
 def _attach_and_verify(body: dict) -> dict:
     """Attach, then check MT5 actually loaded the EA rather than just naming it.
 
@@ -1297,6 +1364,24 @@ def _attach_and_verify(body: dict) -> dict:
     registered yet, which a Navigator refresh fixes.
     """
     expert = str(body.get("expert") or "")
+
+    wanted_magic = str(body.get("magic") or "").strip()
+    if wanted_magic:
+        try:
+            magic_number = int(wanted_magic)
+        except ValueError:
+            return {"ok": False, "error": "the magic number has to be a whole number"}
+        if magic_number <= 0:
+            return {"ok": False, "error": "a magic number has to be greater than zero"}
+        taken = magics_in_use()
+        if magic_number in taken:
+            return {"ok": False,
+                    "error": f"magic {magic_number} already belongs to {taken[magic_number]}"
+                             " - two EAs on one magic cannot be told apart"}
+    else:
+        magic_number = 0
+
+    before = {c.get("chart") for c in (read_charts().get("charts") or [])}
     answer = manager_command(
         "attach", chart=body.get("chart"), symbol=body.get("symbol"),
         expert=expert, key=body.get("key"), magic=body.get("magic"),
@@ -1332,6 +1417,9 @@ def _attach_and_verify(body: dict) -> dict:
             installer.note_loaded(expert)          # stop warning about this one
         except Exception:                          # noqa: BLE001
             pass
+
+    if loaded:
+        answer.update(_settle_magic(expert, before, magic_number))
 
     if loaded is False:
         answer["ok"] = False

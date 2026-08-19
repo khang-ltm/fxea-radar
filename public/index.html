@@ -690,6 +690,9 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div class="setrow text"><label for="attach-tf">Timeframe
       <small>the chart it opens on</small></label>
       <select id="attach-tf"></select></div>
+    <div class="setrow text"><label for="attach-magic">Magic number
+      <small>optional - leave blank to keep the EA's own, which may clash</small></label>
+      <input id="attach-magic" inputmode="numeric" spellcheck="false" placeholder="e.g. 220819"></div>
     <p class="hint" id="attach-warn"></p>
   </div>
   <div class="sheet__foot">
@@ -2300,6 +2303,7 @@ async function openAttach(pre) {
   document.getElementById('attach-title').textContent = 'Attach an EA to a chart';
   if (pre?.period && TF_NAMES[pre.period]) tf.value = String(pre.period);
   document.getElementById('attach-sym').value = pre?.symbol || '';
+  document.getElementById('attach-magic').value = '';
   attachDlg.showModal();
 
   // Independently: a symbol lookup that fails must still leave a usable EA list,
@@ -2372,6 +2376,16 @@ document.getElementById('attach-go').onclick = async () => {
   if (!opt?.dataset.name) { warn.textContent = 'pick an EA'; return; }
   if (!symbol) { warn.textContent = 'pick a symbol'; return; }
 
+  const wantMagic = document.getElementById('attach-magic').value.trim();
+  if (wantMagic) {
+    if (!/^\d+$/.test(wantMagic)) { warn.textContent = 'the magic number has to be digits'; return; }
+    const clash = CHARTS.find(c => String(c.magic) === wantMagic && c.expert);
+    if (clash) {
+      warn.textContent = `magic ${wantMagic} already belongs to ${shortEa(clash.expert)}`;
+      return;
+    }
+  }
+
   const where = ACCOUNT
     ? `${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} (${ACCOUNT.server})` : 'this account';
   if (!await ask({
@@ -2385,11 +2399,15 @@ document.getElementById('attach-go').onclick = async () => {
 
   go.disabled = true;
   warn.textContent = 'attaching...';
-  const r = await managerPost({ action: 'attach', confirm: true,
+  const magic = document.getElementById('attach-magic').value.trim();
+  const r = await managerPost({ action: 'attach', confirm: true, magic,
                                 expert: opt.dataset.name, path: opt.value, symbol, period });
   go.disabled = false;
-  warn.textContent = r.ok ? (r.message || 'attached') : ('failed: ' + (r.error || r.message));
-  toast(r.ok ? r.message : `Attach failed\n${r.error || r.message}`, r.ok ? 'ok' : 'bad', 9);
+  const note = r.magic_note ? `\n${r.magic_note}` : '';
+  warn.textContent = (r.ok ? (r.message || 'attached') : ('failed: ' + (r.error || r.message)))
+    + (r.magic_note ? ` · ${r.magic_note}` : '');
+  toast((r.ok ? r.message : `Attach failed\n${r.error || r.message}`) + note,
+        r.ok ? (r.magic_note?.startsWith('warning') ? 'warn' : 'ok') : 'bad', 10);
   if (r.ok) setTimeout(() => { attachDlg.close(); loadEas().then(loadCharts); }, 1200);
 };
 
