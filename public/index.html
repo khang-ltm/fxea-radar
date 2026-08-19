@@ -139,6 +139,13 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
    padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border);
    background: var(--color-surface); }
 .sheet__foot .hint { flex: 1; margin: 0; }
+/* a long note wedged between the buttons wrapped into a narrow column six lines
+   tall; the controls get a row of their own and the note the full width */
+.sheet__foot--stack { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+.foot__row { display: flex; align-items: center; gap: var(--space-2); }
+.foot__row select { min-width: 0; flex: 1 1 auto; max-width: 320px; }
+.foot__right { margin-left: auto; }
+.sheet__foot--stack .hint { flex: none; }
 .settings { display: grid; gap: 0; }
 .settings h3 { grid-column: 1 / -1; margin: var(--space-4) 0 var(--space-1); font-size: 11px;
    letter-spacing: .06em; text-transform: uppercase; color: var(--color-muted-fg);
@@ -701,13 +708,15 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
   <div class="sheet__body">
     <div id="ea-inputs" class="settings"></div>
   </div>
-  <div class="sheet__foot">
-    <select id="ea-preset" hidden aria-label="Preset to import"></select>
-    <button class="btn" id="ea-import" hidden>Import .set</button>
-    <span class="hint" id="ea-note">Applying reloads the EA: open trades stay, its
-      memory of them does not.</span>
-    <button class="btn" id="ea-reset" hidden>Undo changes</button>
-    <button class="btn btn--primary" id="ea-save" disabled>Apply</button>
+  <div class="sheet__foot sheet__foot--stack">
+    <div class="foot__row">
+      <select id="ea-preset" hidden aria-label="Preset to import"></select>
+      <button class="btn" id="ea-import" hidden>Import .set</button>
+      <button class="btn foot__right" id="ea-reset" hidden>Undo changes</button>
+      <button class="btn btn--primary" id="ea-save" disabled>Apply</button>
+    </div>
+    <p class="hint" id="ea-note">Applying reloads the EA: open trades stay, its
+      memory of them does not.</p>
   </div>
 </dialog>
 
