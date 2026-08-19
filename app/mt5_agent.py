@@ -1063,15 +1063,20 @@ def read_preset(name: str) -> dict:
             layout.append({"text": raw})
             continue
         value, sep, tail = rest.partition("||")
-        item = {"k": key.strip(), "v": value.strip(), "tail": (sep + tail) if sep else ""}
+        item = {"k": key.strip().lstrip("\ufeff"), "v": value.strip(),
+                "tail": (sep + tail) if sep else ""}
         items.append(item)
         layout.append(item)
     return {"ok": True, "name": f.stem, "file": f.name, "encoding": encoding,
             "items": items, "layout": layout}
 
 
-def write_preset(name: str, values: dict) -> dict:
-    """Rewrite a preset, keeping every line's tester metadata and its order."""
+def write_preset(name: str, values: dict, save_as: str = "") -> dict:
+    """Rewrite a preset, keeping every line's tester metadata and its order.
+
+    save_as writes to a different file instead, which is how a channel preset
+    becomes yours: keep theirs untouched and save your version beside it.
+    """
     current = read_preset(name)
     if not current.get("ok"):
         return current
@@ -1093,13 +1098,22 @@ def write_preset(name: str, values: dict) -> dict:
         lines.append(f"{entry['k']}={v}{entry['tail']}")
 
     root = presets_dir()
-    f = root / current["file"]
+    target_name = (pathlib.PurePath(str(save_as)).name or "").strip() if save_as else ""
+    if target_name:
+        if not target_name.lower().endswith(".set"):
+            target_name += ".set"
+        if any(c in target_name for c in "\\/:*?\"<>|"):
+            return {"ok": False, "error": "that name cannot be a file name"}
+        f = root / target_name
+    else:
+        f = root / current["file"]
     try:
         f.write_text(chr(10).join(lines) + chr(10),
                      encoding=current.get("encoding") or "utf-16", errors="replace")
     except OSError as exc:
         return {"ok": False, "error": f"could not write {f.name}: {exc}"}
-    out = {"ok": True, "message": f"saved {f.name}" + (f", {changed} changed" if changed else "")}
+    out = {"ok": True, "file": f.name,
+           "message": f"saved {f.name}" + (f", {changed} changed" if changed else "")}
     _audit(out, {"preset": f.name, "changed": changed})
     return out
 
@@ -1538,7 +1552,8 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if action == "savepreset":
-            self._json(write_preset(str(body.get("name") or ""), body.get("values")))
+            self._json(write_preset(str(body.get("name") or ""), body.get("values"),
+                                    str(body.get("save_as") or "")))
             return
 
         if action == "uninstall":

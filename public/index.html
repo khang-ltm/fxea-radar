@@ -611,7 +611,12 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <span class="mt5bar__stats" id="set-sub"></span>
     <button class="btn" id="set-cancel">Close</button>
   </div>
-  <div class="sheet__body"><div id="set-fields" class="settings"></div></div>
+  <div class="sheet__body">
+    <div class="setrow text"><label for="set-name">Save as
+      <small>keep the name to overwrite, change it to keep both</small></label>
+      <input id="set-name" spellcheck="false"></div>
+    <div id="set-fields" class="settings"></div>
+  </div>
   <div class="sheet__foot">
     <span class="hint" id="set-note">Editing the file changes what an EA loads next
       time, not what is running now.</span>
@@ -654,6 +659,8 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div id="ea-inputs" class="settings"></div>
   </div>
   <div class="sheet__foot">
+    <select id="ea-preset" hidden aria-label="Preset to import"></select>
+    <button class="btn" id="ea-import" hidden>Import .set</button>
     <span class="hint" id="ea-note">Applying reloads the EA: open trades stay, its
       memory of them does not.</span>
     <button class="btn" id="ea-reset" hidden>Undo changes</button>
@@ -1969,16 +1976,12 @@ async function loadPresets() {
       <td class="n">${fmtSize(x.size_bytes)}</td>
       <td style="text-align:right">
         <button class="chip ghost" data-setedit="${esc(x.file)}">Edit</button>
-        <button class="chip" data-setapply="${esc(x.file)}">Load into EA</button>
       </td></tr>`).join('')}</tbody></table>`
     : `<div class="empty">No .set files yet.<br>
        <span class="hint">They install alongside an EA when its archive contains one.</span></div>`);
 
   for (const b of document.querySelectorAll('[data-setedit]')) {
     b.onclick = () => openPreset(b.dataset.setedit);
-  }
-  for (const b of document.querySelectorAll('[data-setapply]')) {
-    b.onclick = () => applyPreset(b.dataset.setapply);
   }
 }
 
@@ -1996,6 +1999,7 @@ async function openPreset(file) {
   SET_OPEN = d;
 
   document.getElementById('set-title').textContent = d.name;
+  document.getElementById('set-name').value = d.name;
   document.getElementById('set-sub').textContent = `${d.items.length} settings`;
   document.getElementById('set-fields').innerHTML = d.items.map((i, n) => `
     <div class="setrow" data-row="${n}">
@@ -2006,14 +2010,20 @@ async function openPreset(file) {
     el.oninput = () => {
       const n = Number(el.dataset.idx);
       el.closest('.setrow').classList.toggle('dirty', el.value !== SET_OPEN.items[n].v);
-      const dirty = presetChanges();
-      const save = document.getElementById('set-save');
-      save.disabled = !Object.keys(dirty).length;
-      save.textContent = Object.keys(dirty).length ? `Save ${Object.keys(dirty).length}` : 'Save';
+      refreshPresetSave();
     };
   }
-  document.getElementById('set-save').disabled = true;
+  document.getElementById('set-name').oninput = refreshPresetSave;
+  refreshPresetSave();
   setDlg.showModal();
+}
+
+function refreshPresetSave() {
+  const n = Object.keys(presetChanges()).length;
+  const renamed = SET_OPEN && document.getElementById('set-name').value.trim() !== SET_OPEN.name;
+  const save = document.getElementById('set-save');
+  save.disabled = !n && !renamed;
+  save.textContent = renamed ? 'Save a copy' : (n ? `Save ${n}` : 'Save');
 }
 
 function presetChanges() {
@@ -2032,40 +2042,54 @@ document.getElementById('set-save').onclick = async () => {
   const changes = presetChanges();
   const note = document.getElementById('set-note');
   note.textContent = 'saving...';
+  const wanted = document.getElementById('set-name').value.trim();
   const r = await managerPost({ action: 'savepreset', confirm: true,
-                                name: SET_OPEN.file, values: changes });
+                                name: SET_OPEN.file, values: changes,
+                                save_as: wanted === SET_OPEN.name ? '' : wanted });
   note.textContent = r.ok ? r.message : `failed: ${r.error || r.message}`;
   if (r.ok) { SET_OPEN = null; setDlg.close(); loadPresets(); }
 };
 
-/* Loading a preset into a live EA is a settings change like any other, so it
-   goes through setinputs: names checked against that EA's real inputs, types
-   checked against its current values, magic refused, and blocked outright while
-   the EA holds a position. */
-async function applyPreset(file) {
-  const running = CHARTS.filter(c => c.expert && !c.is_manager);
-  if (!running.length) { alert('No EA is on a chart to load it into.'); return; }
+/* A .set is a list of names and values, and so is this dialog - so importing one
+   fills the fields and stops there. Nothing reaches the EA until Apply, which is
+   the same review, confirm and refusal path as any other change: settings the EA
+   does not have are reported rather than sent, and an EA holding a position is
+   still read-only. */
+async function fillPresetPicker() {
+  const sel = document.getElementById('ea-preset');
+  const btn = document.getElementById('ea-import');
+  if (!PRESETS.length) await loadPresets().catch(() => {});
+  const has = PRESETS.length > 0 && !EA_EDIT?.open;
+  sel.hidden = btn.hidden = !has;
+  if (!has) return;
+  sel.innerHTML = PRESETS.map(x => `<option value="${esc(x.file)}">${esc(x.name)}</option>`).join('');
+}
 
-  const list = running.map((c, i) => `${i + 1}. ${shortEa(c.expert)} on ${c.symbol} ${TF_NAMES[c.period] || ''}`);
-  const pick = prompt(`Load ${file} into which EA?${String.fromCharCode(10, 10)}`
-    + list.join(String.fromCharCode(10)) + String.fromCharCode(10, 10) + 'Enter a number:');
-  if (!pick) return;
-  const chart = running[Number(pick) - 1];
-  if (!chart) return;
+document.getElementById('ea-import').onclick = async () => {
+  const file = document.getElementById('ea-preset').value;
+  const note = document.getElementById('ea-note');
+  if (!file || !EA_EDIT) return;
+  note.textContent = `reading ${file}...`;
 
   const d = await fetchPreset(file).catch(e => ({ ok: false, error: e.message }));
-  if (!d.ok) { alert(`Cannot read ${file}: ${d.error}`); return; }
-  const values = Object.fromEntries(d.items.map(i => [i.k, i.v]));
+  if (!d.ok) { note.textContent = `cannot read ${file}: ${d.error}`; return; }
 
-  if (!confirm(`Load ${d.items.length} settings from ${file} into`
-      + ` ${shortEa(chart.expert)} on ${chart.symbol}?${String.fromCharCode(10, 10)}`
-      + 'The EA reloads with them. Settings it does not have are refused, not guessed.')) return;
-
-  const r = await managerPost({ action: 'setinputs', confirm: true,
-                                chart: chart.chart, inputs: values });
-  alert(r.ok ? (r.message || 'applied') : `Failed: ${r.error || r.message}`);
-  if (r.ok) loadEas().then(loadCharts);
-}
+  const wanted = new Map(d.items.map(i => [i.k, i.v]));
+  let filled = 0;
+  for (const el of document.querySelectorAll('#ea-inputs input')) {
+    const n = Number(el.dataset.idx);
+    const key = EA_EDIT.inputs[n].k;
+    if (!wanted.has(key) || isMagicKey(key)) continue;      // magic stays the EA's
+    el.value = wanted.get(key);
+    el.closest('.setrow').classList.toggle('dirty', el.value !== EA_EDIT.inputs[n].v);
+    filled++;
+  }
+  refreshEaButtons();
+  const missing = d.items.length - filled;
+  note.textContent = `${filled} setting${filled === 1 ? '' : 's'} filled from ${d.name}`
+    + (missing > 0 ? ` · ${missing} in the file this EA does not have` : '')
+    + ' · review, then Apply';
+};
 
 /* ── attaching an EA ────────────────────────────────────────────
    The EA list and the symbol list both come from the terminal, so neither a
@@ -2295,6 +2319,7 @@ function openEaSettings(chartId) {
     };
   }
   refreshEaButtons();
+  fillPresetPicker();
   eaDlg.showModal();
 }
 
