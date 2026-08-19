@@ -2079,7 +2079,10 @@ document.getElementById('ea-import').onclick = async () => {
   for (const el of document.querySelectorAll('#ea-inputs input')) {
     const n = Number(el.dataset.idx);
     const key = EA_EDIT.inputs[n].k;
-    if (!wanted.has(key) || isMagicKey(key)) continue;      // magic stays the EA's
+    // magic comes through only when the EA has no settings stored yet: there is
+    // nothing to orphan then, and without it nothing can attribute its trades
+    if (!wanted.has(key) || (isMagicKey(key) && EA_EDIT.inputs.some(i => !isMagicKey(i.k) && i.v)))
+      continue;
     el.value = wanted.get(key);
     el.closest('.setrow').classList.toggle('dirty', el.value !== EA_EDIT.inputs[n].v);
     filled++;

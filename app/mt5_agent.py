@@ -565,9 +565,11 @@ def _stage_inputs(pairs, chart) -> object:
         text = "" if value is None else str(value)
         if not _INPUT_KEY.match(key):
             return f"bad setting name: {key}"
-        if "magic" in key.lower():
-            # identity, not a setting: changing it orphans the EA's own trades
-            # and can hand it another EA's positions to manage
+        if "magic" in key.lower() and have:
+            # Identity, not a setting: changing it orphans the EA's own trades and
+            # can hand it another EA's positions to manage. Setting one on a chart
+            # that has no settings yet is different - there is nothing to orphan,
+            # and without it the EA's trades can never be attributed at all.
             return f"{key} cannot be changed from here"
         if len(text) > 500 or chr(10) in text or chr(13) in text:
             return f"bad value for {key}"
