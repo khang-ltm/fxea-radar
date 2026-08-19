@@ -314,6 +314,8 @@ pre.raw { margin: var(--space-2) 0 0; padding: var(--space-3); background: var(-
   font-size: 12.5px; color: var(--color-muted-fg); }
 .row__act { display: flex; justify-content: flex-end; align-items: center; gap: 6px;
   white-space: nowrap; }
+.livedot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent);
+   display: inline-block; margin-right: 5px; }
 .chip--icon:not([hidden]) { padding: 0 8px; min-width: 30px; justify-content: center; }
 /* Verdict stays visible at every width - on a phone it is the column that matters. */
 @media (max-width: 1100px) { .row { grid-template-columns: minmax(0, 1fr) 78px 96px 92px 132px; } .row__hide2 { display: none; } }
@@ -1091,6 +1093,17 @@ function attachBtn(p) {
   // Fetching stays available after an install: a newer version gets posted, or a
   // reinstall is simply the fastest way to put the files back where they belong.
   const hit = installedFor(p.name);
+
+  // Already trading: offering "put it on a chart" and "download it again" for an
+  // EA that is running invites doing one of them by accident. Say where it is
+  // instead, and go there.
+  const live = hit && CHARTS.find(c => c.expert === hit.name && !c.is_manager);
+  if (live) {
+    return `<button class="chip ghost" data-goea="1"
+       title="running on ${esc(live.symbol)} ${esc(tfName(live.period))} - open My EA">
+       <span class="livedot"></span>on a chart</button>`;
+  }
+
   // an EA already on the VPS gets a reinstall arrow, not a download arrow: the
   // same icon for "fetch this" and "fetch it again" read as a broken button
   const fetchBtn = !canFetch ? '' : `<button class="chip chip--icon"
@@ -1190,6 +1203,10 @@ function wireCards() {
     symbol: b.dataset.sym, period: Number(b.dataset.tf) || 0,
   }));
   document.querySelectorAll('[data-install]').forEach(b => b.onclick = () => installFromCatalog(b));
+  document.querySelectorAll('[data-goea]').forEach(b => b.onclick = () => {
+    showTab('myea');
+    showEaSub('run');
+  });
 }
 
 /* ── tag dropdown ──────────────────────────────────────────────────────── */
