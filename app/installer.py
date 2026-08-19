@@ -229,9 +229,11 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
         # nothing will ever offer you in the EA's Load dialog
         presets = experts_dir.parent / "Presets"
         presets.mkdir(parents=True, exist_ok=True)
-        installed, skipped = [], []
+        installed, skipped, seen_items = [], [], []
         for f in found:
             dst = (presets if f.suffix.lower() == ".set" else target) / f.name
+            kind = "ea" if dst.suffix.lower() == ".ex5" else "set"
+            seen_items.append({"file": dst.name, "name": dst.stem, "kind": kind})
             if dst.exists():
                 if dst.read_bytes() == f.read_bytes():
                     skipped.append(f.name)                 # already installed, unchanged
@@ -257,7 +259,7 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
         kept_names = {f.name for f in found}
         dropped = sorted({pathlib.PurePath(x).name for x in seen
                           if pathlib.PurePath(x).name and pathlib.PurePath(x).name not in kept_names})
-        _remember_owner(installed, archive.name)
+        _remember_owner(seen_items, archive.name)
         return {"ok": True, "archive": archive.name, "installed": installed,
                 "unchanged": skipped, "dropped": dropped[:40],
                 "experts": [x for x in installed if x["kind"] == "ea"],
