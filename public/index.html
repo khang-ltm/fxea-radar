@@ -1976,12 +1976,26 @@ async function loadPresets() {
       <td class="n">${fmtSize(x.size_bytes)}</td>
       <td style="text-align:right">
         <button class="chip ghost" data-setedit="${esc(x.file)}">Edit</button>
+        <button class="chip ghost" data-setdel="${esc(x.file)}"
+          data-name="${esc(x.name)}">Delete</button>
       </td></tr>`).join('')}</tbody></table>`
     : `<div class="empty">No .set files yet.<br>
        <span class="hint">They install alongside an EA when its archive contains one.</span></div>`);
 
   for (const b of document.querySelectorAll('[data-setedit]')) {
     b.onclick = () => openPreset(b.dataset.setedit);
+  }
+  for (const b of document.querySelectorAll('[data-setdel]')) {
+    b.onclick = async () => {
+      if (!confirm(`Delete the preset "${b.dataset.name}"?`
+          + String.fromCharCode(10, 10)
+          + 'Nothing running changes - a preset is only settings on disk, and the'
+          + ' EA that shipped it can be installed again.')) return;
+      const r = await managerPost({ action: 'delpreset', confirm: true, name: b.dataset.setdel });
+      if (!r.ok) { alert(`Failed: ${r.error || r.message}`); return; }
+      PRESETS = PRESETS.filter(x => x.file !== b.dataset.setdel);
+      loadPresets();
+    };
   }
 }
 

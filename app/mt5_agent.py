@@ -1180,6 +1180,37 @@ def update_now() -> dict:
     return out
 
 
+def delete_preset(name: str) -> dict:
+    """Remove a .set file.
+
+    A preset is settings on disk, not code and not a position - deleting one
+    changes nothing that is running, and the EA that shipped it can be installed
+    again in a click. So no PIN here, unlike deleting an .ex5.
+    """
+    root = presets_dir()
+    if root is None:
+        return {"ok": False, "error": _init_error or "terminal not readable"}
+
+    f = root / pathlib.PurePath(str(name)).name
+    if f.suffix.lower() != ".set":
+        f = f.with_suffix(".set")
+    try:
+        f = f.resolve()
+        f.relative_to(root.resolve())            # never outside Presets
+    except (OSError, ValueError):
+        return {"ok": False, "error": "that path is not inside MQL5 Presets"}
+    if not f.exists():
+        return {"ok": False, "error": f"{f.name} is not there"}
+
+    try:
+        f.unlink()
+    except OSError as exc:
+        return {"ok": False, "error": f"could not delete {f.name}: {exc}"}
+    out = {"ok": True, "message": f"deleted {f.name}"}
+    _audit(out, {"preset": f.name})
+    return out
+
+
 def uninstall_ea(rel_path: str) -> dict:
     """Take an EA out of MQL5/Experts, keeping a copy in case it was a mistake.
 
@@ -1551,11 +1582,12 @@ class Handler(BaseHTTPRequestHandler):
             _pin_fails.pop(who, None)
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
                           "attach", "forget", "install", "uninstall", "savepreset",
-                          "update", "reload"):
+                          "delpreset", "update", "reload"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
         if action in ("pause", "unload", "setinputs", "attach", "forget",
-                      "install", "uninstall", "savepreset") and not body.get("confirm"):
+                      "install", "uninstall", "savepreset",
+                      "delpreset") and not body.get("confirm"):
             self._json({"ok": False, "error": f"{action} requires confirm: true"}, 400)
             return
 
@@ -1567,6 +1599,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if action == "update":
             self._json(update_now())
+            return
+
+        if action == "delpreset":
+            self._json(delete_preset(str(body.get("name") or "")))
             return
 
         if action == "savepreset":
