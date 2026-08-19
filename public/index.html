@@ -1300,8 +1300,16 @@ function renderMt5Freshness() {
   history.replaceState({}, '', clean);
 })();
 
-const mt5Money = (v, c) => v == null ? '—'
-  : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (c ? ' ' + c : '');
+/* Currency codes take more room than they earn in a table of numbers, so the
+   common ones become their symbol and anything else keeps its code. */
+const CURRENCY_SIGN = { USD: '$', EUR: '€', GBP: '£', JPY: '¥', VND: '₫', AUD: '$', CAD: '$' };
+const mt5Money = (v, c) => {
+  if (v == null) return '—';
+  const n = Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (!c) return n;
+  const sign = CURRENCY_SIGN[String(c).toUpperCase()];
+  return sign ? (n.startsWith('-') ? '-' + sign + n.slice(1) : sign + n) : n + ' ' + c;
+};
 const mt5Cls = v => v == null || Number(v) === 0 ? '' : Number(v) > 0 ? 'pos' : 'neg';
 
 /* Prices: use the instrument's own digit count when the agent supplies it, and
