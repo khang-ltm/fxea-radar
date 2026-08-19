@@ -710,6 +710,23 @@ def read_experts() -> dict:
     except Exception:                                          # noqa: BLE001
         fresh = {}
 
+    # The mark was cleared only by an attach made through this page, so an EA
+    # loaded any other way stayed flagged as new for good. Anything MT5 is running
+    # right now, or has logged loading, is registered by definition.
+    if fresh:
+        seen = {c.get("expert") for c in (read_charts().get("charts") or []) if c.get("expert")}
+        log = read_terminal_log(300, "loaded successfully", "terminal")
+        lines = log.get("lines") or []
+        for name, entry in list(fresh.items()):
+            if entry.get("loaded"):
+                continue
+            if name in seen or any(name in line for line in lines):
+                try:
+                    installer.note_loaded(name)
+                    fresh[name] = {"loaded": True}
+                except Exception:                              # noqa: BLE001
+                    pass
+
     out = []
     for f in sorted(root.rglob("*.ex5")):
         rel = f.relative_to(root)
