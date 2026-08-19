@@ -118,7 +118,7 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
    background: none; color: var(--color-muted-fg); }
 .chip.ghost:hover { border-color: var(--color-border); }
 .asktext { margin: 0; white-space: pre-wrap; line-height: 1.5; }
-#toasts { position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 60;
+#toasts, .toasts-inner { position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 60;
    display: flex; flex-direction: column; gap: var(--space-2); max-width: min(92vw, 420px); }
 .toast { display: flex; gap: var(--space-2); align-items: flex-start; cursor: pointer;
    padding: 10px 12px; border-radius: var(--radius); font-size: 13px; line-height: 1.45;
@@ -2103,7 +2103,19 @@ document.getElementById('ask-yes').onclick = () => {
 
 /* Toasts stay long enough to read a failure and can be dismissed by clicking. */
 function toast(text, kind = 'ok', seconds = 7) {
-  const box = document.getElementById('toasts');
+  // A dialog opened with showModal sits in the browser's top layer, above every
+  // z-index on the page - so a toast in the body was hidden behind the very
+  // dialog whose result it was reporting. Put it inside the open dialog instead.
+  const sheet = document.querySelector('dialog[open]');
+  let box = document.getElementById('toasts');
+  if (sheet && !sheet.classList.contains('sheet--plain')) {
+    box = sheet.querySelector('.toasts-inner');
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'toasts-inner';
+      sheet.appendChild(box);
+    }
+  }
   const el = document.createElement('div');
   el.className = `toast toast--${kind}`;
   el.innerHTML = `<span class="toast__dot"></span><span></span>`;
@@ -2458,6 +2470,9 @@ document.getElementById('attach-go').onclick = async () => {
   const eaSel = document.getElementById('attach-ea');
   const symbol = document.getElementById('attach-sym').value.trim();
   const period = Number(document.getElementById('attach-tf').value);
+  const magic = document.getElementById('attach-magic').value.trim();
+  const preset = document.getElementById('attach-preset').value;
+  const review = document.getElementById('attach-review').value === '1';
   const opt = eaSel.selectedOptions[0];
 
   const reject = (msg, el) => {
@@ -2468,7 +2483,7 @@ document.getElementById('attach-go').onclick = async () => {
   if (!opt?.dataset.name) { reject('pick an EA first', eaSel); return; }
   if (!symbol) { reject('type a symbol - XAUUSD, BTCUSD, EURUSD…', document.getElementById('attach-sym')); return; }
 
-  const wantMagic = document.getElementById('attach-magic').value.trim();
+  const wantMagic = magic;
   if (wantMagic) {
     if (!/^\d+$/.test(wantMagic)) { reject('the magic number has to be digits', document.getElementById('attach-magic')); return; }
     const clash = CHARTS.find(c => String(c.magic) === wantMagic && c.expert);
@@ -2502,9 +2517,6 @@ document.getElementById('attach-go').onclick = async () => {
   go.textContent = 'Attaching…';
   warn.innerHTML = 'opening the chart and loading the EA - this takes a few seconds…';
   const ticking = toast('Attaching…', 'warn', 30);
-  const magic = document.getElementById('attach-magic').value.trim();
-  const preset = document.getElementById('attach-preset').value;
-  const review = document.getElementById('attach-review').value === '1';
   const r = await managerPost({ action: 'attach', confirm: true, magic, preset,
                                 trading: !review,
                                 expert: opt.dataset.name, path: opt.value, symbol, period });
