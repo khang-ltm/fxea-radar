@@ -1219,6 +1219,40 @@ def delete_preset(name: str) -> dict:
     return out
 
 
+def _attach_and_verify(body: dict) -> dict:
+    """Attach, then check MT5 actually loaded the EA rather than just naming it.
+
+    A chart takes its expert NAME from the template it was given, whether or not
+    the terminal ever loaded the file - so the manager can report an EA that is
+    not running. MT5 does record the truth, in the Journal: "expert X loaded
+    successfully". If that line is missing, the usual cause is a file MT5 has not
+    registered yet, which a Navigator refresh fixes.
+    """
+    expert = str(body.get("expert") or "")
+    answer = manager_command(
+        "attach", chart=body.get("chart"), symbol=body.get("symbol"),
+        expert=expert, key=body.get("key"), magic=body.get("magic"),
+        path=body.get("path"), period=body.get("period"))
+    if not answer.get("ok"):
+        return answer
+
+    time.sleep(1.5)
+    log = read_terminal_log(120, "", "terminal")
+    loaded = any(expert in line and "loaded successfully" in line.lower()
+                 for line in (log.get("lines") or [])) if log.get("ok") else None
+
+    if loaded is False:
+        answer["ok"] = False
+        answer["error"] = (f"the chart is set to {expert} but MT5 never loaded it - "
+                           "in MT5 right-click Navigator > Expert Advisors > Refresh, "
+                           "then attach again")
+        answer["chart_open"] = True
+    elif loaded is None:
+        answer["message"] = (answer.get("message", "") +
+                             " (could not read the Journal to confirm it loaded)")
+    return answer
+
+
 def uninstall_ea(rel_path: str) -> dict:
     """Take an EA out of MQL5/Experts, keeping a copy in case it was a mistake.
 
@@ -1631,6 +1665,8 @@ class Handler(BaseHTTPRequestHandler):
             if problem:
                 self._json({"ok": False, "error": problem}, 400)
                 return
+            self._json(_attach_and_verify(body))
+            return
 
         self._json(manager_command(
             action,
