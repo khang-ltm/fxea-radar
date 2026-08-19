@@ -2202,8 +2202,10 @@ async function openAttach(pre) {
 
   const eaSel = document.getElementById('attach-ea');
   eaSel.innerHTML = (eas.ok ? eas.experts.filter(e => !notMine(e)) : [])
-    .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}">`
-      + esc(e.folder ? `${e.folder}/${e.name}` : e.name) + '</option>').join('')
+    .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}"
+        data-new="${e.unregistered ? '1' : ''}">`
+      + esc(e.folder ? `${e.folder}/${e.name}` : e.name)
+      + (e.unregistered ? '  (new - not loaded by MT5 yet)' : '') + '</option>').join('')
     || '<option value="">no .ex5 found</option>';
   eaSel.disabled = false;
   if (pre?.path) eaSel.value = pre.path;               // came from a catalog row
@@ -2212,6 +2214,7 @@ async function openAttach(pre) {
   fillSymbols(syms);
 
   const listed = eas.ok ? eas.experts.filter(e => !notMine(e)).length : 0;
+  warnIfUnregistered();
   note.textContent = eas.ok
       ? `${listed} EA${listed === 1 ? '' : 's'} to choose from · type to search your broker symbols`
         + (syms.ok ? '' : ' · symbol search unavailable, type the exact name')
@@ -2222,6 +2225,20 @@ async function openAttach(pre) {
     : 'The EA starts trading as soon as it loads.';
 }
 
+/* An EA installed while MT5 was running is not in its Navigator until someone
+   refreshes it, and attaching such an EA sets the chart's name while nothing
+   runs. Say so on selection rather than after the attempt. */
+function warnIfUnregistered() {
+  const opt = document.getElementById('attach-ea').selectedOptions[0];
+  const warn = document.getElementById('attach-warn');
+  if (opt?.dataset.new) {
+    warn.innerHTML = '<span style="color:var(--color-warn)">MT5 has not loaded this EA yet.</span>'
+      + ' In MT5: right-click Navigator &gt; Expert Advisors &gt; Refresh, then attach.'
+      + ' Attaching without it opens a chart with no EA on it.';
+  }
+}
+
+document.getElementById('attach-ea').onchange = warnIfUnregistered;
 document.getElementById('attach-open').onclick = () => openAttach();
 document.getElementById('attach-sym').oninput = e => symbolSearch(e.target.value);
 document.getElementById('attach-cancel').onclick = () => attachDlg.close();

@@ -172,6 +172,39 @@ def _extractor(suffix: str = "") -> tuple[str, list[str]] | None:
 
 
 OWNERS_FILE = config.DATA_DIR / "preset_owner.json"
+# EAs this agent put on the machine, and whether MT5 has ever loaded one. A file
+# copied in while the terminal is running is not in its Navigator yet, and an
+# attach of an unregistered EA quietly does nothing - so the page can warn first.
+FRESH_FILE = config.DATA_DIR / "installed_ea.json"
+
+
+def _read_json(path: pathlib.Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_json(path: pathlib.Path, data: dict) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def note_installed(names: list) -> None:
+    known = _read_json(FRESH_FILE)
+    for name in names:
+        known.setdefault(name, {"loaded": False})
+    _write_json(FRESH_FILE, known)
+
+
+def note_loaded(name: str) -> None:
+    known = _read_json(FRESH_FILE)
+    if name in known and not known[name].get("loaded"):
+        known[name]["loaded"] = True
+        _write_json(FRESH_FILE, known)
 
 
 def _remember_owner(installed: list, archive: str) -> None:
@@ -186,17 +219,10 @@ def _remember_owner(installed: list, archive: str) -> None:
     sets = [x["file"] for x in installed if x.get("kind") == "set"]
     if not sets:
         return
-    try:
-        known = json.loads(OWNERS_FILE.read_text(encoding="utf-8")) if OWNERS_FILE.exists() else {}
-    except (OSError, json.JSONDecodeError):
-        known = {}
+    known = _read_json(OWNERS_FILE)
     for name in sets:
         known[name] = {"ea": eas[0] if eas else "", "archive": archive}
-    try:
-        OWNERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        OWNERS_FILE.write_text(json.dumps(known, indent=1, ensure_ascii=False), encoding="utf-8")
-    except OSError:
-        pass
+    _write_json(OWNERS_FILE, known)
 
 
 def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Path) -> dict:
@@ -267,6 +293,7 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
         dropped = sorted({pathlib.PurePath(x).name for x in seen
                           if pathlib.PurePath(x).name and pathlib.PurePath(x).name not in kept_names})
         _remember_owner(seen_items, archive.name)
+        note_installed([x["name"] for x in seen_items if x["kind"] == "ea"])
         return {"ok": True, "archive": archive.name, "installed": installed,
                 "unchanged": skipped, "dropped": dropped[:40],
                 "experts": [x for x in installed if x["kind"] == "ea"],

@@ -704,10 +704,20 @@ def read_experts() -> dict:
     if not root.is_dir():
         return {"ok": False, "error": f"no Experts folder at {root}"}
 
+    try:
+        from . import installer
+        fresh = installer._read_json(installer.FRESH_FILE)
+    except Exception:                                          # noqa: BLE001
+        fresh = {}
+
     out = []
     for f in sorted(root.rglob("*.ex5")):
         rel = f.relative_to(root)
-        out.append({"name": f.stem,
+        # installed here and never seen to load: MT5 probably has not registered
+        # it, and attaching will appear to work while nothing runs
+        entry = fresh.get(f.stem)
+        out.append({"unregistered": bool(entry) and not entry.get("loaded"),
+                    "name": f.stem,
                     "path": str(pathlib.PurePath("Experts") / rel),
                     "folder": "" if str(rel.parent) == "." else str(rel.parent),
                     "size_bytes": f.stat().st_size})
@@ -1240,6 +1250,13 @@ def _attach_and_verify(body: dict) -> dict:
     log = read_terminal_log(120, "", "terminal")
     loaded = any(expert in line and "loaded successfully" in line.lower()
                  for line in (log.get("lines") or [])) if log.get("ok") else None
+
+    if loaded:
+        try:
+            from . import installer
+            installer.note_loaded(expert)          # stop warning about this one
+        except Exception:                          # noqa: BLE001
+            pass
 
     if loaded is False:
         answer["ok"] = False
