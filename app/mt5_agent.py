@@ -1280,10 +1280,27 @@ def _attach_and_verify(body: dict) -> dict:
     if not answer.get("ok"):
         return answer
 
-    time.sleep(1.5)
-    log = read_terminal_log(120, "", "terminal")
-    loaded = any(expert in line and "loaded successfully" in line.lower()
-                 for line in (log.get("lines") or [])) if log.get("ok") else None
+    # MT5 does not flush its Journal the instant an EA starts, and a single read a
+    # second and a half later called a successful attach a failure. Poll instead,
+    # and take the manager's own view as corroboration: a chart reporting the EA's
+    # inputs can only be a chart with that EA loaded on it.
+    loaded, waited = None, 0.0
+    while waited < 12:
+        time.sleep(1.5)
+        waited += 1.5
+        log = read_terminal_log(200, "loaded successfully", "terminal")
+        if not log.get("ok"):
+            loaded = None
+            break
+        if any(expert in line for line in (log.get("lines") or [])):
+            loaded = True
+            break
+        loaded = False
+        charts = read_charts()
+        if any(c.get("expert") == expert and (c.get("inputs") or [])
+               for c in (charts.get("charts") or [])):
+            loaded = True
+            break
 
     if loaded:
         try:

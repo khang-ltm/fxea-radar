@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.28"
+#property version   "1.29"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.28", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.29", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -254,6 +254,9 @@ void ChartProbe(const long id, const string expert, long &magic, string &inputs,
          return;
         }
 
+   // A probe that fails gets cached as a failure too: retrying a template save
+   // every five seconds against a chart that will not answer is how this EA ends
+   // up stuck behind the terminal instead of serving commands.
    ReadInputsFromTemplate(id, magic, inputs, mode);
 
    int n = ArraySize(g_pm_chart);
@@ -322,7 +325,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.28",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.29",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -858,7 +861,9 @@ void DoAttach(const string id, const string expert, const string path,
 
    // an EA can load and then remove itself; the caller deserves to know
    string loaded = ChartGetString(target, CHART_EXPERT_NAME);
-   Sleep(9000);            // they have been dropping off at five to eight seconds
+   // Long sleeps hold the only thread this EA has, and everything the page can do
+   // waits behind it. Three seconds is enough to catch an EA that refuses to run.
+   Sleep(3000);
    string still = ChartGetString(target, CHART_EXPERT_NAME);
    ForgetProbe(target);
    if(StringLen(still) == 0)
