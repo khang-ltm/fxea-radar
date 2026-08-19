@@ -2081,8 +2081,9 @@ document.getElementById('ea-import').onclick = async () => {
     const key = EA_EDIT.inputs[n].k;
     // magic comes through only when the EA has no settings stored yet: there is
     // nothing to orphan then, and without it nothing can attribute its trades
-    if (!wanted.has(key) || (isMagicKey(key) && EA_EDIT.inputs.some(i => !isMagicKey(i.k) && i.v)))
-      continue;
+    if (!wanted.has(key)) continue;
+    // a magic is written only where the EA records none; never changed
+    if (isMagicKey(key) && EA_EDIT.inputs.some(i => isMagicKey(i.k) && i.v)) continue;
     el.value = wanted.get(key);
     el.closest('.setrow').classList.toggle('dirty', el.value !== EA_EDIT.inputs[n].v);
     filled++;
