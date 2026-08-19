@@ -1099,9 +1099,11 @@ function attachBtn(p) {
   // instead, and go there.
   const live = hit && CHARTS.find(c => c.expert === hit.name && !c.is_manager);
   if (live) {
+    // the chip names the chart it is on, so the row answers "where is this?" as
+    // well as "is it running?", and clicking it goes to where it can be managed
     return `<button class="chip ghost" data-goea="1"
-       title="running on ${esc(live.symbol)} ${esc(tfName(live.period))} - open My EA">
-       <span class="livedot"></span>on a chart</button>`;
+       title="${esc(live.expert)} is running - open My EA to pause it or change its settings">
+       <span class="livedot"></span>${esc(live.symbol)} ${esc(tfName(live.period))} &rsaquo;</button>`;
   }
 
   // an EA already on the VPS gets a reinstall arrow, not a download arrow: the
