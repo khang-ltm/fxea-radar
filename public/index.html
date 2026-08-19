@@ -690,6 +690,12 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div class="setrow text"><label for="attach-tf">Timeframe
       <small>the chart it opens on</small></label>
       <select id="attach-tf"></select></div>
+    <div class="setrow text"><label for="attach-review">Before it trades
+      <small>an EA's real settings are only readable once it is loaded</small></label>
+      <select id="attach-review">
+        <option value="1">attach with trading OFF, let me review its settings</option>
+        <option value="0">attach and start trading straight away</option>
+      </select></div>
     <div class="setrow text"><label for="attach-preset">Settings
       <small>a .set file, or the EA's own defaults</small></label>
       <select id="attach-preset"></select></div>
@@ -2414,7 +2420,10 @@ document.getElementById('attach-go').onclick = async () => {
             ? `Settings from ${document.getElementById('attach-preset').selectedOptions[0].text}.\n`
             : "The EA's own default settings.\n")
         + (magic ? `Magic ${magic}.\n` : '')
-        + '\nIt starts trading as soon as it loads.'
+        + (document.getElementById('attach-review').value === '1'
+            ? '\nIt loads with trading OFF so you can review its settings, and does'
+              + ' nothing until you enable it.'
+            : '\nIt starts trading as soon as it loads.')
         + (opt.dataset.new ? '\n\nMT5 has not loaded this EA yet - if nothing appears,'
                              + ' refresh Navigator > Expert Advisors and attach again.' : ''),
     yes: 'Attach', danger: !ACCOUNT?.is_demo,
@@ -2424,7 +2433,9 @@ document.getElementById('attach-go').onclick = async () => {
   warn.textContent = 'attaching...';
   const magic = document.getElementById('attach-magic').value.trim();
   const preset = document.getElementById('attach-preset').value;
+  const review = document.getElementById('attach-review').value === '1';
   const r = await managerPost({ action: 'attach', confirm: true, magic, preset,
+                                trading: !review,
                                 expert: opt.dataset.name, path: opt.value, symbol, period });
   go.disabled = false;
   const note = r.magic_note ? `\n${r.magic_note}` : '';
@@ -2432,7 +2443,21 @@ document.getElementById('attach-go').onclick = async () => {
     + (r.magic_note ? ` · ${r.magic_note}` : '');
   toast((r.ok ? r.message : `Attach failed\n${r.error || r.message}`) + note,
         r.ok ? (r.magic_note?.startsWith('warning') ? 'warn' : 'ok') : 'bad', 10);
-  if (r.ok) setTimeout(() => { attachDlg.close(); loadEas().then(loadCharts); }, 1200);
+  if (r.ok) {
+    setTimeout(async () => {
+      attachDlg.close();
+      await loadEas();
+      await loadCharts();
+      // straight into the settings of what just loaded: this is the moment its
+      // inputs are readable and nothing is trading yet
+      if (review) {
+        const mine = CHARTS.find(c => c.expert === opt.dataset.name
+                                      && c.symbol === symbol && !c.is_manager);
+        if (mine) openEaSettings(String(mine.chart), { review: true });
+        else toast('attached with trading off - open its settings from the row', 'warn');
+      }
+    }, 1200);
+  }
 };
 
 /* ── EA settings dialog ────────────────────────────────────────────────────
@@ -2464,13 +2489,15 @@ const isHeading = i => !String(i.v ?? '').trim();
 const headingText = k => String(k).replace(/^[>#*=~\s-]+|[:=\s]+$/g, '')
   .replace(/^input group/i, 'Group').trim() || 'Settings';
 
-function openEaSettings(chartId) {
+function openEaSettings(chartId, opts) {
   const c = CHARTS.find(x => String(x.chart) === String(chartId));
   if (!c) return;
   EA_EDIT = { chart: c.chart, expert: c.expert, ...heldBy(c),
+              review: !!opts?.review,
               inputs: (c.inputs || []).map(i => ({ ...i })) };
 
-  document.getElementById('ea-title').textContent = shortEa(c.expert);
+  document.getElementById('ea-title').textContent =
+    (EA_EDIT.review ? 'Review ' : '') + shortEa(c.expert);
   document.getElementById('ea-sub').textContent =
     `${c.symbol} ${tfName(c.period)} · magic ${chart_magic(c) || 'unknown'} · ${EA_EDIT.inputs.length} settings`;
 
@@ -2510,6 +2537,19 @@ function eaChanges() {
 }
 
 function refreshEaButtons() {
+  if (EA_EDIT?.review) {
+    // nothing is trading yet: the button enables it, and closing the dialog is a
+    // decision to take the EA back off the chart rather than leave it half-done
+    const n = Object.keys(eaChanges()).length;
+    const save = document.getElementById('ea-save');
+    save.disabled = false;
+    save.textContent = n ? `Apply ${n} and enable trading` : 'Enable trading';
+    document.getElementById('ea-reset').hidden = !n;
+    document.getElementById('ea-note').textContent =
+      'Trading is OFF for this EA. Review its settings, then enable it -'
+      + ' or Close to take it off the chart again.';
+    return;
+  }
   const n = Object.keys(eaChanges()).length;
   const save = document.getElementById('ea-save');
   const open = EA_EDIT?.open || 0, pending = EA_EDIT?.pending || 0;
@@ -2525,7 +2565,25 @@ function refreshEaButtons() {
       : 'Applying reloads the EA: open trades stay, its memory of them does not.';
 }
 
-document.getElementById('ea-close').onclick = () => eaDlg.close();
+document.getElementById('ea-close').onclick = async () => {
+  if (EA_EDIT?.review) {
+    const keep = await ask({
+      title: `${shortEa(EA_EDIT.expert)} is not trading`,
+      body: 'It was attached with trading off so you could review it. Closing without'
+          + ' enabling takes it off the chart.',
+      yes: 'Take it off the chart', danger: true,
+    });
+    if (!keep) return;                       // stay in review
+    const chart = EA_EDIT.chart, name = shortEa(EA_EDIT.expert);
+    eaDlg.close();
+    const r = await managerPost({ action: 'unload', confirm: true, chart });
+    toast(r.ok ? `${name} removed - nothing was traded` : `Failed\n${r.error || r.message}`,
+          r.ok ? 'ok' : 'bad');
+    loadEas().then(loadCharts);
+    return;
+  }
+  eaDlg.close();
+};
 eaDlg.addEventListener('click', e => { if (e.target === eaDlg) eaDlg.close(); });
 document.getElementById('ea-reset').onclick = () => openEaSettings(EA_EDIT.chart);
 
@@ -2537,6 +2595,30 @@ const isMagicKey = k => /magic/i.test(k);
 
 document.getElementById('ea-save').onclick = async () => {
   const changes = eaChanges();
+
+  if (EA_EDIT?.review) {
+    const list = Object.entries(changes)
+      .map(([k, v]) => `  ${prettyKey(k)}: ${EA_EDIT.inputs.find(i => i.k === k).v} -> ${v}`)
+      .join(String.fromCharCode(10));
+    if (!await ask({
+      title: `Enable ${shortEa(EA_EDIT.expert)}`,
+      body: (list ? `${list}\n\n` : '')
+          + 'Trading is switched on for this EA and it starts working immediately.',
+      yes: 'Enable trading',
+      danger: !ACCOUNT?.is_demo,
+    })) return;
+
+    const note = document.getElementById('ea-note');
+    note.textContent = 'enabling...';
+    const r = await managerPost({ action: 'setinputs', confirm: true, chart: EA_EDIT.chart,
+                                  inputs: changes, mode: INSTALLABLE.expertmode || 33 });
+    note.textContent = r.ok ? (r.message || 'enabled') : `failed: ${r.error || r.message}`;
+    toast(r.ok ? `${shortEa(EA_EDIT.expert)} is now trading` : `Failed\n${r.error || r.message}`,
+          r.ok ? 'ok' : 'bad');
+    if (r.ok) { EA_EDIT.review = false; setTimeout(() => { eaDlg.close(); loadEas().then(loadCharts); }, 900); }
+    return;
+  }
+
   const list = Object.entries(changes)
     .map(([k, v]) => `  ${prettyKey(k)}: ${EA_EDIT.inputs.find(i => i.k === k).v} -> ${v}`)
     .join(String.fromCharCode(10));

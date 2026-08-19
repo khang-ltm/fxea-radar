@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.29"
+#property version   "1.30"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.29", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.30", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -325,7 +325,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.29",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.30",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -531,7 +531,7 @@ void ForgetProbe(const long id)
          g_pm_expert[i] = "";               // forces a re-read after the reload
   }
 
-void DoSetInputs(const string id, const long chart, const bool force)
+void DoSetInputs(const string id, const long chart, const bool force, const int mode)
   {
    if(!AllowEditInputs)
      {
@@ -636,8 +636,18 @@ void DoSetInputs(const string id, const long chart, const bool force)
         }
       if(low == "</inputs>")
          in_inputs = false;
-      if(!in_inputs)
+      if(!in_inputs && !(mode > 0 && in_expert && StringFind(low, "expertmode=") == 0))
          continue;
+
+      // expertmode carries the per-EA permissions, algo trading among them: an EA
+      // can therefore be attached unable to trade and switched on once its
+      // settings have been read and confirmed.
+      if(mode > 0 && in_expert && !in_inputs && StringFind(low, "expertmode=") == 0)
+        {
+         lines[i] = "expertmode=" + IntegerToString(mode);
+         applied++;
+         continue;
+        }
 
       int eq = StringFind(lines[i], "=");
       if(eq <= 0)
@@ -995,7 +1005,8 @@ void ProcessCommand()
 
    if(action == "setinputs")
      {
-      DoSetInputs(id, chart, GetField(body, "force") == "1");
+      DoSetInputs(id, chart, GetField(body, "force") == "1",
+                  (int)StringToInteger(GetField(body, "mode")));
       return;
      }
 

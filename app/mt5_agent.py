@@ -487,6 +487,7 @@ def read_charts() -> dict:
         data = json.loads(f.read_text(encoding="utf-8", errors="replace"))
     except (OSError, json.JSONDecodeError) as exc:
         return {"ok": False, "attached": False, "error": f"unreadable status file: {exc}"}
+    _remember_inputs(data.get("charts") or [])
     age = time.time() - f.stat().st_mtime
     data["ok"] = True
     data["attached"] = age < 60          # the EA rewrites it every few seconds
@@ -823,7 +824,8 @@ def _check_attach(body: dict) -> str:
 
     # everything the manager needs is in the template, so build it here where
     # there is no MQL5 sandbox to fight
-    return stage_attach_template(expert, path, settings)
+    return stage_attach_template(expert, path, settings,
+                                 trading=body.get("trading") is not False)
 
 
 def experts_dir() -> pathlib.Path | None:
@@ -956,7 +958,8 @@ def _working_expertmode() -> int:
     return max(modes) if modes else 33
 
 
-def stage_attach_template(expert: str, path: str, inputs: dict | None) -> str:
+def stage_attach_template(expert: str, path: str, inputs: dict | None,
+                          trading: bool = True) -> str:
     """Write fxea_attach.tpl with this EA in it. Returns "" or a reason."""
     tdir = _templates_dir()
     if tdir is None:
@@ -988,7 +991,9 @@ def stage_attach_template(expert: str, path: str, inputs: dict | None) -> str:
         if not placed and low == "<window>":
             out.append("<expert>")
             out.append(f"name={expert}")
-            out.append(f"expertmode={_working_expertmode()}")
+            # 0 loads the EA with algo trading off for this chart: it runs, reads
+            # nothing into the market, and its real settings become readable
+            out.append(f"expertmode={_working_expertmode() if trading else 0}")
             if path:
                 out.append(f"path={path}")
             if inputs:
@@ -1000,7 +1005,8 @@ def stage_attach_template(expert: str, path: str, inputs: dict | None) -> str:
         out.append(line)
 
     if not placed:                             # no window section: append at the end
-        out += ["<expert>", f"name={expert}", f"expertmode={_working_expertmode()}"]
+        out += ["<expert>", f"name={expert}",
+                f"expertmode={_working_expertmode() if trading else 0}"]
         if path:
             out.append(f"path={path}")
         out.append("</expert>")
@@ -1119,6 +1125,50 @@ def _read_set(path: pathlib.Path) -> tuple[str, str]:
         except UnicodeDecodeError:
             enc = "latin-1"
     return raw.decode(enc, errors="replace"), enc
+
+
+EA_INPUTS_FILE = config.DATA_DIR / "ea_inputs.json"
+
+
+def _remember_inputs(charts: list) -> None:
+    """Keep the last known settings of every EA seen running.
+
+    An EA that has never run on this terminal has no discoverable input list -
+    the names live in the compiled file - so the only way to offer them for
+    editing before an attach is to have seen them once.
+    """
+    try:
+        known = json.loads(EA_INPUTS_FILE.read_text(encoding="utf-8")) \
+            if EA_INPUTS_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        known = {}
+
+    changed = False
+    for c in charts:
+        name, inputs = c.get("expert"), c.get("inputs") or []
+        if not name or not inputs or c.get("is_manager"):
+            continue
+        snapshot = [{"k": i["k"], "v": i["v"]} for i in inputs if "k" in i]
+        if known.get(name) != snapshot:
+            known[name] = snapshot
+            changed = True
+    if changed:
+        try:
+            EA_INPUTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            EA_INPUTS_FILE.write_text(json.dumps(known, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+
+
+def read_ea_inputs(expert: str) -> dict:
+    """The settings that EA had the last time it ran here."""
+    try:
+        known = json.loads(EA_INPUTS_FILE.read_text(encoding="utf-8")) \
+            if EA_INPUTS_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        known = {}
+    items = known.get(str(expert)) or []
+    return {"ok": True, "expert": expert, "items": items, "known": bool(items)}
 
 
 def presets_dir() -> pathlib.Path | None:
@@ -1378,6 +1428,11 @@ def _settle_magic(expert: str, before: set, wanted: int) -> dict:
         return {"magic_note": f"warning: magic {current} is also used by {clash[current]}"
                               " - their trades cannot be told apart"}
     return {}
+
+
+def working_expertmode() -> int:
+    """Public: the permission value the EAs on this terminal run with."""
+    return _working_expertmode()
 
 
 def _attach_and_verify(body: dict) -> dict:
@@ -1724,7 +1779,8 @@ class Handler(BaseHTTPRequestHandler):
             # Windows' own tar reads rar4 only - so report that tool by name
             rar = installer._extractor(".rar")
             other = installer._extractor(".zip")
-            self._json({"ok": True, "telegram": installer.session_ready(),
+            self._json({"ok": True, "expertmode": working_expertmode(),
+                        "telegram": installer.session_ready(),
                         "extractor": rar is not None,
                         "extractor_rar": pathlib.Path(rar[0]).name if rar else None,
                         "extractor_zip": pathlib.Path(other[0]).name if other else None,
@@ -1742,6 +1798,13 @@ class Handler(BaseHTTPRequestHandler):
                 want = 60
             self._json(read_terminal_log(want, qs.get("q", [""])[0],
                                         qs.get("which", ["experts"])[0]))
+            return
+        if path == "/api/eainputs":
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            want = parse_qs(urlparse(self.path).query).get("expert", [""])[0]
+            self._json(read_ea_inputs(want))
             return
         if path in ("/api/presets", "/api/preset"):
             if not self._authorized():
@@ -1883,6 +1946,7 @@ class Handler(BaseHTTPRequestHandler):
             magic=body.get("magic"),
             path=body.get("path"),
             period=body.get("period"),
+            mode=body.get("mode"),
             force=1 if (action == "setinputs" and body.get("force")) else None,
         ))
 
