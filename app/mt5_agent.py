@@ -961,6 +961,19 @@ def agent_health() -> dict:
 
     out = {"ok": True, "code": _current_sha()[:7] or "unknown"}
 
+    # this machine has two terminal data folders, and compiling into the wrong
+    # one looks exactly like MT5 refusing to reload
+    files = _mql5_files_dir()
+    if files is not None:
+        out["terminal_data"] = str(files.parent.parent)
+        mgr = files.parent / "Experts" / MANAGER_SOURCE
+        ex5 = mgr.with_suffix(".ex5")
+        for label, f in (("manager_src", mgr), ("manager_ex5", ex5)):
+            if f.exists():
+                out[label] = {"mtime": datetime.fromtimestamp(f.stat().st_mtime,
+                                                              timezone.utc).isoformat(),
+                              "size": f.stat().st_size}
+
     try:
         usage = shutil.disk_usage(str(config.ROOT))
         out["disk_free_gb"] = round(usage.free / 1024 ** 3, 2)
