@@ -544,6 +544,33 @@ def _typed_like(old: str, new: str) -> str:
     return ""            # a string input: anything printable will load
 
 
+def _magic_busy(have: dict) -> bool:
+    """Whether the EA's current magic has anything open.
+
+    Changing a magic orphans whatever that EA is holding, which is why it is
+    refused - but two EAs sharing a magic is worse than either, and the only way
+    out is to change one. So it is allowed while the EA is flat: nothing to
+    orphan, and the collision gets fixed instead of frozen in place.
+    """
+    numbers = set()
+    for key, value in have.items():
+        if "magic" in key.lower():
+            try:
+                numbers.add(int(str(value).strip()))
+            except ValueError:
+                continue
+    numbers.discard(0)
+    if not numbers:
+        return False
+
+    state = read_state()
+    if not state.get("ok"):
+        return True                      # cannot tell: keep refusing
+    live = [p for p in (state.get("positions") or []) if int(p.get("magic") or 0) in numbers]
+    live += [o for o in (state.get("orders") or []) if int(o.get("magic") or 0) in numbers]
+    return bool(live)
+
+
 def _stage_inputs(pairs, chart) -> object:
     """Write the settings the manager should apply. Returns a message on refusal.
 
@@ -565,12 +592,9 @@ def _stage_inputs(pairs, chart) -> object:
         text = "" if value is None else str(value)
         if not _INPUT_KEY.match(key):
             return f"bad setting name: {key}"
-        if "magic" in key.lower() and any("magic" in k.lower() for k in have):
-            # Identity, not a setting: changing a magic orphans the trades that EA
-            # has open and can hand it another EA's positions. Writing one where
-            # the chart records none is a different act - nothing to orphan, and
-            # without it the EA's trades can never be attributed to it at all.
-            return f"{key} cannot be changed from here"
+        if "magic" in key.lower() and any("magic" in k.lower() for k in have)                 and _magic_busy(have):
+            return (f"{key} cannot be changed while that magic has open trades - "
+                    "pause the EA or close them first")
         if len(text) > 500 or chr(10) in text or chr(13) in text:
             return f"bad value for {key}"
         # A magic the chart does not record yet is allowed to be added; every
