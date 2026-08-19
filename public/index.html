@@ -259,6 +259,7 @@ pre.raw { margin: var(--space-2) 0 0; padding: var(--space-3); background: var(-
 .vrow__ver { font-family: var(--font-head); color: var(--color-foreground); min-width: 52px; }
 .vrow__date { font-family: var(--font-head); color: var(--color-muted-fg); }
 .vrow__sp { flex: 1 1 auto; }
+.vrow .chip--icon { margin-right: 6px; }
 
 .file__dl { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; min-height: 26px;
   border: 1px solid var(--color-accent); border-radius: var(--radius-sm); color: var(--color-accent);
@@ -762,6 +763,29 @@ const sorters = {
 const fileOf = p => (p.files || [])[0];
 const extOf = f => (f?.name.match(/\.([a-z0-9]{2,4})$/i)?.[1] || 'file').toLowerCase();
 
+/* A version row used to test only for a downloaded copy, and the sync never
+   downloads binaries - a static site cannot serve them - so every older version
+   read "no file" while its .rar sat one click away in the post. downloadBtn
+   already falls back to the Telegram link, so use it, and offer to install that
+   exact version while we are here: the agent fetches by message id, and an older
+   build is sometimes the one that works. */
+const tgIds = url => {
+  const m = /https?:\/\/t\.me\/([^/]+)\/(\d+)/.exec(String(url || ''));
+  return m ? { channel: m[1], message_id: Number(m[2]) } : null;
+};
+
+function installVersionBtn(v, product) {
+  const ids = tgIds(v.url);
+  const file = (v.files || [])[0];
+  if (!ids || !file || !INSTALLABLE.telegram) return '';
+  const pair = (product.pairs || []).find(x => /^[A-Z0-9.]{5,12}$/.test(x)) || '';
+  const tf = (product.timeframes || []).map(x => TF_BY_NAME[String(x).toUpperCase()]).find(Boolean) || '';
+  return `<button class="chip chip--icon" data-install="${ids.message_id}"
+     data-channel="${esc(ids.channel)}" data-ea="${esc(v.name || product.name)}"
+     data-sym="${esc(pair)}" data-tf="${tf}" data-file="${esc(file.name)}"
+     title="Install ${esc(v.version || 'this version')} on the VPS">${ICON.download}</button>`;
+}
+
 function downloadBtn(p) {
   const f = fileOf(p);
   if (!f) return '<span class="file__pending">no file</span>';
@@ -858,7 +882,7 @@ function detailHtml(p) {
           <span class="vrow__ver">${esc(v.version || '—')}</span>
           <span class="vrow__date">${esc(v.date_iso)}</span>
           <span class="vrow__sp"></span>
-          ${f?.local_path ? `<a class="file__dl" href="/files/${encodeURI(f.local_path)}" download>${ICON.download} ${fmtSize(f.size_bytes)}</a>` : '<span class="file__pending">no file</span>'}
+          ${installVersionBtn(v, p)}${downloadBtn(v)}
           ${v.url ? `<a href="${esc(v.url)}" target="_blank" rel="noopener">post</a>` : ''}
         </div>`;
       }).join('')}</div></section>` : ''}
@@ -890,6 +914,13 @@ function openDetail(key) {
   tg.hidden = !p.url;
   if (p.url) tg.href = p.url;
   document.getElementById('detail-body').innerHTML = detailHtml(p);
+  for (const b of detailDlg.querySelectorAll('[data-install]')) {
+    b.onclick = () => { detailDlg.close(); openAttach({
+      symbol: b.dataset.sym, period: Number(b.dataset.tf) || 0,
+      install: { channel: b.dataset.channel, message_id: Number(b.dataset.install),
+                 name: b.dataset.ea, file: b.dataset.file },
+    }); };
+  }
   detailDlg.showModal();
   document.getElementById('detail-body').scrollTop = 0;
   document.body.classList.add('modal-open');
