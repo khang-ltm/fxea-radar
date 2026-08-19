@@ -2496,7 +2496,7 @@ document.getElementById('attach-go').onclick = async () => {
 
   const where = ACCOUNT
     ? `${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} (${ACCOUNT.server})` : 'this account';
-  if (!await ask({
+  const answer = await ask({
     title: `Attach ${shortEa(opt.dataset.name)}`,
     body: `${opt.dataset.name}\nto ${symbol} ${TF_NAMES[period]} on ${where}.\n\n`
         + (document.getElementById('attach-preset').value
@@ -2509,8 +2509,11 @@ document.getElementById('attach-go').onclick = async () => {
             : '\nIt starts trading as soon as it loads.')
         + (opt.dataset.new ? '\n\nMT5 has not loaded this EA yet - if nothing appears,'
                              + ' refresh Navigator > Expert Advisors and attach again.' : ''),
-    yes: 'Attach', danger: !ACCOUNT?.is_demo,
-  })) return;
+    yes: review ? 'Attach with trading off' : 'Attach and trade',
+    danger: !review && !ACCOUNT?.is_demo,
+    pin: !review,                            // the PIN belongs where trading starts
+  });
+  if (!answer) return;
 
   go.disabled = true;
   const wasLabel = go.textContent;
@@ -2518,7 +2521,7 @@ document.getElementById('attach-go').onclick = async () => {
   warn.innerHTML = 'opening the chart and loading the EA - this takes a few seconds…';
   const ticking = toast('Attaching…', 'warn', 30);
   const r = await managerPost({ action: 'attach', confirm: true, magic, preset,
-                                trading: !review,
+                                pin: answer.pin, trading: !review,
                                 expert: opt.dataset.name, path: opt.value, symbol, period });
   go.disabled = false;
   const note = r.magic_note ? `\n${r.magic_note}` : '';
@@ -2683,18 +2686,21 @@ document.getElementById('ea-save').onclick = async () => {
     const list = Object.entries(changes)
       .map(([k, v]) => `  ${prettyKey(k)}: ${EA_EDIT.inputs.find(i => i.k === k).v} -> ${v}`)
       .join(String.fromCharCode(10));
-    if (!await ask({
+    const go = await ask({
       title: `Enable ${shortEa(EA_EDIT.expert)}`,
       body: (list ? `${list}\n\n` : '')
           + 'Trading is switched on for this EA and it starts working immediately.',
       yes: 'Enable trading',
       danger: !ACCOUNT?.is_demo,
-    })) return;
+      pin: true,
+    });
+    if (!go) return;
 
     const note = document.getElementById('ea-note');
     note.textContent = 'enabling...';
     const r = await managerPost({ action: 'setinputs', confirm: true, chart: EA_EDIT.chart,
-                                  inputs: changes, mode: INSTALLABLE.expertmode || 33 });
+                                  pin: go.pin, inputs: changes,
+                                  mode: INSTALLABLE.expertmode || 33 });
     note.textContent = r.ok ? (r.message || 'enabled') : `failed: ${r.error || r.message}`;
     toast(r.ok ? `${shortEa(EA_EDIT.expert)} is now trading` : `Failed\n${r.error || r.message}`,
           r.ok ? 'ok' : 'bad');

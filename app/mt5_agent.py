@@ -618,10 +618,25 @@ def _stage_inputs(pairs, chart) -> object:
 
 
 # Actions that can make the terminal trade with code it was not already running.
-# Deleting an .ex5 is the one action here with no undo, so it keeps the PIN.
-# Attach and install are gated by holding the token at all - which is also what
-# lets anything else on this agent be reached.
+# The PIN guards the two things that cannot be taken back: deleting a file, and
+# letting an EA trade. Attaching with trading off is neither - it loads code that
+# can do nothing until someone confirms it - so it costs no PIN, which is what
+# makes reviewing settings before enabling the easy path rather than the annoying
+# one.
 GUARDED = ("uninstall",)
+
+
+def needs_pin(action: str, body: dict) -> bool:
+    if action in GUARDED:
+        return True
+    if action == "attach":
+        return body.get("trading") is not False          # straight into trading
+    if action == "setinputs":
+        try:
+            return int(body.get("mode") or 0) > 0        # switching trading on
+        except (TypeError, ValueError):
+            return False
+    return False
 AGENT_PIN = (os.environ.get("MT5_PIN") or "").strip()
 
 TIMEFRAMES = {1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30,
@@ -1874,7 +1889,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         action = str(body.get("action") or "")
-        if action in GUARDED:
+        if needs_pin(action, body):
             who = self.client_address[0]
             left = _pin_locked(who)
             if left > 0:
@@ -1887,7 +1902,7 @@ class Handler(BaseHTTPRequestHandler):
                 _audit({"ok": False, "action": "pin refused"}, {"from": who})
                 self._json({"ok": False,
                             "error": "PIN required" if AGENT_PIN else
-                                     "no MT5_PIN set on the agent, so deleting is disabled",
+                                     "no MT5_PIN is set on the agent, so this is disabled",
                             "need_pin": bool(AGENT_PIN)}, 403)
                 return
             _pin_fails.pop(who, None)
