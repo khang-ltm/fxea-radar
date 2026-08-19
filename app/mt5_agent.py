@@ -573,7 +573,10 @@ def _stage_inputs(pairs, chart) -> object:
             return f"{key} cannot be changed from here"
         if len(text) > 500 or chr(10) in text or chr(13) in text:
             return f"bad value for {key}"
-        if have and key not in have:
+        # A magic the chart does not record yet is allowed to be added; every
+        # other unknown name is a typo, and writing it would silently do nothing.
+        if have and key not in have and not ("magic" in key.lower()
+                                             and not any("magic" in k.lower() for k in have)):
             return f"{key} is not an input of this EA"
         if have:
             complaint = _typed_like(have[key], text)
