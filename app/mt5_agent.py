@@ -1080,6 +1080,50 @@ def write_preset(name: str, values: dict) -> dict:
     return out
 
 
+def update_now() -> dict:
+    """Pull and restart immediately, rather than waiting up to twenty minutes.
+
+    Nothing outside can reach into this machine, so the agent polls GitHub - which
+    means every fix sat idle for a while after it shipped, and the way round that
+    was asking a human to paste commands. With this, whoever pushed can apply it
+    through the same API everything else uses.
+
+    The restart replaces this process, so the answer goes out first and the
+    re-exec happens on a timer just after.
+    """
+    try:
+        remote = _remote_sha()
+    except Exception as exc:                                   # noqa: BLE001
+        return {"ok": False, "error": f"cannot reach GitHub: {exc}"}
+    if not remote:
+        return {"ok": False, "error": "GitHub returned no commit"}
+    if remote == _current_sha():
+        return {"ok": True, "message": f"already on {remote[:7]}", "restarting": False}
+
+    try:
+        _apply_update(remote)
+    except Exception as exc:                                   # noqa: BLE001
+        return {"ok": False, "error": f"update failed: {exc}"}
+
+    manager = sync_manager_ea()
+
+    def restart() -> None:
+        import subprocess
+        import sys
+
+        time.sleep(1.0)                       # let the HTTP answer leave first
+        print(f"[update] restarting into {remote[:7]}", flush=True)
+        if _mt5 is not None:
+            _mt5.shutdown()
+        os.execv(sys.executable, [sys.executable, "-m", "app.mt5_agent", *sys.argv[1:]])
+
+    threading.Thread(target=restart, daemon=True).start()
+    out = {"ok": True, "message": f"updating to {remote[:7]} - back in a few seconds",
+           "manager": manager, "restarting": True}
+    _audit(out, {"update": remote[:7]})
+    return out
+
+
 def uninstall_ea(rel_path: str) -> dict:
     """Take an EA out of MQL5/Experts, keeping a copy in case it was a mistake.
 
@@ -1450,7 +1494,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             _pin_fails.pop(who, None)
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
-                          "attach", "forget", "install", "uninstall", "savepreset"):
+                          "attach", "forget", "install", "uninstall", "savepreset",
+                          "update"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
         if action in ("pause", "unload", "setinputs", "attach", "forget",
@@ -1463,6 +1508,10 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(written, str):
                 self._json({"ok": False, "error": written}, 400)
                 return
+
+        if action == "update":
+            self._json(update_now())
+            return
 
         if action == "savepreset":
             self._json(write_preset(str(body.get("name") or ""), body.get("values")))
