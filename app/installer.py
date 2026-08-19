@@ -229,9 +229,16 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
         # nothing will ever offer you in the EA's Load dialog
         presets = experts_dir.parent / "Presets"
         presets.mkdir(parents=True, exist_ok=True)
+        # A preset called "audcad m15" says nothing about whose settings it is, and
+        # the pairing is only knowable here - so the EA's name goes in front of it.
+        # The file MT5 loads is unchanged; only what it is called changes.
+        owner = next((f.stem for f in found if f.suffix.lower() == ".ex5"), "")
         installed, skipped, seen_items = [], [], []
         for f in found:
-            dst = (presets if f.suffix.lower() == ".set" else target) / f.name
+            if f.suffix.lower() == ".set" and owner and not f.name.startswith(owner):
+                dst = presets / f"{owner} - {f.name}"
+            else:
+                dst = (presets if f.suffix.lower() == ".set" else target) / f.name
             kind = "ea" if dst.suffix.lower() == ".ex5" else "set"
             seen_items.append({"file": dst.name, "name": dst.stem, "kind": kind})
             if dst.exists():
