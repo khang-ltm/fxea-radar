@@ -86,6 +86,8 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .btn--primary { background: var(--color-accent); color: var(--color-on-accent);
   border-color: var(--color-accent); font-weight: 600; }
 .btn--primary:hover { background: color-mix(in srgb, var(--color-accent) 85%, #fff); }
+.btn--danger { background: var(--color-destructive); color: #fff; border-color: var(--color-destructive); }
+.btn--danger:hover { background: color-mix(in srgb, var(--color-destructive) 85%, #fff); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn--primary:disabled { background: var(--color-surface-2); color: var(--color-muted-fg);
    border-color: var(--color-border); opacity: 1; }
@@ -115,6 +117,24 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .chip.ghost { min-height: 0; padding: 1px 6px; font-size: 11px; border-color: transparent;
    background: none; color: var(--color-muted-fg); }
 .chip.ghost:hover { border-color: var(--color-border); }
+.asktext { margin: 0; white-space: pre-wrap; line-height: 1.5; }
+#toasts { position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 60;
+   display: flex; flex-direction: column; gap: var(--space-2); max-width: min(92vw, 420px); }
+.toast { display: flex; gap: var(--space-2); align-items: flex-start; cursor: pointer;
+   padding: 10px 12px; border-radius: var(--radius); font-size: 13px; line-height: 1.45;
+   background: var(--color-surface-2); color: var(--color-foreground);
+   border: 1px solid var(--color-border); box-shadow: 0 8px 24px rgba(2,6,23,.45);
+   animation: toastin .18s ease-out; white-space: pre-wrap; }
+.toast--ok { border-color: color-mix(in srgb, var(--color-accent) 55%, transparent); }
+.toast--bad { border-color: color-mix(in srgb, var(--color-destructive) 60%, transparent); }
+.toast--warn { border-color: color-mix(in srgb, var(--color-warn) 55%, transparent); }
+.toast__dot { flex: none; width: 8px; height: 8px; border-radius: 50%; margin-top: 6px;
+   background: var(--color-muted-fg); }
+.toast--ok .toast__dot { background: var(--color-accent); }
+.toast--bad .toast__dot { background: var(--color-destructive); }
+.toast--warn .toast__dot { background: var(--color-warn); }
+@keyframes toastin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 .sheet__foot { display: flex; align-items: center; gap: var(--space-3); flex: none;
    padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border);
    background: var(--color-surface); }
@@ -605,6 +625,25 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
   <div class="sheet__body" id="detail-body"></div>
 </dialog>
 
+<dialog class="sheet" id="askdlg" aria-labelledby="ask-title" style="width:min(94vw,480px)">
+  <div class="sheet__bar">
+    <h2 id="ask-title">Confirm</h2>
+    <button class="btn" id="ask-no">Cancel</button>
+  </div>
+  <div class="sheet__body">
+    <p id="ask-body" class="asktext"></p>
+    <div class="setrow text" id="ask-pinrow" hidden>
+      <label for="ask-pin">PIN<small>required for this one</small></label>
+      <input id="ask-pin" type="password" autocomplete="off"></div>
+  </div>
+  <div class="sheet__foot">
+    <span class="hint" id="ask-note"></span>
+    <button class="btn btn--primary" id="ask-yes">Confirm</button>
+  </div>
+</dialog>
+
+<div id="toasts" aria-live="polite"></div>
+
 <dialog class="sheet" id="setdlg" aria-labelledby="set-title" style="width:min(94vw,620px)">
   <div class="sheet__bar">
     <h2 id="set-title">Preset</h2>
@@ -719,6 +758,7 @@ const ICON = {
   chevronDown: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
   gear: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 5 8.9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9.6a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   folder: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  refresh: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>',
   chart: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
 const RISKY = new Set(['cracked', 'martingale', 'grid']);
@@ -1021,13 +1061,15 @@ function attachBtn(p) {
   const canFetch = file && INSTALLABLE.telegram && p.message_id;
   // Fetching stays available after an install: a newer version gets posted, or a
   // reinstall is simply the fastest way to put the files back where they belong.
+  const hit = installedFor(p.name);
+  // an EA already on the VPS gets a reinstall arrow, not a download arrow: the
+  // same icon for "fetch this" and "fetch it again" read as a broken button
   const fetchBtn = !canFetch ? '' : `<button class="chip chip--icon"
      data-install="${esc(String(p.message_id))}" data-channel="${esc(p.channel || '')}"
      data-ea="${esc(p.name)}" data-sym="${esc(pair)}" data-tf="${tf}"
      data-file="${esc(file.name)}"
-     title="Install ${esc(file.name)} on the VPS from the channel">${ICON.download}</button>`;
-
-  const hit = installedFor(p.name);
+     title="${hit ? 'Install ' + esc(file.name) + ' again from the channel'
+                  : 'Install ' + esc(file.name) + ' on the VPS'}">${hit ? ICON.refresh : ICON.download}</button>`;
   if (hit) {
     return `<button class="chip chip--icon" data-attach="${esc(hit.name)}" data-path="${esc(hit.path)}"
        data-sym="${esc(pair)}" data-tf="${tf}"
@@ -1922,14 +1964,16 @@ function renderInstalled(charts, paused) {
 }
 
 async function removeInstalled(path, name) {
-  const pin = prompt(`Delete "${name}" from the VPS?`
-    + String.fromCharCode(10, 10)
-    + 'It is not on a chart, so nothing stops trading. The file is deleted -'
-    + ' installing it again from the catalog is one click.'
-    + String.fromCharCode(10, 10) + 'Enter the PIN to confirm:');
-  if (!pin) return;
-  const r = await managerPost({ action: 'uninstall', confirm: true, pin, path });
-  if (!r.ok) { alert(`Failed: ${r.error || r.message}`); return; }
+  const answer = await ask({
+    title: `Delete ${name}`,
+    body: 'It is not on a chart, so nothing stops trading. The file is deleted -'
+        + ' installing it again from the catalog is one click.',
+    yes: 'Delete', danger: true, pin: true,
+  });
+  if (!answer) return;
+  const r = await managerPost({ action: 'uninstall', confirm: true, pin: answer.pin, path });
+  if (!r.ok) { toast(`Failed\n${r.error || r.message}`, 'bad'); return; }
+  toast(r.message, 'ok');
 
   // gone means gone: drop it locally rather than waiting for the next poll, and
   // re-render the catalog too, since that row now offers install instead of chart
@@ -1938,6 +1982,62 @@ async function removeInstalled(path, name) {
   render();
   installedAsked = false;
   loadInstalled();
+}
+
+/* ── asking and telling ──────────────────────────────────────────
+   confirm() and alert() block the page, look nothing like the rest of it, and
+   cannot show a PIN field or a list of what an install produced. One dialog and
+   one toast stack replace them everywhere. */
+const askDlg = document.getElementById('askdlg');
+let askResolve = null;
+
+function ask({ title = 'Confirm', body = '', yes = 'Confirm', danger = false, pin = false }) {
+  document.getElementById('ask-title').textContent = title;
+  document.getElementById('ask-body').textContent = body;
+  document.getElementById('ask-note').textContent = '';
+  const pinRow = document.getElementById('ask-pinrow');
+  const pinBox = document.getElementById('ask-pin');
+  pinRow.hidden = !pin;
+  pinBox.value = '';
+  const go = document.getElementById('ask-yes');
+  go.textContent = yes;
+  go.classList.toggle('btn--danger', !!danger);
+  askDlg.showModal();
+  if (pin) setTimeout(() => pinBox.focus(), 40);
+  return new Promise(resolve => { askResolve = resolve; });
+}
+
+function settle(value) {
+  askDlg.close();
+  const done = askResolve;
+  askResolve = null;
+  if (done) done(value);
+}
+
+document.getElementById('ask-no').onclick = () => settle(null);
+askDlg.addEventListener('click', e => { if (e.target === askDlg) settle(null); });
+askDlg.addEventListener('close', () => settle(null));
+document.getElementById('ask-yes').onclick = () => {
+  const pinRow = document.getElementById('ask-pinrow');
+  const pin = document.getElementById('ask-pin').value.trim();
+  if (!pinRow.hidden && !pin) {
+    document.getElementById('ask-note').textContent = 'the PIN is required';
+    return;
+  }
+  settle({ pin });
+};
+
+/* Toasts stay long enough to read a failure and can be dismissed by clicking. */
+function toast(text, kind = 'ok', seconds = 7) {
+  const box = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = `toast toast--${kind}`;
+  el.innerHTML = `<span class="toast__dot"></span><span></span>`;
+  el.lastChild.textContent = text;
+  el.onclick = () => el.remove();
+  box.appendChild(el);
+  setTimeout(() => el.remove(), seconds * 1000);
+  return el;
 }
 
 /* ── preset files ───────────────────────────────────────────────
@@ -1984,12 +2084,15 @@ async function loadPresets() {
   }
   for (const b of document.querySelectorAll('[data-setdel]')) {
     b.onclick = async () => {
-      if (!confirm(`Delete the preset "${b.dataset.name}"?`
-          + String.fromCharCode(10, 10)
-          + 'Nothing running changes - a preset is only settings on disk, and the'
-          + ' EA that shipped it can be installed again.')) return;
+      if (!await ask({
+        title: `Delete ${b.dataset.name}`,
+        body: 'Nothing running changes - a preset is only settings on disk, and the'
+            + ' EA that shipped it can be installed again.',
+        yes: 'Delete', danger: true,
+      })) return;
       const r = await managerPost({ action: 'delpreset', confirm: true, name: b.dataset.setdel });
-      if (!r.ok) { alert(`Failed: ${r.error || r.message}`); return; }
+      if (!r.ok) { toast(`Failed\n${r.error || r.message}`, 'bad'); return; }
+      toast(r.message, 'ok');
       PRESETS = PRESETS.filter(x => x.file !== b.dataset.setdel);
       loadPresets();
     };
@@ -2006,7 +2109,7 @@ async function fetchPreset(file) {
 
 async function openPreset(file) {
   const d = await fetchPreset(file).catch(e => ({ ok: false, error: e.message }));
-  if (!d.ok) { alert(`Cannot read ${file}: ${d.error}`); return; }
+  if (!d.ok) { toast(`Cannot read ${file}\n${d.error}`, 'bad'); return; }
   SET_OPEN = d;
 
   document.getElementById('set-title').textContent = d.name;
@@ -2112,9 +2215,12 @@ document.getElementById('ea-import').onclick = async () => {
 async function installFromCatalog(btn) {
   const { channel, ea, file } = btn.dataset;
   const id = Number(btn.dataset.install);
-  if (!confirm(`Download ${file} from ${channel} and install it on the VPS?`
-      + String.fromCharCode(10, 10)
-      + 'It is compiled code from a public channel. Nothing is attached to a chart.')) return;
+  if (!await ask({
+    title: `Install ${ea}`,
+    body: `${file}\n\nDownloaded from ${channel} and installed on the VPS.`
+        + ' It is compiled code from a public channel, and nothing is attached to a chart.',
+    yes: 'Download and install',
+  })) return;
 
   const was = btn.innerHTML;
   btn.innerHTML = '…';
@@ -2123,17 +2229,15 @@ async function installFromCatalog(btn) {
   btn.innerHTML = was;
   btn.disabled = false;
 
-  if (!r.ok) { alert(`Install failed: ${r.error || r.message}`); return; }
+  if (!r.ok) { toast(`Install failed\n${r.error || r.message}`, 'bad'); return; }
 
   const eas = (r.experts || []).map(e => e.file);
   const sets = (r.presets || []).map(e => e.file);
-  alert(`Installed ${ea}${String.fromCharCode(10, 10)}`
-    + (eas.length ? `EA: ${eas.join(', ')}${String.fromCharCode(10)}` : 'no .ex5 in the archive\n')
-    + (sets.length ? `Presets: ${sets.join(', ')}${String.fromCharCode(10)}` : '')
-    + (r.dropped?.length ? `Ignored ${r.dropped.length} other file(s)${String.fromCharCode(10)}` : '')
-    + String.fromCharCode(10)
-    + 'Attach it from My EA when you want it running. A brand new EA may need one'
-    + ' Navigator refresh in MT5 first - attaching will say so if it does.');
+  toast(`Installed ${ea}\n`
+    + (eas.length ? `EA: ${eas.join(', ')}\n` : 'no .ex5 in the archive\n')
+    + (sets.length ? `Preset: ${sets.join(', ')}\n` : '')
+    + (r.dropped?.length ? `${r.dropped.length} other file(s) ignored\n` : '')
+    + 'Attach it from My EA when you want it running.', eas.length ? 'ok' : 'warn', 10);
 
   installedAsked = false;
   loadInstalled();
@@ -2257,8 +2361,14 @@ document.getElementById('attach-go').onclick = async () => {
 
   const where = ACCOUNT
     ? `${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} (${ACCOUNT.server})` : 'this account';
-  if (!confirm(`Attach "${opt.dataset.name}" to ${symbol} ${TF_NAMES[period]} on ${where}?`
-      + String.fromCharCode(10, 10) + 'It starts trading as soon as it loads.')) return;
+  if (!await ask({
+    title: `Attach ${shortEa(opt.dataset.name)}`,
+    body: `${opt.dataset.name}\nto ${symbol} ${TF_NAMES[period]} on ${where}.\n\n`
+        + 'It starts trading as soon as it loads.'
+        + (opt.dataset.new ? '\n\nMT5 has not loaded this EA yet - if nothing appears,'
+                             + ' refresh Navigator > Expert Advisors and attach again.' : ''),
+    yes: 'Attach', danger: !ACCOUNT?.is_demo,
+  })) return;
 
   go.disabled = true;
   warn.textContent = 'attaching...';
@@ -2266,6 +2376,7 @@ document.getElementById('attach-go').onclick = async () => {
                                 expert: opt.dataset.name, path: opt.value, symbol, period });
   go.disabled = false;
   warn.textContent = r.ok ? (r.message || 'attached') : ('failed: ' + (r.error || r.message));
+  toast(r.ok ? r.message : `Attach failed\n${r.error || r.message}`, r.ok ? 'ok' : 'bad', 9);
   if (r.ok) setTimeout(() => { attachDlg.close(); loadEas().then(loadCharts); }, 1200);
 };
 
@@ -2374,9 +2485,11 @@ document.getElementById('ea-save').onclick = async () => {
   const list = Object.entries(changes)
     .map(([k, v]) => `  ${prettyKey(k)}: ${EA_EDIT.inputs.find(i => i.k === k).v} -> ${v}`)
     .join(String.fromCharCode(10));
-  const what = `Apply to ${shortEa(EA_EDIT.expert)}?${String.fromCharCode(10, 10)}${list}`
-    + String.fromCharCode(10, 10) + 'The EA reloads. Open trades stay open.';
-  if (!confirm(what)) return;
+  if (!await ask({
+    title: `Apply to ${shortEa(EA_EDIT.expert)}`,
+    body: `${list}\n\nThe EA reloads. Open trades stay open.`,
+    yes: 'Apply',
+  })) return;
 
   const note = document.getElementById('ea-note');
   const save = document.getElementById('ea-save');
@@ -2540,11 +2653,10 @@ async function managerAction(action, args, label) {
       : action === 'unload'
         ? 'Closes the chart. There is no EA on it, so nothing stops trading.'
         : 'The chart reopens with the EA and its saved settings.';
-  if (!confirm(`${verb} ${label}?
-
-${note}`)) return;
+  if (!await ask({ title: `${verb} ${label}`, body: note, yes: verb,
+                   danger: action === 'forget' || action === 'unload' })) return;
   const d = await managerPost({ action, ...args, confirm: true });
-  alert(d.ok ? `Done: ${d.message}` : `Failed: ${d.error || d.message}`);
+  toast(d.ok ? d.message : `Failed\n${d.error || d.message}`, d.ok ? 'ok' : 'bad');
   loadEas().then(loadCharts);
 }
 
