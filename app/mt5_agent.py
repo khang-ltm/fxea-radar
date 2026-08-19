@@ -715,7 +715,7 @@ def read_experts() -> dict:
     # right now, or has logged loading, is registered by definition.
     if fresh:
         seen = {c.get("expert") for c in (read_charts().get("charts") or []) if c.get("expert")}
-        log = read_terminal_log(300, "loaded successfully", "terminal")
+        log = read_terminal_log(800, "loaded successfully", "terminal", days=5)
         lines = log.get("lines") or []
         for name, entry in list(fresh.items()):
             if entry.get("loaded"):
@@ -803,7 +803,8 @@ def install_ea(channel: str, message_id) -> dict:
     return result
 
 
-def read_terminal_log(lines: int = 60, needle: str = "", which: str = "experts") -> dict:
+def read_terminal_log(lines: int = 60, needle: str = "", which: str = "experts",
+                      days: int = 1) -> dict:
     """The tail of MT5's own Experts log.
 
     An EA that loads and then calls ExpertRemove - a licence check failing, a
@@ -828,7 +829,23 @@ def read_terminal_log(lines: int = 60, needle: str = "", which: str = "experts")
     if not logs:
         return {"ok": False, "error": "no dated log files found"}
 
-    newest = max(logs, key=lambda f: f.stat().st_mtime)
+    logs.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    newest = logs[0]
+    if days > 1:
+        # MT5 writes one log file per day, so "did this EA ever load" cannot be
+        # answered from today alone
+        rows, names = [], []
+        for f in logs[:days]:
+            try:
+                rows += _read_set(f)[0].splitlines()
+            except OSError:
+                continue
+            names.append(f.name)
+        rows = [r.rstrip() for r in rows if r.strip()]
+        if needle:
+            low = needle.lower()
+            rows = [r for r in rows if low in r.lower()]
+        return {"ok": True, "file": ", ".join(names), "lines": rows[-max(1, min(2000, lines)):]}
     try:
         text = newest.read_text(encoding="utf-16-le", errors="replace")
         if "\x00" in text or text.count(chr(0)) > 10:      # not utf-16 after all
