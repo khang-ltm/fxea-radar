@@ -988,6 +988,98 @@ def agent_health() -> dict:
     return out
 
 
+def presets_dir() -> pathlib.Path | None:
+    d = _mql5_files_dir()
+    return None if d is None else d.parent / "Presets"
+
+
+def read_presets() -> dict:
+    """The .set files MT5 would offer in an EA's Load dialog."""
+    root = presets_dir()
+    if root is None:
+        return {"ok": False, "error": _init_error or "terminal not readable"}
+    if not root.is_dir():
+        return {"ok": True, "count": 0, "presets": []}
+
+    out = []
+    for f in sorted(root.glob("*.set")):
+        try:
+            lines = f.read_text(encoding="latin-1", errors="replace").splitlines()
+        except OSError:
+            continue
+        out.append({"name": f.stem,
+                    "file": f.name,
+                    "size_bytes": f.stat().st_size,
+                    "entries": sum(1 for l in lines
+                                   if "=" in l and not l.lstrip().startswith(";"))})
+    return {"ok": True, "count": len(out), "presets": out}
+
+
+def read_preset(name: str) -> dict:
+    """One preset, parsed.
+
+    An MT5 .set line is name=value||start||step||stop||optimise - only the first
+    field is the value an EA runs with, and the rest is tester metadata that has
+    to survive a rewrite or the file stops being usable for optimisation.
+    """
+    root = presets_dir()
+    if root is None:
+        return {"ok": False, "error": _init_error or "terminal not readable"}
+    f = root / (pathlib.PurePath(str(name)).name)
+    if f.suffix.lower() != ".set":
+        f = f.with_suffix(".set")
+    if not f.exists():
+        return {"ok": False, "error": f"{f.name} is not in MQL5/Presets"}
+
+    # layout keeps every line in order, comments included, so a rewrite hands back
+    # a file that still reads like the one its author shipped
+    items, layout = [], []
+    for line in f.read_text(encoding="latin-1", errors="replace").splitlines():
+        raw = line.rstrip()
+        key, sep_eq, rest = raw.partition("=")
+        if not raw.strip() or raw.lstrip().startswith(";") or not sep_eq:
+            layout.append({"text": raw})
+            continue
+        value, sep, tail = rest.partition("||")
+        item = {"k": key.strip(), "v": value.strip(), "tail": (sep + tail) if sep else ""}
+        items.append(item)
+        layout.append(item)
+    return {"ok": True, "name": f.stem, "file": f.name, "items": items, "layout": layout}
+
+
+def write_preset(name: str, values: dict) -> dict:
+    """Rewrite a preset, keeping every line's tester metadata and its order."""
+    current = read_preset(name)
+    if not current.get("ok"):
+        return current
+    if not isinstance(values, dict):
+        return {"ok": False, "error": "values must be a name/value object"}
+
+    changed = 0
+    lines = []
+    for entry in current["layout"]:
+        if "k" not in entry:
+            lines.append(entry["text"])                # comment or blank, kept as is
+            continue
+        v = values.get(entry["k"], entry["v"])
+        v = "" if v is None else str(v)
+        if any(c in v for c in (chr(10), chr(13), "||")):
+            return {"ok": False, "error": f"bad value for {entry['k']}"}
+        if v != entry["v"]:
+            changed += 1
+        lines.append(f"{entry['k']}={v}{entry['tail']}")
+
+    root = presets_dir()
+    f = root / current["file"]
+    try:
+        f.write_text(chr(10).join(lines) + chr(10), encoding="latin-1", errors="replace")
+    except OSError as exc:
+        return {"ok": False, "error": f"could not write {f.name}: {exc}"}
+    out = {"ok": True, "message": f"saved {f.name}" + (f", {changed} changed" if changed else "")}
+    _audit(out, {"preset": f.name, "changed": changed})
+    return out
+
+
 def uninstall_ea(rel_path: str) -> dict:
     """Take an EA out of MQL5/Experts, keeping a copy in case it was a mistake.
 
@@ -1272,6 +1364,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(read_terminal_log(want, qs.get("q", [""])[0],
                                         qs.get("which", ["experts"])[0]))
             return
+        if path in ("/api/presets", "/api/preset"):
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            if path == "/api/presets":
+                self._json(read_presets())
+            else:
+                want = parse_qs(urlparse(self.path).query).get("name", [""])[0]
+                self._json(read_preset(want))
+            return
         if path == "/api/agent":
             if not self._authorized():
                 self._json({"ok": False, "error": "unauthorized"}, 401)
@@ -1348,11 +1450,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             _pin_fails.pop(who, None)
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
-                          "attach", "forget", "install", "uninstall"):
+                          "attach", "forget", "install", "uninstall", "savepreset"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
         if action in ("pause", "unload", "setinputs", "attach", "forget",
-                      "install", "uninstall") and not body.get("confirm"):
+                      "install", "uninstall", "savepreset") and not body.get("confirm"):
             self._json({"ok": False, "error": f"{action} requires confirm: true"}, 400)
             return
 
@@ -1361,6 +1463,10 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(written, str):
                 self._json({"ok": False, "error": written}, 400)
                 return
+
+        if action == "savepreset":
+            self._json(write_preset(str(body.get("name") or ""), body.get("values")))
+            return
 
         if action == "uninstall":
             self._json(uninstall_ea(str(body.get("path") or "")))

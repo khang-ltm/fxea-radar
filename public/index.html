@@ -497,6 +497,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <div class="segmented">
         <button class="btn" id="easub-run" role="tab" aria-selected="true">Running</button>
         <button class="btn" id="easub-list" role="tab" aria-selected="false">Installed</button>
+        <button class="btn" id="easub-set" role="tab" aria-selected="false">Presets</button>
       </div>
     </div>
 
@@ -508,6 +509,13 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <section class="mt5sect" id="pausedwrap" hidden>
         <h2>Paused</h2>
         <div class="wrap" id="pausedtable"></div>
+      </section>
+    </div>
+
+    <div id="myea-set" hidden>
+      <section class="mt5sect">
+        <h2>Preset files <span class="num" id="setcount"></span></h2>
+        <div class="wrap" id="settable"></div>
       </section>
     </div>
 
@@ -595,6 +603,20 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <button class="btn" id="detail-close" aria-label="Close details">Close</button>
   </div>
   <div class="sheet__body" id="detail-body"></div>
+</dialog>
+
+<dialog class="sheet" id="setdlg" aria-labelledby="set-title" style="width:min(94vw,620px)">
+  <div class="sheet__bar">
+    <h2 id="set-title">Preset</h2>
+    <span class="mt5bar__stats" id="set-sub"></span>
+    <button class="btn" id="set-cancel">Close</button>
+  </div>
+  <div class="sheet__body"><div id="set-fields" class="settings"></div></div>
+  <div class="sheet__foot">
+    <span class="hint" id="set-note">Editing the file changes what an EA loads next
+      time, not what is running now.</span>
+    <button class="btn btn--primary" id="set-save" disabled>Save</button>
+  </div>
 </dialog>
 
 <dialog class="sheet" id="attachdlg" aria-labelledby="attach-title" style="width:min(94vw,560px)">
@@ -1915,6 +1937,136 @@ async function removeInstalled(path, name) {
   loadInstalled();
 }
 
+/* ── preset files ───────────────────────────────────────────────
+   A .set is the settings the channel shipped with an EA. They arrive with every
+   install and used to sit unused: this lists them, edits them in place, and
+   loads one into a running EA through the same validation the settings dialog
+   uses - so a preset cannot set a lot size to text either. */
+const setDlg = document.getElementById('setdlg');
+let PRESETS = [];
+let SET_OPEN = null;
+
+async function loadPresets() {
+  if (!MT5?.url) return;
+  let d;
+  try {
+    d = await (await fetch(`${MT5.url}/api/presets`, {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    })).json();
+  } catch (e) {
+    setHtml('settable', `<div class="empty">agent unreachable - ${esc(e.message)}</div>`);
+    return;
+  }
+  PRESETS = d.ok ? d.presets : [];
+  document.getElementById('setcount').textContent = PRESETS.length ? `(${PRESETS.length})` : '';
+  setHtml('settable', PRESETS.length ? `<table class="mt5">
+    <thead><tr><th>Preset</th><th class="n">Settings</th><th class="n">Size</th>
+      <th style="text-align:right">Action</th></tr></thead>
+    <tbody>${PRESETS.map(x => `<tr>
+      <td>${esc(x.name)}</td>
+      <td class="n">${x.entries}</td>
+      <td class="n">${fmtSize(x.size_bytes)}</td>
+      <td style="text-align:right">
+        <button class="chip ghost" data-setedit="${esc(x.file)}">Edit</button>
+        <button class="chip" data-setapply="${esc(x.file)}">Load into EA</button>
+      </td></tr>`).join('')}</tbody></table>`
+    : `<div class="empty">No .set files yet.<br>
+       <span class="hint">They install alongside an EA when its archive contains one.</span></div>`);
+
+  for (const b of document.querySelectorAll('[data-setedit]')) {
+    b.onclick = () => openPreset(b.dataset.setedit);
+  }
+  for (const b of document.querySelectorAll('[data-setapply]')) {
+    b.onclick = () => applyPreset(b.dataset.setapply);
+  }
+}
+
+async function fetchPreset(file) {
+  const r = await fetch(`${MT5.url}/api/preset?name=${encodeURIComponent(file)}`, {
+    credentials: 'include',
+    headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+  });
+  return r.json();
+}
+
+async function openPreset(file) {
+  const d = await fetchPreset(file).catch(e => ({ ok: false, error: e.message }));
+  if (!d.ok) { alert(`Cannot read ${file}: ${d.error}`); return; }
+  SET_OPEN = d;
+
+  document.getElementById('set-title').textContent = d.name;
+  document.getElementById('set-sub').textContent = `${d.items.length} settings`;
+  document.getElementById('set-fields').innerHTML = d.items.map((i, n) => `
+    <div class="setrow" data-row="${n}">
+      <label for="set-in-${n}">${esc(prettyKey(i.k))}<small>${esc(i.k)}</small></label>
+      <input id="set-in-${n}" data-idx="${n}" value="${esc(i.v)}" spellcheck="false"></div>`).join('');
+
+  for (const el of document.querySelectorAll('#set-fields input')) {
+    el.oninput = () => {
+      const n = Number(el.dataset.idx);
+      el.closest('.setrow').classList.toggle('dirty', el.value !== SET_OPEN.items[n].v);
+      const dirty = presetChanges();
+      const save = document.getElementById('set-save');
+      save.disabled = !Object.keys(dirty).length;
+      save.textContent = Object.keys(dirty).length ? `Save ${Object.keys(dirty).length}` : 'Save';
+    };
+  }
+  document.getElementById('set-save').disabled = true;
+  setDlg.showModal();
+}
+
+function presetChanges() {
+  const out = {};
+  if (!SET_OPEN) return out;
+  for (const el of document.querySelectorAll('#set-fields input')) {
+    const n = Number(el.dataset.idx);
+    if (el.value !== SET_OPEN.items[n].v) out[SET_OPEN.items[n].k] = el.value;
+  }
+  return out;
+}
+
+document.getElementById('set-cancel').onclick = () => setDlg.close();
+setDlg.addEventListener('click', e => { if (e.target === setDlg) setDlg.close(); });
+document.getElementById('set-save').onclick = async () => {
+  const changes = presetChanges();
+  const note = document.getElementById('set-note');
+  note.textContent = 'saving...';
+  const r = await managerPost({ action: 'savepreset', confirm: true,
+                                name: SET_OPEN.file, values: changes });
+  note.textContent = r.ok ? r.message : `failed: ${r.error || r.message}`;
+  if (r.ok) { SET_OPEN = null; setDlg.close(); loadPresets(); }
+};
+
+/* Loading a preset into a live EA is a settings change like any other, so it
+   goes through setinputs: names checked against that EA's real inputs, types
+   checked against its current values, magic refused, and blocked outright while
+   the EA holds a position. */
+async function applyPreset(file) {
+  const running = CHARTS.filter(c => c.expert && !c.is_manager);
+  if (!running.length) { alert('No EA is on a chart to load it into.'); return; }
+
+  const list = running.map((c, i) => `${i + 1}. ${shortEa(c.expert)} on ${c.symbol} ${TF_NAMES[c.period] || ''}`);
+  const pick = prompt(`Load ${file} into which EA?${String.fromCharCode(10, 10)}`
+    + list.join(String.fromCharCode(10)) + String.fromCharCode(10, 10) + 'Enter a number:');
+  if (!pick) return;
+  const chart = running[Number(pick) - 1];
+  if (!chart) return;
+
+  const d = await fetchPreset(file).catch(e => ({ ok: false, error: e.message }));
+  if (!d.ok) { alert(`Cannot read ${file}: ${d.error}`); return; }
+  const values = Object.fromEntries(d.items.map(i => [i.k, i.v]));
+
+  if (!confirm(`Load ${d.items.length} settings from ${file} into`
+      + ` ${shortEa(chart.expert)} on ${chart.symbol}?${String.fromCharCode(10, 10)}`
+      + 'The EA reloads with them. Settings it does not have are refused, not guessed.')) return;
+
+  const r = await managerPost({ action: 'setinputs', confirm: true,
+                                chart: chart.chart, inputs: values });
+  alert(r.ok ? (r.message || 'applied') : `Failed: ${r.error || r.message}`);
+  if (r.ok) loadEas().then(loadCharts);
+}
+
 /* ── attaching an EA ────────────────────────────────────────────
    The EA list and the symbol list both come from the terminal, so neither a
    misspelled symbol nor an EA that is not installed can reach the manager. The
@@ -2407,7 +2559,7 @@ function showTab(name) {
   if (TAB === 'myea') { showEaSub(EASUB); loadEas().then(loadCharts); }
 }
 
-const EASUBS = ['run', 'list'];
+const EASUBS = ['run', 'list', 'set'];
 let EASUB = oneOf(urlParams.get('easub'), EASUBS, localStorage.getItem('fxea_easub') || 'run');
 
 function showEaSub(name) {
@@ -2420,7 +2572,10 @@ function showEaSub(name) {
     btn.setAttribute('aria-pressed', String(v === EASUB));
   }
 }
-for (const v of EASUBS) document.getElementById('easub-' + v).onclick = () => showEaSub(v);
+for (const v of EASUBS) document.getElementById('easub-' + v).onclick = () => {
+  showEaSub(v);
+  if (v === 'set') loadPresets();
+};
 
 document.getElementById('tab-eas').onclick = () => showTab('eas');
 document.getElementById('tab-mt5').onclick = () => showTab('mt5');

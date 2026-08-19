@@ -195,9 +195,13 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
 
         target = experts_dir / INSTALL_FOLDER if INSTALL_FOLDER else experts_dir
         target.mkdir(parents=True, exist_ok=True)
+        # MT5 loads presets from MQL5/Presets - a .set sitting in Experts is a file
+        # nothing will ever offer you in the EA's Load dialog
+        presets = experts_dir.parent / "Presets"
+        presets.mkdir(parents=True, exist_ok=True)
         installed, skipped = [], []
         for f in found:
-            dst = target / f.name
+            dst = (presets if f.suffix.lower() == ".set" else target) / f.name
             if dst.exists():
                 if dst.read_bytes() == f.read_bytes():
                     skipped.append(f.name)                 # already installed, unchanged
@@ -209,8 +213,11 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
             shutil.copy2(f, dst)
             installed.append({"name": dst.stem if dst.suffix.lower() == ".ex5" else dst.name,
                               "file": dst.name,
-                              "path": str(pathlib.PurePath("Experts") / INSTALL_FOLDER / dst.name)
-                                      if INSTALL_FOLDER else str(pathlib.PurePath("Experts") / dst.name),
+                              "path": str(pathlib.PurePath("Presets") / dst.name)
+                                      if dst.suffix.lower() == ".set"
+                                      else (str(pathlib.PurePath("Experts") / INSTALL_FOLDER / dst.name)
+                                            if INSTALL_FOLDER
+                                            else str(pathlib.PurePath("Experts") / dst.name)),
                               "kind": "ea" if dst.suffix.lower() == ".ex5" else "set",
                               "size_bytes": dst.stat().st_size})
 
