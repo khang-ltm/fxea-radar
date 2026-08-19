@@ -1058,15 +1058,17 @@ const eaSlug = t => String(t || '').toLowerCase()
 function installedFor(name) {
   const want = eaSlug(name);
   if (!want || want.length < 4) return null;
-  let best = null;
+  let best = null, bestGap = Infinity;
   for (const e of INSTALLED) {
     const have = eaSlug(e.name);
     if (!have) continue;
     if (have === want) return e;                       // exact wins outright
-    if (have.includes(want) || want.includes(have)) {
-      // prefer the shortest match: "quantum queen" over "quantum queen x"
-      if (!best || eaSlug(best.name).length > have.length) best = e;
-    }
+    if (!have.includes(want) && !want.includes(have)) continue;
+    // Closest length wins, not shortest: preferring the shortest made the
+    // "Quantum Queen X" row point at plain Quantum Queen, so the catalog reported
+    // one EA as running because a different one was.
+    const gap = Math.abs(have.length - want.length);
+    if (gap < bestGap) { best = e; bestGap = gap; }
   }
   return best;
 }
