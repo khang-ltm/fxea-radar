@@ -158,6 +158,10 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .setrow.text { grid-template-columns: 1fr; gap: 4px; }
 .setrow.text input { text-align: left; }
 .setrow.text label small { display: inline; margin-left: var(--space-2); }
+.frozen { opacity: .55; }
+.frozen::after { content: 'not live - the manager stopped answering';
+   display: block; padding: var(--space-2) var(--space-3); font-size: 12px;
+   color: var(--color-warn); }
 .tree__folder > td { color: var(--color-muted-fg); font-size: 11px; letter-spacing: .05em;
    text-transform: uppercase; font-family: var(--font-head); padding-top: var(--space-4); }
 .tree__folder svg { vertical-align: -2px; margin-right: 4px; }
@@ -2549,10 +2553,19 @@ async function loadCharts(quiet) {
   if (quiet) return;                       // called only to learn the mapping
   const withEa = charts.filter(c => c.expert);
   stats.textContent = `(${withEa.length})`;
+  // A stale status means the manager stopped writing, and everything below is a
+  // snapshot from whenever it last managed to - including charts that have since
+  // been closed. Saying "stale" in small print was not enough: say how old.
+  const age = Math.round(d.age_seconds || 0);
+  const frozen = !d.attached;
   document.getElementById('easstats').innerHTML =
     `<b>${withEa.length}</b> EA${withEa.length === 1 ? '' : 's'} attached to charts`
-    + ` · manager ${d.attached ? 'connected' : '<span style="color:var(--color-warn)">stale</span>'}`
+    + (frozen
+        ? ` · <span style="color:var(--color-warn)">manager not answering for ${age}s -`
+          + ' this list is frozen</span>'
+        : ' · manager connected')
     + (d.version ? ` <span class="hint">v${esc(d.version)}</span>` : '');
+  document.getElementById('chartstable').classList.toggle('frozen', frozen);
   charts.sort((a, b) => (b.expert ? 1 : 0) - (a.expert ? 1 : 0));
   setHtml('chartstable', charts.length ? `<table class="mt5">
     <thead><tr><th>Expert</th><th>Symbol</th><th class="n">TF</th><th class="n">Open</th><th class="n">Floating</th>
