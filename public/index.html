@@ -2322,7 +2322,8 @@ async function openAttach(pre) {
   if (pre?.period && TF_NAMES[pre.period]) tf.value = String(pre.period);
   document.getElementById('attach-sym').value = pre?.symbol || '';
   document.getElementById('attach-magic').value = '';
-  fillAttachPresets();
+  await fillAttachPresets();               // presets before the dialog is looked at
+  refreshAttachNote();
   try {
     attachDlg.showModal();
   } catch {
@@ -2364,10 +2365,7 @@ async function openAttach(pre) {
       ? `${listed} EA${listed === 1 ? '' : 's'} to choose from · type to search your broker symbols`
         + (syms.ok ? '' : ' · symbol search unavailable, type the exact name')
       : `could not list EAs - ${eas.error || 'unknown error'}`;
-  document.getElementById('attach-note').textContent = ACCOUNT
-    ? `Attaches to ${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} · ${ACCOUNT.server}.`
-      + ' The EA starts trading as soon as it loads.'
-    : 'The EA starts trading as soon as it loads.';
+  refreshAttachNote();
 }
 
 /* An EA installed while MT5 was running is not in its Navigator until someone
@@ -2399,7 +2397,22 @@ async function fillAttachPresets() {
 }
 
 document.getElementById('attach-ea').onchange = () => { warnIfUnregistered(); fillAttachPresets(); };
+
+/* The footer promised trading would start immediately even with "review first"
+   chosen - the two have to agree, since one of them is the reason to trust it. */
+function refreshAttachNote() {
+  const review = document.getElementById('attach-review').value === '1';
+  const where = ACCOUNT
+    ? `${ACCOUNT.is_demo ? 'DEMO' : 'LIVE'} ${ACCOUNT.login} · ${ACCOUNT.server}` : 'this account';
+  document.getElementById('attach-note').textContent = review
+    ? `Loads on ${where} with trading OFF. Nothing happens until you review its settings and enable it.`
+    : `Attaches to ${where}. The EA starts trading as soon as it loads.`;
+}
+document.getElementById('attach-review').onchange = refreshAttachNote;
 document.getElementById('attach-open').onclick = () => openAttach();
+// ?attach=1 opens it straight away: a way to check the dialog without hunting for
+// the button, and the only way to screenshot it headlessly
+if (urlParams.has('attach')) setTimeout(() => { if (TAB === 'myea') openAttach(); }, 1200);
 document.getElementById('attach-sym').oninput = e => symbolSearch(e.target.value);
 document.getElementById('attach-cancel').onclick = () => attachDlg.close();
 attachDlg.addEventListener('click', e => { if (e.target === attachDlg) attachDlg.close(); });
