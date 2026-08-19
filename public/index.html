@@ -1072,6 +1072,9 @@ async function loadInstalled() {
     });
     const d = await r.json();
     if (d.ok) INSTALLED = d.experts;
+    // the catalog needs to know what is running to say so, and CHARTS is only
+    // filled while My EA is open - so ask for it quietly from here too
+    await loadCharts(true).catch(() => {});
     const can = await fetch(`${MT5.url}/api/installable`, {
       credentials: 'include',
       headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
