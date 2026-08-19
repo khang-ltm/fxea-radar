@@ -302,7 +302,7 @@ pre.raw { margin: var(--space-2) 0 0; padding: var(--space-3); background: var(-
 
 /* ── list view ─────────────────────────────────────────────────────────── */
 .row { display: grid; align-items: center; gap: var(--space-3);
-  grid-template-columns: minmax(0, 3fr) 78px 96px minmax(0, 1.4fr) 78px 70px 92px 166px;
+  grid-template-columns: minmax(0, 3fr) 78px 96px minmax(0, 1.4fr) 78px 70px 92px 200px;
   padding: 8px var(--space-4); border-bottom: 1px solid var(--color-border-soft); }
 .row:hover { background: var(--color-surface); }
 .row--head { position: sticky; top: 0; background: var(--color-background);
@@ -315,7 +315,16 @@ pre.raw { margin: var(--space-2) 0 0; padding: var(--space-3); background: var(-
 .row__act { display: flex; justify-content: flex-end; align-items: center; gap: 6px;
   white-space: nowrap; }
 .livedot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent);
-   display: inline-block; margin-right: 5px; }
+   display: inline-block; flex: none; }
+/* a running EA is the one row state worth a coloured pill: it replaces two
+   buttons, so it has to read as a state and not as leftover text */
+.chip--live:not([hidden]) { display: inline-flex; gap: 5px; align-items: center;
+   padding: 2px 9px; font-size: 11px; letter-spacing: .02em; white-space: nowrap;
+   color: var(--color-accent);
+   background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+   border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent); }
+.chip--live:hover { background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+   color: var(--color-accent); }
 .chip--icon:not([hidden]) { padding: 0 8px; min-width: 30px; justify-content: center; }
 /* Verdict stays visible at every width - on a phone it is the column that matters. */
 @media (max-width: 1100px) { .row { grid-template-columns: minmax(0, 1fr) 78px 96px 92px 132px; } .row__hide2 { display: none; } }
@@ -1104,7 +1113,7 @@ function attachBtn(p) {
   if (live) {
     // the chip names the chart it is on, so the row answers "where is this?" as
     // well as "is it running?", and clicking it goes to where it can be managed
-    return `<button class="chip ghost" data-goea="1"
+    return `<button class="chip chip--live" data-goea="1"
        title="${esc(live.expert)} is running - open My EA to pause it or change its settings">
        <span class="livedot"></span>${esc(live.symbol)} ${esc(tfName(live.period))} &rsaquo;</button>`;
   }
