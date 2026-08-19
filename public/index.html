@@ -2587,11 +2587,11 @@ function showEaSub(name) {
     btn.setAttribute('aria-selected', String(v === EASUB));
     btn.setAttribute('aria-pressed', String(v === EASUB));
   }
+  // also when the view is restored from localStorage or a deep link, not only
+  // when the button is clicked - it came up empty otherwise
+  if (EASUB === 'set') loadPresets();
 }
-for (const v of EASUBS) document.getElementById('easub-' + v).onclick = () => {
-  showEaSub(v);
-  if (v === 'set') loadPresets();
-};
+for (const v of EASUBS) document.getElementById('easub-' + v).onclick = () => showEaSub(v);
 
 document.getElementById('tab-eas').onclick = () => showTab('eas');
 document.getElementById('tab-mt5').onclick = () => showTab('mt5');
