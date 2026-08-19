@@ -2009,6 +2009,15 @@ async function removeInstalled(path, name) {
   loadInstalled();
 }
 
+/* A script error used to stop every handler defined after it, and the only
+   symptom was a button that did nothing. Now it says so. */
+window.addEventListener('error', e => {
+  try { toast(`Page error: ${e.message}`, 'bad', 12); } catch { /* too early for toasts */ }
+});
+window.addEventListener('unhandledrejection', e => {
+  try { toast(`Request failed: ${e.reason?.message || e.reason}`, 'bad', 12); } catch {}
+});
+
 /* ── asking and telling ──────────────────────────────────────────
    confirm() and alert() block the page, look nothing like the rest of it, and
    cannot show a PIN field or a list of what an install produced. One dialog and
@@ -2314,7 +2323,12 @@ async function openAttach(pre) {
   document.getElementById('attach-sym').value = pre?.symbol || '';
   document.getElementById('attach-magic').value = '';
   fillAttachPresets();
-  attachDlg.showModal();
+  try {
+    attachDlg.showModal();
+  } catch {
+    attachDlg.close();                       // already open somehow: reopen cleanly
+    attachDlg.showModal();
+  }
 
   // Independently: a symbol lookup that fails must still leave a usable EA list,
   // and a symbol can always be typed by hand.
