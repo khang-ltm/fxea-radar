@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.25"
+#property version   "1.26"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.25", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.26", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -322,7 +322,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.25",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.26",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -614,7 +614,7 @@ void DoSetInputs(const string id, const long chart, const bool force)
      }
    FileClose(fh);
 
-   bool in_expert = false, in_inputs = false;
+   bool in_expert = false, in_inputs = false, seen_inputs = false;
    int  applied   = 0;
    for(int i = 0; i < count; i++)
      {
@@ -627,7 +627,10 @@ void DoSetInputs(const string id, const long chart, const bool force)
       if(low == "</expert>")
          in_expert = false;
       if(in_expert && low == "<inputs>")
-         in_inputs = true;
+        {
+         in_inputs   = true;
+         seen_inputs = true;
+        }
       if(low == "</inputs>")
          in_inputs = false;
       if(!in_inputs)
@@ -647,6 +650,46 @@ void DoSetInputs(const string id, const long chart, const bool force)
             break;
            }
      }
+   // An EA attached from a template that carried no <inputs> has no parameter set
+   // stored for its chart, so every template saved from it comes back without one
+   // and there is nothing here to rewrite. Create the block: the values are the
+   // EA's own defaults plus whatever was asked for, which is what the chart would
+   // have held had it been attached by hand.
+   if(applied == 0 && !seen_inputs)
+     {
+      string rebuilt[];
+      int written2 = 0;
+      for(int i = 0; i < count; i++)
+        {
+         string low2 = lines[i];
+         StringTrimLeft(low2);
+         StringTrimRight(low2);
+         StringToLower(low2);
+         if(low2 == "</expert>")
+           {
+            ArrayResize(rebuilt, written2 + 1);
+            rebuilt[written2++] = "<inputs>";
+            for(int j = 0; j < n; j++)
+              {
+               ArrayResize(rebuilt, written2 + 1);
+               rebuilt[written2++] = keys[j] + "=" + vals[j];
+              }
+            ArrayResize(rebuilt, written2 + 1);
+            rebuilt[written2++] = "</inputs>";
+            applied = n;
+           }
+         ArrayResize(rebuilt, written2 + 1);
+         rebuilt[written2++] = lines[i];
+        }
+      if(applied > 0)
+        {
+         ArrayResize(lines, written2);
+         for(int i = 0; i < written2; i++)
+            lines[i] = rebuilt[i];
+         count = written2;
+        }
+     }
+
    if(applied == 0)
      {
       WriteResult(id, false, "none of those settings exist on this EA");
