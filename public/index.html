@@ -1968,10 +1968,11 @@ async function loadPresets() {
   PRESETS = d.ok ? d.presets : [];
   document.getElementById('setcount').textContent = PRESETS.length ? `(${PRESETS.length})` : '';
   setHtml('settable', PRESETS.length ? `<table class="mt5">
-    <thead><tr><th>Preset</th><th class="n">Settings</th><th class="n">Size</th>
+    <thead><tr><th>Preset</th><th>For EA</th><th class="n">Settings</th><th class="n">Size</th>
       <th style="text-align:right">Action</th></tr></thead>
     <tbody>${PRESETS.map(x => `<tr>
       <td>${esc(x.name)}</td>
+      <td>${x.ea ? esc(shortEa(x.ea)) : '<span class="shot-none">unknown</span>'}</td>
       <td class="n">${x.entries}</td>
       <td class="n">${fmtSize(x.size_bytes)}</td>
       <td style="text-align:right">

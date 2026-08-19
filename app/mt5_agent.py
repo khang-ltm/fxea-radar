@@ -1040,6 +1040,13 @@ def read_presets() -> dict:
     if not root.is_dir():
         return {"ok": True, "count": 0, "presets": []}
 
+    try:
+        from . import installer
+        owners = json.loads(installer.OWNERS_FILE.read_text(encoding="utf-8")) \
+            if installer.OWNERS_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError, ImportError):
+        owners = {}
+
     out = []
     for f in sorted(root.glob("*.set")):
         try:
@@ -1048,6 +1055,7 @@ def read_presets() -> dict:
             continue
         out.append({"name": f.stem,
                     "file": f.name,
+                    "ea": (owners.get(f.name) or {}).get("ea", ""),
                     "size_bytes": f.stat().st_size,
                     "entries": sum(1 for l in lines
                                    if "=" in l and not l.lstrip().startswith(";"))})

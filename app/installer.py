@@ -24,6 +24,8 @@ import tempfile
 import re
 import zipfile
 
+import json
+
 from . import config
 
 # Straight into MQL5/Experts, under the name the archive used. Cracked EAs are
@@ -169,6 +171,34 @@ def _extractor(suffix: str = "") -> tuple[str, list[str]] | None:
     return None
 
 
+OWNERS_FILE = config.DATA_DIR / "preset_owner.json"
+
+
+def _remember_owner(installed: list, archive: str) -> None:
+    """Which EA a .set arrived with.
+
+    A preset called "audcad m15" says nothing about whose settings it is, and the
+    only moment anyone knows is now - the .ex5 and the .set came out of the same
+    archive. Kept beside the data rather than in the file, since rewriting a
+    preset to add provenance would change what MT5 loads.
+    """
+    eas = [x["name"] for x in installed if x.get("kind") == "ea"]
+    sets = [x["file"] for x in installed if x.get("kind") == "set"]
+    if not sets:
+        return
+    try:
+        known = json.loads(OWNERS_FILE.read_text(encoding="utf-8")) if OWNERS_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        known = {}
+    for name in sets:
+        known[name] = {"ea": eas[0] if eas else "", "archive": archive}
+    try:
+        OWNERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        OWNERS_FILE.write_text(json.dumps(known, indent=1, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Path) -> dict:
     """Download, unpack, and copy the EA files into MQL5/Experts/FxeaRadar."""
     try:
@@ -227,6 +257,7 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
         kept_names = {f.name for f in found}
         dropped = sorted({pathlib.PurePath(x).name for x in seen
                           if pathlib.PurePath(x).name and pathlib.PurePath(x).name not in kept_names})
+        _remember_owner(installed, archive.name)
         return {"ok": True, "archive": archive.name, "installed": installed,
                 "unchanged": skipped, "dropped": dropped[:40],
                 "experts": [x for x in installed if x["kind"] == "ea"],
