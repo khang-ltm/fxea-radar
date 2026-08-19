@@ -988,6 +988,27 @@ def agent_health() -> dict:
     return out
 
 
+def _read_set(path: pathlib.Path) -> tuple[str, str]:
+    """Text plus the encoding it was stored in.
+
+    MT5 saves .set files as UTF-16 with a BOM, and reading one as latin-1 turns
+    every setting name into s p a c e d   l e t t e r s. Whatever it was, the file
+    is written back the same way, so MT5 can still load it.
+    """
+    raw = path.read_bytes()
+    if raw[:2] in (b"" + bytes([0xFF, 0xFE]), b"" + bytes([0xFE, 0xFF])):
+        enc = "utf-16"
+    elif raw[:3] == b"" + bytes([0xEF, 0xBB, 0xBF]):
+        enc = "utf-8-sig"
+    else:
+        try:
+            raw.decode("utf-8")
+            enc = "utf-8"
+        except UnicodeDecodeError:
+            enc = "latin-1"
+    return raw.decode(enc, errors="replace"), enc
+
+
 def presets_dir() -> pathlib.Path | None:
     d = _mql5_files_dir()
     return None if d is None else d.parent / "Presets"
@@ -1004,7 +1025,7 @@ def read_presets() -> dict:
     out = []
     for f in sorted(root.glob("*.set")):
         try:
-            lines = f.read_text(encoding="latin-1", errors="replace").splitlines()
+            lines = _read_set(f)[0].splitlines()
         except OSError:
             continue
         out.append({"name": f.stem,
@@ -1034,7 +1055,8 @@ def read_preset(name: str) -> dict:
     # layout keeps every line in order, comments included, so a rewrite hands back
     # a file that still reads like the one its author shipped
     items, layout = [], []
-    for line in f.read_text(encoding="latin-1", errors="replace").splitlines():
+    text, encoding = _read_set(f)
+    for line in text.splitlines():
         raw = line.rstrip()
         key, sep_eq, rest = raw.partition("=")
         if not raw.strip() or raw.lstrip().startswith(";") or not sep_eq:
@@ -1044,7 +1066,8 @@ def read_preset(name: str) -> dict:
         item = {"k": key.strip(), "v": value.strip(), "tail": (sep + tail) if sep else ""}
         items.append(item)
         layout.append(item)
-    return {"ok": True, "name": f.stem, "file": f.name, "items": items, "layout": layout}
+    return {"ok": True, "name": f.stem, "file": f.name, "encoding": encoding,
+            "items": items, "layout": layout}
 
 
 def write_preset(name: str, values: dict) -> dict:
@@ -1072,7 +1095,8 @@ def write_preset(name: str, values: dict) -> dict:
     root = presets_dir()
     f = root / current["file"]
     try:
-        f.write_text(chr(10).join(lines) + chr(10), encoding="latin-1", errors="replace")
+        f.write_text(chr(10).join(lines) + chr(10),
+                     encoding=current.get("encoding") or "utf-16", errors="replace")
     except OSError as exc:
         return {"ok": False, "error": f"could not write {f.name}: {exc}"}
     out = {"ok": True, "message": f"saved {f.name}" + (f", {changed} changed" if changed else "")}
