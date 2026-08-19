@@ -1546,7 +1546,7 @@ class Handler(BaseHTTPRequestHandler):
             _pin_fails.pop(who, None)
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
                           "attach", "forget", "install", "uninstall", "savepreset",
-                          "update"):
+                          "update", "reload"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
         if action in ("pause", "unload", "setinputs", "attach", "forget",
@@ -1665,7 +1665,12 @@ def sync_manager_ea() -> str:
         return f"compile could not run: {exc}"
 
     if ex5.exists() and ex5.stat().st_mtime >= dst.stat().st_mtime - 5:
-        return f"compiled {MANAGER_SOURCE} (MT5 reloads it by itself)"
+        # A rebuild from outside MetaEditor's window does not reliably make the
+        # terminal reload a running EA, so ask the manager to reload itself.
+        answer = manager_command("reload")
+        return (f"compiled {MANAGER_SOURCE}"
+                + (" and asked it to reload" if answer.get("ok") else
+                   f" - reload not confirmed: {answer.get('error') or answer.get('message')}"))
     tail = ""
     try:
         tail = log.read_text(encoding="utf-16", errors="replace").strip().splitlines()[-1]

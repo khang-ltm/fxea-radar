@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.27"
+#property version   "1.28"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -56,7 +56,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.27", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  "1.28", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -322,7 +322,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.27",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.28",
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
@@ -935,6 +935,20 @@ void ProcessCommand()
    string expert = GetField(body, "expert");
    string key    = GetField(body, "key");
    long   chart  = (long)StringToInteger(GetField(body, "chart"));
+
+   if(action == "reload")
+     {
+      // MT5 reloads an EA when its .ex5 is rebuilt through the MetaEditor GUI,
+      // but not reliably when another process compiles it - the manager ran an
+      // old build for an hour while every compile reported success. A symbol or
+      // timeframe change on its own chart forces the reload, which is what used
+      // to happen by accident whenever this chart drifted.
+      WriteResult(id, true, "reloading from the compiled file");
+      ENUM_TIMEFRAMES now = (ENUM_TIMEFRAMES)ChartPeriod(g_self_chart);
+      ChartSetSymbolPeriod(g_self_chart, ChartSymbol(g_self_chart),
+                           now == PERIOD_H1 ? PERIOD_H4 : PERIOD_H1);
+      return;
+     }
 
    if(action == "status")
      {
