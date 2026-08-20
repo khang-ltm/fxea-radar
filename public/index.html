@@ -590,6 +590,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
         <span class="toolbar__spacer"></span>
         <span class="mt5bar__stats" id="mt5age"></span>
         <button class="chip" id="mt5conf" title="Change the agent URL or token">Connect</button>
+        <button class="chip" id="agentup" hidden></button>
       </div>
       <div class="mt5bar__grid" id="mt5grid" hidden></div>
       <p class="hint" id="agenthealth" hidden></p>
@@ -1676,6 +1677,82 @@ async function loadAgentHealth() {
   const el = document.getElementById('agenthealth');
   el.innerHTML = parts.join(' · ');
   el.hidden = false;
+  renderAgentUpdate(d);
+}
+
+/* The agent pulls its own updates every twenty minutes, so a fix that shipped a
+   minute ago sat there unapplied and the only way to hurry it was pasting a
+   curl command with the token in it. Same API call, one button. */
+function renderAgentUpdate(d) {
+  const btn = document.getElementById('agentup');
+  if (!btn) return;
+  const ahead = !!d.update && !!d.remote;
+  btn.hidden = false;
+  btn.classList.toggle('ghost', !ahead);
+  btn.textContent = ahead ? `update to ${d.remote}` : 'agent up to date';
+  btn.title = ahead
+    ? `GitHub is on ${d.remote}, this agent is on ${d.code} - pull it and restart`
+    : `running ${d.code} - click to check GitHub again`;
+  btn.onclick = () => ahead ? runAgentUpdate(btn) : checkAgentUpdate(btn);
+}
+
+async function checkAgentUpdate(btn) {
+  const was = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'checking…';
+  try {
+    const d = await (await fetch(`${MT5.url}/api/agent?fresh=1`, {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    })).json();
+    btn.disabled = false;
+    if (!d?.ok) { btn.textContent = was; toast('agent: ' + (d?.error || 'no answer'), 'bad'); return; }
+    healthAt = 0;
+    renderAgentUpdate(d);
+    if (!d.update) toast(`agent is current (${d.code})`, 'ok');
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = was;
+    toast('cannot reach the agent: ' + e.message, 'bad');
+  }
+}
+
+async function runAgentUpdate(btn) {
+  const yes = await ask({
+    title: 'Update the agent',
+    body: `${btn.textContent}. The agent downloads the new code and restarts,`
+      + ' which takes a few seconds. Charts, EAs and open trades are untouched -'
+      + ' MT5 itself is not restarted.',
+    yes: 'Update',
+  });
+  if (!yes) return;
+  btn.disabled = true;
+  btn.textContent = 'updating…';
+  const r = await managerPost({ action: 'update' });
+  if (!r.ok) {
+    btn.disabled = false;
+    toast('update failed: ' + (r.error || r.message || 'unknown'), 'bad', 12);
+    healthAt = 0;
+    loadAgentHealth();
+    return;
+  }
+  if (!r.restarting) {
+    btn.disabled = false;
+    toast(r.message || 'already current', 'ok');
+    healthAt = 0;
+    loadAgentHealth();
+    return;
+  }
+  toast(r.message || 'updating - the agent will be back in a few seconds', 'ok', 10);
+  // it re-execs itself, so nothing answers for a moment; ask again once it should
+  setTimeout(() => {
+    btn.disabled = false;
+    healthAt = 0;
+    loadAgentHealth().then(() => {
+      const now = document.getElementById('agentup');
+      if (now && now.classList.contains('ghost')) toast('agent updated', 'ok');
+    }).catch(() => {});
+  }, 9000);
 }
 
 /* ── MT5 history sub-tab ───────────────────────────────────────────────────

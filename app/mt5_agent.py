@@ -1069,7 +1069,30 @@ def nudge_navigator() -> str:
     return "MT5 rescanned but the manager has not answered yet"
 
 
-def agent_health() -> dict:
+_REMOTE_CACHE = {"at": 0.0, "sha": ""}
+
+
+def _remote_sha_cached(fresh: bool = False, max_age: float = 600.0) -> str:
+    """The newest commit on GitHub, asked for at most every ten minutes.
+
+    The page reads health once a minute and GitHub allows sixty anonymous calls
+    an hour from one address, so asking every time would spend the whole
+    allowance on a line of small print. A failed call keeps the last answer
+    rather than claiming the agent is current.
+    """
+    now = time.time()
+    if not fresh and _REMOTE_CACHE["sha"] and now - _REMOTE_CACHE["at"] < max_age:
+        return _REMOTE_CACHE["sha"]
+    try:
+        sha = _remote_sha()
+    except Exception:                                          # noqa: BLE001
+        return _REMOTE_CACHE["sha"]
+    if sha:
+        _REMOTE_CACHE.update(at=now, sha=sha)
+    return sha
+
+
+def agent_health(fresh: bool = False) -> dict:
     """Version, watchdog, disk. The three things worth knowing about the VPS.
 
     All three have bitten this setup: an agent running older code than it thought,
@@ -1079,7 +1102,15 @@ def agent_health() -> dict:
     import shutil
     import subprocess
 
-    out = {"ok": True, "code": _current_sha()[:7] or "unknown"}
+    here = _current_sha()
+    out = {"ok": True, "code": here[:7] or "unknown"}
+
+    # the agent polls for its own updates, so the page could only ever say what
+    # it was running, never that a fix was already waiting
+    remote = _remote_sha_cached(fresh)
+    if remote:
+        out["remote"] = remote[:7]
+        out["update"] = remote != here
 
     # this machine has two terminal data folders, and compiling into the wrong
     # one looks exactly like MT5 refusing to reload
@@ -1840,7 +1871,8 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authorized():
                 self._json({"ok": False, "error": "unauthorized"}, 401)
                 return
-            self._json(agent_health())
+            fresh = parse_qs(urlparse(self.path).query).get("fresh", ["0"])[0] == "1"
+            self._json(agent_health(fresh))
             return
         if path == "/api/health":
             self._json({"ok": True, "agent": "read-only", "terminal_running": _terminal_running()})
