@@ -146,6 +146,11 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .foot__row select { min-width: 0; flex: 1 1 auto; max-width: 320px; }
 .foot__right { margin-left: auto; }
 .sheet__foot--stack .hint { flex: none; }
+.logbox { margin: 0; padding: var(--space-3); border-radius: var(--radius-sm);
+  background: var(--color-muted); border: 1px solid var(--color-border);
+  font-family: var(--font-head); font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 52vh; overflow: auto; }
+.logbox b { color: var(--color-accent); font-weight: 600; }
 .settings { display: grid; gap: 0; }
 .settings h3 { grid-column: 1 / -1; margin: var(--space-4) 0 var(--space-1); font-size: 11px;
    letter-spacing: .06em; text-transform: uppercase; color: var(--color-muted-fg);
@@ -747,6 +752,34 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
   </div>
 </dialog>
 
+<dialog class="sheet" id="logdlg" aria-labelledby="log-title" style="width:min(94vw,760px)">
+  <div class="sheet__bar">
+    <h2 id="log-title">EA log</h2>
+    <span class="mt5bar__stats" id="log-sub"></span>
+    <button class="btn" id="log-close">Close</button>
+  </div>
+  <div class="sheet__body">
+    <pre class="logbox" id="log-body">loading…</pre>
+  </div>
+  <div class="sheet__foot sheet__foot--stack">
+    <div class="foot__row">
+      <select id="log-which" aria-label="Which log">
+        <option value="experts">Experts log (what the EA prints)</option>
+        <option value="journal">Journal (loads, errors, alerts)</option>
+      </select>
+      <select id="log-days" aria-label="How far back">
+        <option value="1">today</option>
+        <option value="3">3 days</option>
+        <option value="7">7 days</option>
+      </select>
+      <button class="chip ghost" id="log-sym" aria-pressed="false">this symbol only</button>
+      <button class="btn foot__right" id="log-refresh">Refresh</button>
+    </div>
+    <p class="hint" id="log-note">MT5 writes here when an EA refuses to trade -
+      a licence check, a symbol it will not touch, a bad input.</p>
+  </div>
+</dialog>
+
 <dialog class="sheet" id="linkdlg" aria-labelledby="link-title" style="width:min(94vw,520px)">
   <div class="sheet__bar">
     <h2 id="link-title">Link chart to an EA</h2>
@@ -799,6 +832,7 @@ const ICON = {
   gear: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 5 8.9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9.6a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   folder: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   refresh: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>',
+  log: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16"/><path d="M4 10h10"/><path d="M4 15h13"/><path d="M4 20h7"/></svg>',
   chart: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
 const RISKY = new Set(['cracked', 'martingale', 'grid']);
@@ -1746,17 +1780,23 @@ histTimer = setInterval(loadHistory, 60000);   // no-op unless the History sub-t
    One row per EA, joining what it holds right now with what it has actually
    made. Built from the two endpoints already in use, so nothing new is needed
    on the agent - and this is the surface the management actions will attach to. */
+let HIST_CACHE = { at: 0, data: null };
+
 async function loadEas(quiet) {
   if (!MT5?.url || (!quiet && TAB !== 'myea')) return;
   const stats = document.getElementById('easstats');
   const auth = { credentials: 'include', headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {} };
   const tz = -new Date().getTimezoneOffset();
+  // Open trades move every tick, 30 days of closed ones do not: the account is
+  // re-read every refresh, the history at most once a minute.
+  const cached = Date.now() - HIST_CACHE.at < 60000 ? HIST_CACHE.data : null;
   let live, hist;
   try {
     [live, hist] = await Promise.all([
       fetch(`${MT5.url}/api/mt5`, auth).then(r => r.json()),
-      fetch(`${MT5.url}/api/history?days=30&tz=${tz}`, auth).then(r => r.json()),
+      cached || fetch(`${MT5.url}/api/history?days=30&tz=${tz}`, auth).then(r => r.json()),
     ]);
+    if (!cached && hist?.ok) HIST_CACHE = { at: Date.now(), data: hist };
   } catch (e) {
     stats.textContent = 'agent unreachable — ' + e.message;
     return;
@@ -2825,7 +2865,7 @@ async function loadCharts(quiet) {
   setHtml('chartstable', charts.length ? `<table class="mt5">
     <thead><tr><th>Expert</th><th>Symbol</th><th class="n">TF</th><th class="n">Open</th><th class="n">Floating</th>
       <th class="n">Trades</th><th class="n">Win%</th><th class="n">Realised 30d</th>
-      <th>Last trade<span data-tz></span></th><th style="text-align:center">Settings</th>
+      <th>Last trade<span data-tz></span></th><th style="text-align:center">Inspect</th>
       <th style="text-align:right">Action</th></tr></thead>
     <tbody>${charts.map(c => {
       const m = matchMagic(c, EA_ROWS, takenBy(c));
@@ -2851,6 +2891,12 @@ async function loadCharts(quiet) {
         ? `<button class="chip chip--icon ghost" data-inputs="${esc(String(c.chart))}"
              title="see and change what this EA is set to">${ICON.gear}</button>`
         : '<span class="shot-none">—</span>';
+      // an EA that loaded and then went quiet says why in MT5's own log and
+      // nowhere else, so put that log one click from the row it belongs to
+      const logs = c.expert
+        ? `<button class="chip chip--icon ghost" data-log="${esc(String(c.chart))}"
+             title="what this EA has written to MT5's log">${ICON.log}</button>`
+        : '';
       return `<tr>
       <td>${c.expert ? esc(c.expert) : '<span class="shot-none">empty chart</span>'}
         ${c.expert ? link : ''}</td>
@@ -2862,7 +2908,7 @@ async function loadCharts(quiet) {
       <td class="n">${rate == null ? '—' : rate + '%'}</td>
       <td class="n ${r ? mt5Cls(r.realised) : ''}">${r && r.trades ? mt5Money(r.realised, '') : '—'}</td>
       <td class="mono">${r ? esc(mt5Time(r.last)) : '—'}</td>
-      <td style="text-align:center">${settings}</td>
+      <td style="text-align:center">${settings}${logs ? " " + logs : ""}</td>
       <td style="text-align:right">${c.expert
         ? `<button class="chip" data-pause="${esc(String(c.chart))}"
              data-name="${esc(c.expert)} on ${esc(c.symbol)}">Pause</button>`
@@ -2889,6 +2935,9 @@ async function loadCharts(quiet) {
 
   for (const b of document.querySelectorAll('[data-inputs]')) {
     b.onclick = () => openEaSettings(b.dataset.inputs);
+  }
+  for (const b of document.querySelectorAll('[data-log]')) {
+    b.onclick = () => openEaLog(b.dataset.log);
   }
   // ?ea=<chart id> opens that EA settings straight away
   const deep = urlParams.get('ea');
@@ -2944,6 +2993,93 @@ async function managerPost(body) {
     return { ok: false, error: 'request failed: ' + e.message };
   }
 }
+
+/* ── what an EA has to say ─────────────────────────────────────────────────
+   An EA can load, print "licence expired" or "symbol not allowed", and then sit
+   there forever. Nothing in the account, the charts or the positions shows that;
+   MT5 writes it to its own log and only there. This reads it, filtered to one
+   EA, so a silent row can be asked why. Read-only - nothing is written back. */
+const logDlg = document.getElementById('logdlg');
+let LOG_VIEW = null;
+
+function openEaLog(chart) {
+  const c = CHARTS.find(x => String(x.chart) === String(chart));
+  if (!c) return;
+  LOG_VIEW = { expert: c.expert || '', symbol: c.symbol || '', symOnly: false,
+               which: 'experts', days: 1 };
+  document.getElementById('log-title').textContent = c.expert || 'chart log';
+  document.getElementById('log-which').value = 'experts';
+  document.getElementById('log-days').value = '1';
+  document.getElementById('log-sym').setAttribute('aria-pressed', 'false');
+  document.getElementById('log-sym').textContent = `${c.symbol} only`;
+  openSheet(logDlg);
+  loadEaLog();
+}
+
+async function loadEaLog() {
+  if (!LOG_VIEW || !MT5?.url) return;
+  const v = LOG_VIEW;
+  const body = document.getElementById('log-body');
+  const sub = document.getElementById('log-sub');
+  body.textContent = 'reading MT5\u2019s log…';
+  sub.textContent = '';
+
+  const get = async needle => {
+    const q = `lines=400&days=${v.days}&which=${v.which}`
+      + (needle ? `&q=${encodeURIComponent(needle)}` : '');
+    try {
+      const r = await fetch(`${MT5.url}/api/logs?${q}`, {
+        credentials: 'include',
+        headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+      });
+      return await r.json();
+    } catch (e) {
+      return { ok: false, error: 'agent unreachable: ' + e.message };
+    }
+  };
+
+  // MT5 prints the EA under the name the chart shows, but a renamed or
+  // truncated file breaks an exact match, so fall back to the short name
+  let d = await get(v.expert);
+  let used = v.expert;
+  if (d.ok && !(d.lines || []).length && v.expert) {
+    const short = shortEa(v.expert);
+    if (short && short !== v.expert) { d = await get(short); used = short; }
+  }
+  if (LOG_VIEW !== v) return;                     // dialog moved on while we waited
+
+  if (!d.ok) {
+    body.textContent = d.error || 'cannot read the log';
+    return;
+  }
+  let lines = d.lines || [];
+  if (v.symOnly && v.symbol) {
+    const want = `(${v.symbol.toLowerCase()},`;
+    lines = lines.filter(l => l.toLowerCase().includes(want));
+  }
+  sub.textContent = `${lines.length} line${lines.length === 1 ? '' : 's'} · ${d.file || ''}`;
+  body.innerHTML = lines.length
+    ? lines.map(l => esc(l)).join('\n')
+    : `nothing from ${esc(used || 'this EA')} in ${v.which === 'experts' ? 'the Experts log' : 'the Journal'}`
+      + (v.days < 7 ? ' — try a longer window' : '')
+      + '.';
+  body.scrollTop = body.scrollHeight;             // newest lines are at the bottom
+}
+
+document.getElementById('log-close').onclick = () => { LOG_VIEW = null; closeSheet(logDlg); };
+document.getElementById('log-refresh').onclick = () => loadEaLog();
+document.getElementById('log-which').onchange = e => {
+  if (LOG_VIEW) { LOG_VIEW.which = e.target.value; loadEaLog(); }
+};
+document.getElementById('log-days').onchange = e => {
+  if (LOG_VIEW) { LOG_VIEW.days = Number(e.target.value) || 1; loadEaLog(); }
+};
+document.getElementById('log-sym').onclick = e => {
+  if (!LOG_VIEW) return;
+  LOG_VIEW.symOnly = !LOG_VIEW.symOnly;
+  e.currentTarget.setAttribute('aria-pressed', String(LOG_VIEW.symOnly));
+  loadEaLog();
+};
 
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 const TAB_KEY = 'fxea_tab';
@@ -3076,6 +3212,16 @@ load();
 // traffic; 10 min still shows a new sync well before you would notice.
 setInterval(() => { if (document.visibilityState === 'visible') load(); }, 600000);
 setInterval(renderSync, 30000);  // keep the "x ago / next in" text honest
+
+/* Running now carries live floating P&L per EA, which was frozen at whatever it
+   said when the tab opened: nothing ever re-read it. Refresh while that sub-tab
+   is in front, the page is visible, and no dialog is being filled in. */
+setInterval(() => {
+  if (TAB !== 'myea' || EASUB !== 'run') return;
+  if (document.visibilityState !== 'visible') return;
+  if (document.querySelector('dialog[open]')) return;
+  loadEas(true).then(() => loadCharts()).catch(() => {});
+}, 10000);
 </script>
 </body>
 </html>

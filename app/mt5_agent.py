@@ -1811,8 +1811,13 @@ class Handler(BaseHTTPRequestHandler):
                 want = int(qs.get("lines", ["60"])[0])
             except ValueError:
                 want = 60
+            try:
+                # one log file per day, so "has it ever said anything" needs more
+                days = max(1, min(7, int(qs.get("days", ["1"])[0])))
+            except ValueError:
+                days = 1
             self._json(read_terminal_log(want, qs.get("q", [""])[0],
-                                        qs.get("which", ["experts"])[0]))
+                                        qs.get("which", ["experts"])[0], days))
             return
         if path == "/api/eainputs":
             if not self._authorized():
