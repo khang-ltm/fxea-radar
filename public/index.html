@@ -285,6 +285,9 @@ summary svg { transition: transform var(--dur) var(--ease); }
 details[open] > summary svg { transform: rotate(90deg); }
 .rules { margin: var(--space-2) 0 0; padding-left: 18px; font-size: 12.5px; color: #CBD5E1; }
 .rules li { margin-bottom: 3px; }
+.rawmore { margin-top: var(--space-2); }
+.rawmore summary { list-style: none; display: inline-flex; width: max-content; }
+.rawmore summary::-webkit-details-marker { display: none; }
 pre.raw { margin: var(--space-2) 0 0; padding: var(--space-3); background: var(--color-background);
   border: 1px solid var(--color-border-soft); border-radius: var(--radius); color: #CBD5E1;
   font: 400 12px/1.55 var(--font-head); white-space: pre-wrap; max-height: 320px; overflow: auto; }
@@ -1043,10 +1046,27 @@ function detailHtml(p) {
       </section>`;
     })()}
 
-    <section class="sect"><h3>Original message</h3>
-      <pre class="raw">${esc(p.text_clean || p.text || '(no text)')}</pre>
-      ${p.url ? `<p class="hint"><a href="${esc(p.url)}" target="_blank" rel="noopener">Open in Telegram</a> · posted ${esc(p.date_iso.slice(0, 10))}</p>` : ''}
-    </section>`;
+    ${(() => {
+      // The channel posts the name, a facts block and a wall of affiliate promo.
+      // The parser lifts the facts into Specification and throws the promo away,
+      // which for most posts left this section printing the title back at you.
+      // Say so instead, and keep the post as sent one click away.
+      const raw = String(p.text || '').trim();
+      const clean = String(p.text_clean || '').trim();
+      const prose = clean.split('\n').slice(1).join('\n').trim();
+      const body = prose
+        ? `<pre class="raw">${esc(clean)}</pre>`
+        : `<p class="hint">The post carried nothing but the name`
+          + `${specs.length ? ' - the specification above is everything it said' : ''}.</p>`;
+      const full = raw && raw !== clean
+        ? `<details class="rawmore"><summary class="chip ghost">show the post as sent</summary>
+            <pre class="raw">${esc(raw)}</pre></details>`
+        : '';
+      return `<section class="sect"><h3>Original message</h3>${body}${full}
+        ${p.url ? `<p class="hint"><a href="${esc(p.url)}" target="_blank" rel="noopener">Open in Telegram</a>
+          · posted ${esc(p.date_iso.slice(0, 10))}</p>` : ''}
+      </section>`;
+    })()}`;
 }
 
 const detailDlg = document.getElementById('detail');
