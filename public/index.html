@@ -1687,7 +1687,8 @@ function renderMt5(d) {
   document.getElementById('mt5ordcount').textContent = ords.length ? `(${ords.length})` : '';
   MT5_ORDERS = ords;
   setHtml('mt5orders', ords.length ? `<table class="mt5">
-    <thead><tr><th style="width:24px"></th>
+    <thead><tr><th style="width:24px"><input type="checkbox" class="ordpick" id="ordpick-all"
+      aria-label="select every pending order"></th>
       <th>Symbol</th><th>Type</th><th class="n">Lots</th><th class="n">Price</th><th class="n">SL</th>
       <th class="n">TP</th><th>By</th><th class="n">Magic</th><th>Comment</th>
       <th>Placed<span data-tz></span></th><th style="text-align:right">Action</th></tr></thead>
@@ -1714,10 +1715,21 @@ function renderMt5(d) {
   for (const t of [...ORD_PICK]) {
     if (!ords.some(o => Number(o.ticket) === t)) ORD_PICK.delete(t);
   }
-  for (const box of document.querySelectorAll('.ordpick')) {
+  for (const box of document.querySelectorAll('.ordpick[data-t]')) {
     box.onchange = () => {
       const t = Number(box.dataset.t);
       if (box.checked) ORD_PICK.add(t); else ORD_PICK.delete(t);
+      renderOrderPicks();
+    };
+  }
+  const all = document.getElementById('ordpick-all');
+  if (all) {
+    all.onchange = () => {
+      ORD_PICK.clear();
+      if (all.checked) for (const o of ords) ORD_PICK.add(Number(o.ticket));
+      for (const box of document.querySelectorAll('.ordpick[data-t]')) {
+        box.checked = ORD_PICK.has(Number(box.dataset.t));
+      }
       renderOrderPicks();
     };
   }
@@ -1731,6 +1743,12 @@ function renderOrderPicks() {
   const bar = document.getElementById('ordpickbar');
   if (!bar) return;
   const n = ORD_PICK.size;
+  // half-ticked is its own state: the header box has to say "some", not "none"
+  const all = document.getElementById('ordpick-all');
+  if (all) {
+    all.checked = n > 0 && n === MT5_ORDERS.length;
+    all.indeterminate = n > 0 && n < MT5_ORDERS.length;
+  }
   bar.hidden = !n;
   if (!n) return;
   bar.innerHTML = `<span><b>${n}</b> order${n === 1 ? '' : 's'} selected</span>`
