@@ -3077,6 +3077,10 @@ async function managerAction(action, args, label) {
   const d = await managerPost({ action, ...args, confirm: true });
   toast(d.ok ? d.message : `Failed\n${d.error || d.message}`, d.ok ? 'ok' : 'bad');
   loadEas().then(loadCharts);
+  // FxeaManager rewrites its status file every few seconds, so a refresh sent
+  // the instant a command returns still shows the chart it just closed - which
+  // reads as "pause did nothing". Look again once the manager has caught up.
+  setTimeout(() => { loadEas(true).then(() => loadCharts()).catch(() => {}); }, 3000);
   if (d.ok && d.pendings?.count) await offerPendingCleanup(args.chart, label, d.pendings);
 }
 
