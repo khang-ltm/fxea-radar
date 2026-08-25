@@ -232,6 +232,9 @@ def _read_state_locked(now: float) -> dict:
         e["volume"] = round(e["volume"], 2)
         e["profit"] = round(e["profit"], 2)
 
+    for row in (*pos, *pend, *by_ea.values()):
+        tag_magic(row)
+
     a = _as_dict(acc) if acc else {}
     t = _as_dict(term) if term else {}
     data = {
@@ -416,9 +419,10 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
             "week": window(7),
             "month": window(30),
         },
-        "by_ea": sorted(by_ea.values(), key=lambda e: e["profit"]),
+        "by_ea": sorted((tag_magic(e) for e in by_ea.values()),
+                        key=lambda e: e["profit"]),
         "by_day": [{"date": k, "profit": v} for k, v in sorted(by_day.items(), reverse=True)][:60],
-        "closed": closed[:2000],
+        "closed": [tag_magic(c) for c in closed[:2000]],
     }
     _hist_cache.update(at=now, days=key, data=data)
     return data
@@ -474,6 +478,27 @@ def _mql5_files_dir():
     return d if d.is_dir() else None
 
 
+SAFE_INT = 2 ** 53 - 1        # the largest integer a JS double holds exactly
+
+
+def tag_magic(row: dict) -> dict:
+    """Add the magic as text when a browser would round it.
+
+    MT5 magics are ulong and plenty of EAs hash their name and settings into one
+    instead of exposing an input, which lands around 3e18. JSON numbers become
+    doubles in the page, and above 2^53 the spacing is 512 - so 3249631122975359488
+    was being shown as ...500. The number stays for arithmetic; the text is what
+    gets displayed.
+    """
+    try:
+        magic = int(row.get("magic") or 0)
+    except (TypeError, ValueError):
+        return row
+    if magic > SAFE_INT:
+        row["magic_text"] = str(magic)
+    return row
+
+
 def read_charts() -> dict:
     """Whatever FxeaManager last wrote. Absent file means it is not attached."""
     d = _mql5_files_dir()
@@ -488,6 +513,8 @@ def read_charts() -> dict:
     except (OSError, json.JSONDecodeError) as exc:
         return {"ok": False, "attached": False, "error": f"unreadable status file: {exc}"}
     _remember_inputs(data.get("charts") or [])
+    for chart in (data.get("charts") or []):
+        tag_magic(chart)
     age = time.time() - f.stat().st_mtime
     data["ok"] = True
     data["attached"] = age < 60          # the EA rewrites it every few seconds
@@ -1447,7 +1474,17 @@ def _chart_target(chart_id) -> dict:
             base = int(mine.get("magic") or 0)
         except (TypeError, ValueError):
             base = 0
-    return {"base": base, "magics": _chart_magics(chart_id),
+    others = set()
+    for c in charts:
+        if str(c.get("chart")) == want:
+            continue
+        try:
+            m = int(c.get("magic") or 0)
+        except (TypeError, ValueError):
+            continue
+        if m:
+            others.add(m)
+    return {"base": base, "magics": _chart_magics(chart_id), "other_bases": others,
             "symbol": str((mine or {}).get("symbol") or "")}
 
 
@@ -1467,30 +1504,47 @@ def _order_is_ours(order: dict, target: dict) -> bool:
     return order["magic"] in target["magics"] and order["symbol"] == target["symbol"]
 
 
-def pending_orders_for(target: dict) -> list[dict]:
-    """The pending orders that belong to one chart's EA. Reads only."""
-    if not target.get("base"):
-        return []
+def pending_orders_for(target: dict) -> dict:
+    """One chart's pending orders, and how certain that attribution is.
+
+    With a magic to match on, this is a fact. Without one it is a reading: an EA
+    that hashes its own magic instead of exposing an input leaves the chart
+    reporting nothing, and all that is left is "on this chart's symbol, under a
+    magic no other chart claims, and not placed by hand". That is offered, but it
+    is labelled uncertain and every ticket is named, because the alternative -
+    staying silent - is what let orders outlive their EA in the first place.
+    """
     with _ipc_lock:
         mt5 = _connect()
         if mt5 is None:
-            return []
+            return {"orders": [], "certain": True}
         try:
             orders = mt5.orders_get() or ()
         except Exception:                                      # noqa: BLE001
-            return []
-    out = []
+            return {"orders": [], "certain": True}
+
+    rows = []
     for o in orders:
         d = _as_dict(o)
         try:
             row = {"ticket": int(d.get("ticket") or 0),
                    "magic": int(d.get("magic") or 0),
-                   "symbol": str(d.get("symbol") or "")}
+                   "symbol": str(d.get("symbol") or ""),
+                   "type": ORDER_TYPE.get(d.get("type"), str(d.get("type")))}
         except (TypeError, ValueError):
             continue
-        if row["ticket"] and _order_is_ours(row, target):
-            out.append(row)
-    return out
+        if row["ticket"]:
+            rows.append(tag_magic(row))
+
+    if target.get("base"):
+        return {"orders": [r for r in rows if _order_is_ours(r, target)], "certain": True}
+
+    symbol = target.get("symbol") or ""
+    others = target.get("other_bases") or set()
+    # magic 0 is a trade placed by hand and is never anybody's EA to clear up
+    guess = [r for r in rows
+             if r["magic"] and r["symbol"] == symbol and r["magic"] not in others]
+    return {"orders": guess, "certain": False}
 
 
 def cancel_pendings(tickets) -> dict:
@@ -2111,7 +2165,7 @@ class Handler(BaseHTTPRequestHandler):
             known = _PAUSED_ORDERS.get(chart)
             if known is None:              # agent restarted, or the chart still open
                 known = [o["ticket"] for o in
-                         pending_orders_for(_chart_target(body.get("chart")))]
+                         pending_orders_for(_chart_target(body.get("chart")))["orders"]]
             self._json(cancel_pendings(known))
             return
 
@@ -2144,7 +2198,7 @@ class Handler(BaseHTTPRequestHandler):
         # open: pausing closes the chart, and with it the only record of which
         # magic those orders belong to
         pending = pending_orders_for(_chart_target(body.get("chart"))) \
-            if action == "pause" else []
+            if action == "pause" else {"orders": [], "certain": True}
 
         out = manager_command(
             action,
@@ -2158,10 +2212,12 @@ class Handler(BaseHTTPRequestHandler):
             mode=body.get("mode"),
             force=1 if (action == "setinputs" and body.get("force")) else None,
         )
-        if action == "pause" and out.get("ok") and pending:
-            _PAUSED_ORDERS[str(body.get("chart") or "")] = [o["ticket"] for o in pending]
-            out["pendings"] = {"count": len(pending),
-                               "symbols": sorted({o["symbol"] for o in pending if o["symbol"]})}
+        if action == "pause" and out.get("ok") and pending["orders"]:
+            found = pending["orders"]
+            _PAUSED_ORDERS[str(body.get("chart") or "")] = [o["ticket"] for o in found]
+            out["pendings"] = {"count": len(found), "certain": pending["certain"],
+                               "symbols": sorted({o["symbol"] for o in found if o["symbol"]}),
+                               "orders": found[:12]}
         self._json(out)
 
 
