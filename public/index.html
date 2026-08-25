@@ -162,7 +162,15 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
   color: var(--color-warn);
   background: color-mix(in srgb, var(--color-warn) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-warn) 40%, transparent); }
-.orphanbar .chip { margin-left: auto; }
+.orphanbar > .chip:first-of-type { margin-left: auto; }
+.pickbar[hidden] { display: none; }
+.pickbar:not([hidden]) { display: flex; align-items: center; gap: var(--space-2);
+  margin: 0 0 var(--space-3); padding: 6px 6px 6px 12px;
+  border-radius: var(--radius-sm); font-size: 12.5px;
+  color: var(--color-foreground);
+  background: color-mix(in srgb, var(--color-accent) 9%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 32%, transparent); }
+.pickbar__sp { flex: 1; }
 .settings { display: grid; gap: 0; }
 .settings h3 { grid-column: 1 / -1; margin: var(--space-4) 0 var(--space-1); font-size: 11px;
    letter-spacing: .06em; text-transform: uppercase; color: var(--color-muted-fg);
@@ -630,7 +638,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 
     <div id="mt5-ord" hidden>
       <section class="mt5sect"><h2>Pending orders <span class="num" id="mt5ordcount"></span></h2>
-        <div class="orphanbar" id="ordpickbar" hidden></div>
+        <div class="pickbar" id="ordpickbar" hidden></div>
         <div class="wrap" id="mt5orders"></div></section>
     </div>
 
@@ -1725,9 +1733,10 @@ function renderOrderPicks() {
   const n = ORD_PICK.size;
   bar.hidden = !n;
   if (!n) return;
-  bar.innerHTML = `<span>${n} order${n === 1 ? '' : 's'} selected</span>`
-    + '<button class="chip" id="ordpick-go">Cancel selected</button>'
-    + '<button class="chip ghost" id="ordpick-none">Clear</button>';
+  bar.innerHTML = `<span><b>${n}</b> order${n === 1 ? '' : 's'} selected</span>`
+    + '<span class="pickbar__sp"></span>'
+    + '<button class="chip ghost" id="ordpick-none">Clear</button>'
+    + '<button class="chip" id="ordpick-go">Cancel selected</button>';
   document.getElementById('ordpick-go').onclick = () => cancelPickedOrders();
   document.getElementById('ordpick-none').onclick = () => {
     ORD_PICK.clear();
