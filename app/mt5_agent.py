@@ -695,6 +695,24 @@ def _pin_ok(given) -> bool:
     return hmac.compare_digest(AGENT_PIN, str(given or ""))
 
 
+# How long a correct PIN keeps counting, per client address, when whoever typed
+# it asked for that. Clearing ten orders one at a time meant typing the PIN ten
+# times, which teaches nobody anything except to keep it in a text file.
+PIN_GRACE_SECONDS = int(os.environ.get("MT5_PIN_GRACE", "600") or 600)
+_pin_grace: dict[str, float] = {}
+
+
+def _pin_granted(who: str) -> bool:
+    if _pin_grace.get(who, 0.0) - time.time() > 0:
+        return True
+    _pin_grace.pop(who, None)
+    return False
+
+
+def _pin_grant(who: str) -> None:
+    _pin_grace[who] = time.time() + PIN_GRACE_SECONDS
+
+
 _SYM_CACHE: dict[str, tuple[float, dict]] = {}
 SYM_CACHE_SECONDS = 300
 
@@ -2106,7 +2124,9 @@ class Handler(BaseHTTPRequestHandler):
                         "extractor_rar": pathlib.Path(rar[0]).name if rar else None,
                         "extractor_zip": pathlib.Path(other[0]).name if other else None,
                         "seven_zip": installer._seven_zip() is not None,
-                        "pin": bool(AGENT_PIN), "channels": config.CHANNELS})
+                        "pin": bool(AGENT_PIN), "channels": config.CHANNELS,
+                        "pin_grace": round(max(0.0, _pin_grace.get(
+                            self.client_address[0], 0.0) - time.time()))})
             return
         if path == "/api/logs":
             if not self._authorized():
@@ -2209,8 +2229,8 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         action = str(body.get("action") or "")
-        if needs_pin(action, body):
-            who = self.client_address[0]
+        who = self.client_address[0]
+        if needs_pin(action, body) and not _pin_granted(who):
             left = _pin_locked(who)
             if left > 0:
                 self._json({"ok": False,
@@ -2226,6 +2246,8 @@ class Handler(BaseHTTPRequestHandler):
                             "need_pin": bool(AGENT_PIN)}, 403)
                 return
             _pin_fails.pop(who, None)
+            if body.get("remember"):
+                _pin_grant(who)
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
                           "attach", "forget", "install", "uninstall", "savepreset",
                           "delpreset", "update", "reload", "cancelpending"):

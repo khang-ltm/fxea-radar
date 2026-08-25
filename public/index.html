@@ -118,6 +118,10 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
    background: none; color: var(--color-muted-fg); }
 .chip.ghost:hover { border-color: var(--color-border); }
 .asktext { margin: 0; white-space: pre-wrap; line-height: 1.5; }
+.askremember[hidden] { display: none; }
+.askremember:not([hidden]) { display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--color-muted-fg); cursor: pointer; }
+.ordpick { width: 15px; height: 15px; accent-color: var(--color-accent); cursor: pointer; }
 #toasts, .toasts-inner { position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 60;
    display: flex; flex-direction: column; gap: var(--space-2); max-width: min(92vw, 420px); }
 .toast { display: flex; gap: var(--space-2); align-items: flex-start; cursor: pointer;
@@ -626,6 +630,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 
     <div id="mt5-ord" hidden>
       <section class="mt5sect"><h2>Pending orders <span class="num" id="mt5ordcount"></span></h2>
+        <div class="orphanbar" id="ordpickbar" hidden></div>
         <div class="wrap" id="mt5orders"></div></section>
     </div>
 
@@ -676,6 +681,9 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
   </div>
   <div class="sheet__body">
     <p id="ask-body" class="asktext"></p>
+    <label class="askremember" id="ask-rememberrow" hidden>
+      <input type="checkbox" id="ask-remember" checked>
+      <span>don't ask for the PIN again for 10 minutes</span></label>
     <div class="setrow text" id="ask-pinrow" hidden>
       <label for="ask-pin">PIN<small>required for this one</small></label>
       <input id="ask-pin" type="password" autocomplete="off"></div>
@@ -853,6 +861,7 @@ const RISKY = new Set(['cracked', 'martingale', 'grid']);
 const HIDDEN_TAGS = new Set(['has-archive', 'has-ea-file', 'has-set-file', 'template-ea', 'indicator', 'course']);
 const visibleTags = p => (p.tags || []).filter(t => !HIDDEN_TAGS.has(t));
 
+const chr10 = () => String.fromCharCode(10);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtSize = b => !b ? '' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
 const when = ts => {
@@ -1668,11 +1677,16 @@ function renderMt5(d) {
 
   const ords = d.orders || [];
   document.getElementById('mt5ordcount').textContent = ords.length ? `(${ords.length})` : '';
+  MT5_ORDERS = ords;
   setHtml('mt5orders', ords.length ? `<table class="mt5">
-    <thead><tr><th>Symbol</th><th>Type</th><th class="n">Lots</th><th class="n">Price</th><th class="n">SL</th>
+    <thead><tr><th style="width:24px"></th>
+      <th>Symbol</th><th>Type</th><th class="n">Lots</th><th class="n">Price</th><th class="n">SL</th>
       <th class="n">TP</th><th>By</th><th class="n">Magic</th><th>Comment</th>
       <th>Placed<span data-tz></span></th><th style="text-align:right">Action</th></tr></thead>
-    <tbody>${ords.map(o => `<tr><td>${esc(o.symbol)}</td><td>${esc(o.type)}</td><td class="n">${mt5Lots(o.volume)}</td>
+    <tbody>${ords.map(o => `<tr>
+      <td><input type="checkbox" class="ordpick" data-t="${esc(String(o.ticket))}"
+        aria-label="select order ${esc(String(o.ticket))}"
+        ${ORD_PICK.has(Number(o.ticket)) ? 'checked' : ''}></td><td>${esc(o.symbol)}</td><td>${esc(o.type)}</td><td class="n">${mt5Lots(o.volume)}</td>
       <td class="n">${mt5Px(o.price_open, o.digits)}</td><td class="n">${mt5Px(o.sl, o.digits)}</td>
       <td class="n">${mt5Px(o.tp, o.digits)}</td><td>${placedBy(o.magic)}</td>
       <td class="n">${mt5Magic(magicOf(o))}</td>
@@ -1687,6 +1701,75 @@ function renderMt5(d) {
   for (const b of document.querySelectorAll('[data-cancel]')) {
     b.onclick = () => cancelOneOrder(b.dataset.cancel, b.dataset.what, b.dataset.magic);
   }
+  // this table redraws on every price tick, so what is ticked lives in a Set
+  // rather than in the DOM it would be wiped from
+  for (const t of [...ORD_PICK]) {
+    if (!ords.some(o => Number(o.ticket) === t)) ORD_PICK.delete(t);
+  }
+  for (const box of document.querySelectorAll('.ordpick')) {
+    box.onchange = () => {
+      const t = Number(box.dataset.t);
+      if (box.checked) ORD_PICK.add(t); else ORD_PICK.delete(t);
+      renderOrderPicks();
+    };
+  }
+  renderOrderPicks();
+}
+
+let MT5_ORDERS = [];
+const ORD_PICK = new Set();
+
+function renderOrderPicks() {
+  const bar = document.getElementById('ordpickbar');
+  if (!bar) return;
+  const n = ORD_PICK.size;
+  bar.hidden = !n;
+  if (!n) return;
+  bar.innerHTML = `<span>${n} order${n === 1 ? '' : 's'} selected</span>`
+    + '<button class="chip" id="ordpick-go">Cancel selected</button>'
+    + '<button class="chip ghost" id="ordpick-none">Clear</button>';
+  document.getElementById('ordpick-go').onclick = () => cancelPickedOrders();
+  document.getElementById('ordpick-none').onclick = () => {
+    ORD_PICK.clear();
+    for (const box of document.querySelectorAll('.ordpick')) box.checked = false;
+    renderOrderPicks();
+  };
+}
+
+/* Cancelling a handful together. One confirm, one PIN - typing it per order was
+   the whole complaint, and six prompts in a row is how a PIN ends up on a
+   sticky note. */
+async function cancelPickedOrders() {
+  const tickets = [...ORD_PICK];
+  if (!tickets.length) return;
+  const row = t => MT5_ORDERS.find(o => Number(o.ticket) === t) || {};
+  const owners = [...new Set(tickets
+    .map(t => EA_BY_MAGIC[Number(row(t).magic)])
+    .filter(Boolean))];
+  const res = await ask({
+    title: `Cancel ${tickets.length} pending order${tickets.length === 1 ? '' : 's'}`,
+    body: tickets.map(t => {
+        const o = row(t);
+        return `  #${t} ${o.symbol || ''} ${o.type || ''} `
+          + `magic ${o.magic_text || o.magic || 0}`;
+      }).join(chr10())
+      + (owners.length
+          ? chr10() + chr10() + `${owners.join(', ')} `
+            + `${owners.length === 1 ? 'is' : 'are'} still running and may place these again.`
+          : '')
+      + chr10() + chr10() + 'Open positions are not touched.',
+    yes: `Cancel ${tickets.length} order${tickets.length === 1 ? '' : 's'}`,
+    danger: true,
+    pin: true,
+  });
+  if (!res) return;
+  const d = await managerPost({ action: 'cancelpending', confirm: true, pin: res.pin,
+                                remember: res.remember, tickets });
+  toast(d.ok ? (d.message || 'orders cancelled') : `Failed${chr10()}${d.error || d.message}`,
+        d.ok ? 'ok' : 'bad', d.ok ? 7 : 12);
+  ORD_PICK.clear();
+  loadMt5();
+  loadOrphans().catch(() => {});
 }
 
 /* Cancelling one order by hand. A pending order belonging to an EA that is
@@ -1706,7 +1789,7 @@ async function cancelOneOrder(ticket, what, magic) {
   });
   if (!res) return;
   const d = await managerPost({ action: 'cancelpending', confirm: true, pin: res.pin,
-                                tickets: [Number(ticket)] });
+                                remember: res.remember, tickets: [Number(ticket)] });
   toast(d.ok ? (d.message || 'order cancelled') : `Failed\n${d.error || d.message}`,
         d.ok ? 'ok' : 'bad', d.ok ? 7 : 12);
   loadMt5();
@@ -2215,7 +2298,7 @@ async function removeInstalled(path, name) {
     yes: 'Delete', danger: true, pin: true,
   });
   if (!answer) return;
-  const r = await managerPost({ action: 'uninstall', confirm: true, pin: answer.pin, path });
+  const r = await managerPost({ action: 'uninstall', confirm: true, pin: answer.pin, remember: answer.remember, path });
   if (!r.ok) { toast(`Failed\n${r.error || r.message}`, 'bad'); return; }
   toast(r.message, 'ok');
 
@@ -2286,13 +2369,16 @@ function ask({ title = 'Confirm', body = '', yes = 'Confirm', danger = false, pi
   document.getElementById('ask-note').textContent = '';
   const pinRow = document.getElementById('ask-pinrow');
   const pinBox = document.getElementById('ask-pin');
-  pinRow.hidden = !pin;
+  // the agent may still be counting the last PIN, in which case asking is theatre
+  const needed = pin && !pinGraceLeft();
+  pinRow.hidden = !needed;
+  document.getElementById('ask-rememberrow').hidden = !needed;
   pinBox.value = '';
   const go = document.getElementById('ask-yes');
   go.textContent = yes;
   go.classList.toggle('btn--danger', !!danger);
   openSheet(askDlg);
-  if (pin) setTimeout(() => pinBox.focus(), 40);
+  if (needed) setTimeout(() => pinBox.focus(), 40);
   return new Promise(resolve => { askResolve = resolve; });
 }
 
@@ -2313,8 +2399,17 @@ document.getElementById('ask-yes').onclick = () => {
     document.getElementById('ask-note').textContent = 'the PIN is required';
     return;
   }
-  settle({ pin });
+  const remember = !pinRow.hidden && document.getElementById('ask-remember').checked;
+  if (remember) PIN_GRACE_UNTIL = Date.now() + 600000;
+  settle({ pin, remember });
 };
+
+/* The agent counts a correct PIN for ten minutes when asked to, so clearing six
+   orders is one PIN rather than six. This tracks the same window only to stop
+   showing a field the agent will not check - the agent decides, per client
+   address, and forgets on restart. */
+let PIN_GRACE_UNTIL = 0;
+const pinGraceLeft = () => Math.max(0, PIN_GRACE_UNTIL - Date.now());
 
 /* Toasts stay long enough to read a failure and can be dismissed by clicking. */
 function toast(text, kind = 'ok', seconds = 7) {
@@ -2914,7 +3009,7 @@ document.getElementById('ea-save').onclick = async () => {
     const note = document.getElementById('ea-note');
     note.textContent = 'enabling...';
     const r = await managerPost({ action: 'setinputs', confirm: true, chart: EA_EDIT.chart,
-                                  pin: go.pin, inputs: changes,
+                                  pin: go.pin, remember: go.remember, inputs: changes,
                                   mode: INSTALLABLE.expertmode || 33 });
     note.textContent = r.ok ? (r.message || 'enabled') : `failed: ${r.error || r.message}`;
     toast(r.ok ? `${shortEa(EA_EDIT.expert)} is now trading` : `Failed\n${r.error || r.message}`,
@@ -3158,7 +3253,8 @@ async function offerPendingCleanup(chart, label, pendings) {
     pin: true,
   });
   if (!res) { toast(`${n} pending order${n === 1 ? '' : 's'} left in place`, 'warn'); return; }
-  const d = await managerPost({ action: 'cancelpending', chart, confirm: true, pin: res.pin });
+  const d = await managerPost({ action: 'cancelpending', chart, confirm: true,
+                                pin: res.pin, remember: res.remember });
   toast(d.ok ? (d.message || 'orders cancelled') : `Failed\n${d.error || d.message}`,
         d.ok ? 'ok' : 'bad', d.ok ? 7 : 12);
   loadEas().then(loadCharts);
@@ -3241,6 +3337,7 @@ async function clearOrphans() {
   });
   if (!res) return;
   const d = await managerPost({ action: 'cancelpending', confirm: true, pin: res.pin,
+                                remember: res.remember,
                                 tickets: ORPHANS.map(o => o.ticket) });
   toast(d.ok ? (d.message || 'orders cancelled') : `Failed\n${d.error || d.message}`,
         d.ok ? 'ok' : 'bad', d.ok ? 7 : 12);
