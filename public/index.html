@@ -151,6 +151,14 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
   font-family: var(--font-head); font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 52vh; overflow: auto; }
 .logbox b { color: var(--color-accent); font-weight: 600; }
+.orphanbar[hidden] { display: none; }
+.orphanbar:not([hidden]) { display: flex; align-items: center; gap: var(--space-3);
+  flex-wrap: wrap; margin: 0 0 var(--space-3); padding: 8px 12px;
+  border-radius: var(--radius-sm); font-size: 12.5px;
+  color: var(--color-warn);
+  background: color-mix(in srgb, var(--color-warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warn) 40%, transparent); }
+.orphanbar .chip { margin-left: auto; }
 .settings { display: grid; gap: 0; }
 .settings h3 { grid-column: 1 / -1; margin: var(--space-4) 0 var(--space-1); font-size: 11px;
    letter-spacing: .06em; text-transform: uppercase; color: var(--color-muted-fg);
@@ -558,6 +566,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div id="myea-run">
       <section class="mt5sect">
         <h2>Running now <span class="num" id="chartstats"></span></h2>
+        <div class="orphanbar" id="orphanbar" hidden></div>
         <div class="wrap" id="chartstable"></div>
       </section>
       <section class="mt5sect" id="pausedwrap" hidden>
@@ -3020,6 +3029,7 @@ async function loadCharts(quiet) {
     : '<div class="empty">No other charts open.</div>');
 
   renderInstalled(charts, d.paused || []);
+  loadOrphans().catch(() => {});
 
   const paused = d.paused || [];
   setHtml('pausedtable', paused.length ? `<table class="mt5">
@@ -3137,6 +3147,73 @@ async function managerPost(body) {
   } catch (e) {
     return { ok: false, error: 'request failed: ' + e.message };
   }
+}
+
+/* ── orders with nobody left to manage them ────────────────────────────────
+   Hooking the pending-order question onto the Pause command only answered it
+   when Pause itself reported success - and an EA can also be removed in MT5 by
+   hand, die on its own, or be stopped while the manager was too busy to answer.
+   The orders outlive it either way and still fill. So ask the plain question on
+   every refresh instead: is there a pending order here that no open chart can
+   account for. */
+let ORPHANS = [];
+
+async function loadOrphans() {
+  const bar = document.getElementById('orphanbar');
+  if (!bar || !MT5?.url) return;
+  let d;
+  try {
+    d = await (await fetch(`${MT5.url}/api/orphans`, {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    })).json();
+  } catch { return; }
+
+  ORPHANS = (d?.ok && d.orphans) || [];
+  const unsure = (d?.ok && d.uncertain) || [];
+  if (!ORPHANS.length) {
+    // an EA that hides its magic cannot be checked, and saying so is the honest
+    // version of an empty bar
+    bar.hidden = !unsure.length;
+    if (unsure.length) {
+      bar.innerHTML = `<span>${unsure.length} pending order${unsure.length === 1 ? '' : 's'} on `
+        + `${esc([...new Set(unsure.map(o => o.symbol))].join(', '))} cannot be checked -`
+        + ' the EA there keeps its magic inside the compiled code.</span>';
+    }
+    return;
+  }
+  const syms = [...new Set(ORPHANS.map(o => o.symbol))].join(', ');
+  bar.hidden = false;
+  bar.innerHTML = `<span><b>${ORPHANS.length} pending order${ORPHANS.length === 1 ? '' : 's'}</b>`
+    + ` on ${esc(syms)} ${ORPHANS.length === 1 ? 'has' : 'have'} no running EA to manage`
+    + ` ${ORPHANS.length === 1 ? 'it' : 'them'}. ${ORPHANS.length === 1 ? 'It' : 'They'}`
+    + ' can still fill.</span>'
+    + '<button class="chip" id="orphan-go">Review and delete</button>';
+  document.getElementById('orphan-go').onclick = () => clearOrphans();
+}
+
+async function clearOrphans() {
+  if (!ORPHANS.length) return;
+  const list = ORPHANS.slice(0, 12).map(o =>
+    `  #${o.ticket} ${o.symbol} ${o.type || ''} magic ${o.magic_text || o.magic}`.trimEnd());
+  const more = ORPHANS.length > list.length ? `\n  … and ${ORPHANS.length - list.length} more` : '';
+  const res = await ask({
+    title: `Delete ${ORPHANS.length} orphaned order${ORPHANS.length === 1 ? '' : 's'}`,
+    body: 'No chart open in MT5 can account for these, so nothing is left to'
+      + ' manage them if they fill:\n\n' + list.join('\n') + more
+      + '\n\nOpen positions are not touched. The agent checks the list again'
+      + ' before deleting, and refuses any order a running EA turns out to own.',
+    yes: `Delete ${ORPHANS.length} order${ORPHANS.length === 1 ? '' : 's'}`,
+    danger: true,
+    pin: true,
+  });
+  if (!res) return;
+  const d = await managerPost({ action: 'cancelpending', confirm: true, pin: res.pin,
+                                tickets: ORPHANS.map(o => o.ticket) });
+  toast(d.ok ? (d.message || 'orders cancelled') : `Failed\n${d.error || d.message}`,
+        d.ok ? 'ok' : 'bad', d.ok ? 7 : 12);
+  loadOrphans();
+  loadEas().then(loadCharts);
 }
 
 /* ── what an EA has to say ─────────────────────────────────────────────────

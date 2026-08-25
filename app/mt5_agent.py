@@ -1547,6 +1547,87 @@ def pending_orders_for(target: dict) -> dict:
     return {"orders": guess, "certain": False}
 
 
+def _chart_claims(charts: list) -> tuple[list[dict], set[str]]:
+    """What each open chart can claim, and the symbols nothing can speak for.
+
+    A chart that reports its magic claims that number and its hundred block. A
+    chart whose EA hides its magic claims nothing - but its symbol still has a
+    live EA on it, so orders there are unknown rather than abandoned. Keeping
+    those two apart is the whole point: one is safe to offer for deletion, the
+    other belongs to something still trading.
+    """
+    def magic_of(c) -> int:
+        try:
+            return int(c.get("magic") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    live = [c for c in charts if not c.get("is_manager")]
+    bases = {magic_of(c) for c in live} - {0}
+    claims, unknown = [], set()
+    for c in live:
+        base, symbol = magic_of(c), str(c.get("symbol") or "")
+        if not base:
+            if c.get("expert"):
+                unknown.add(symbol)
+            continue
+        block = base // 100 * 100
+        claims.append({"base": base, "symbol": symbol,
+                       "magics": {base} | {m for m in range(block, block + 100)
+                                           if m not in (bases - {base})}})
+    return claims, unknown
+
+
+def orphan_pendings() -> dict:
+    """Pending orders with no EA left to manage them.
+
+    This is the state the panel used to be blind to: an EA is stopped, removed
+    in MT5 by hand, or dies on its own, and the stop and limit orders it placed
+    stay in the book and still fill. Rather than hooking that onto one command
+    and hoping, every refresh asks the plain question - is there an order here
+    that no open chart can account for.
+    """
+    status = read_charts()
+    if not status.get("ok") or not status.get("attached"):
+        return {"ok": False, "error": status.get("error")
+                or "FxeaManager is not reporting, so nothing can be judged orphaned"}
+
+    claims, unknown = _chart_claims(status.get("charts") or [])
+    with _ipc_lock:
+        mt5 = _connect()
+        if mt5 is None:
+            return {"ok": False, "error": _init_error or "terminal not reachable"}
+        try:
+            orders = mt5.orders_get() or ()
+        except Exception as exc:                               # noqa: BLE001
+            return {"ok": False, "error": f"cannot read orders: {exc}"}
+
+    orphans, uncertain = [], []
+    for o in orders:
+        d = _as_dict(o)
+        try:
+            row = {"ticket": int(d.get("ticket") or 0),
+                   "magic": int(d.get("magic") or 0),
+                   "symbol": str(d.get("symbol") or ""),
+                   "type": ORDER_TYPE.get(d.get("type"), str(d.get("type"))),
+                   "comment": str(d.get("comment") or ""),
+                   "placed_at": _iso(d.get("time_setup"))}
+        except (TypeError, ValueError):
+            continue
+        if not row["ticket"] or not row["magic"]:
+            continue                       # magic 0 was placed by hand, not by an EA
+        tag_magic(row)
+        if any(_order_is_ours(row, t) for t in claims):
+            continue                       # a running chart owns it
+        if row["symbol"] in unknown:
+            uncertain.append(row)          # an EA is on that symbol, hiding its magic
+            continue
+        orphans.append(row)
+
+    return {"ok": True, "orphans": orphans, "uncertain": uncertain,
+            "count": len(orphans)}
+
+
 def cancel_pendings(tickets) -> dict:
     """Delete these pending orders. The only trade request this agent can send.
 
@@ -2044,6 +2125,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(read_terminal_log(want, qs.get("q", [""])[0],
                                         qs.get("which", ["experts"])[0], days))
             return
+        if path == "/api/orphans":
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            self._json(orphan_pendings())
+            return
         if path == "/api/eainputs":
             if not self._authorized():
                 self._json({"ok": False, "error": "unauthorized"}, 401)
@@ -2161,6 +2248,30 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if action == "cancelpending":
+            asked = body.get("tickets")
+            if asked:
+                # tickets named by the page are still checked here: only orders
+                # this agent itself calls orphaned can be cancelled that way
+                free = {o["ticket"] for o in orphan_pendings().get("orphans") or []}
+                want, refused = [], []
+                for t in asked:
+                    try:
+                        t = int(t)
+                    except (TypeError, ValueError):
+                        continue
+                    (want if t in free else refused).append(t)
+                if not want:
+                    self._json({"ok": False,
+                                "error": "those orders belong to a running EA,"
+                                         " or are no longer in the book"}, 400)
+                    return
+                out = cancel_pendings(want)
+                if refused:
+                    out["refused"] = refused
+                    out["message"] = (out.get("message") or "") \
+                        + f", left {len(refused)} that a running EA owns"
+                self._json(out)
+                return
             chart = str(body.get("chart") or "")
             known = _PAUSED_ORDERS.get(chart)
             if known is None:              # agent restarted, or the chart still open
