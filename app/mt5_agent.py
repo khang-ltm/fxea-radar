@@ -2250,27 +2250,20 @@ class Handler(BaseHTTPRequestHandler):
         if action == "cancelpending":
             asked = body.get("tickets")
             if asked:
-                # tickets named by the page are still checked here: only orders
-                # this agent itself calls orphaned can be cancelled that way
-                free = {o["ticket"] for o in orphan_pendings().get("orphans") or []}
-                want, refused = [], []
-                for t in asked:
+                # A named ticket is the account owner's decision - including an
+                # order a running EA placed, which is a thing you sometimes need
+                # to do. cancel_pendings only ever removes tickets that are still
+                # pending orders, and the PIN is what stands in front of it.
+                want = []
+                for t in asked[:50]:
                     try:
-                        t = int(t)
+                        want.append(int(t))
                     except (TypeError, ValueError):
                         continue
-                    (want if t in free else refused).append(t)
                 if not want:
-                    self._json({"ok": False,
-                                "error": "those orders belong to a running EA,"
-                                         " or are no longer in the book"}, 400)
+                    self._json({"ok": False, "error": "no ticket numbers given"}, 400)
                     return
-                out = cancel_pendings(want)
-                if refused:
-                    out["refused"] = refused
-                    out["message"] = (out.get("message") or "") \
-                        + f", left {len(refused)} that a running EA owns"
-                self._json(out)
+                self._json(cancel_pendings(want))
                 return
             chart = str(body.get("chart") or "")
             known = _PAUSED_ORDERS.get(chart)

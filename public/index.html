@@ -1671,14 +1671,46 @@ function renderMt5(d) {
   setHtml('mt5orders', ords.length ? `<table class="mt5">
     <thead><tr><th>Symbol</th><th>Type</th><th class="n">Lots</th><th class="n">Price</th><th class="n">SL</th>
       <th class="n">TP</th><th>By</th><th class="n">Magic</th><th>Comment</th>
-      <th>Placed<span data-tz></span></th></tr></thead>
+      <th>Placed<span data-tz></span></th><th style="text-align:right">Action</th></tr></thead>
     <tbody>${ords.map(o => `<tr><td>${esc(o.symbol)}</td><td>${esc(o.type)}</td><td class="n">${mt5Lots(o.volume)}</td>
       <td class="n">${mt5Px(o.price_open, o.digits)}</td><td class="n">${mt5Px(o.sl, o.digits)}</td>
       <td class="n">${mt5Px(o.tp, o.digits)}</td><td>${placedBy(o.magic)}</td>
       <td class="n">${mt5Magic(magicOf(o))}</td>
       <td>${esc(o.comment || '')}</td>
-      <td class="mono">${esc(mt5Time(o.placed_at))}</td></tr>`).join('')}</tbody></table>`
+      <td class="mono">${esc(mt5Time(o.placed_at))}</td>
+      <td style="text-align:right"><button class="chip ghost" data-cancel="${esc(String(o.ticket))}"
+        data-what="${esc(`${o.type} ${o.symbol} ${mt5Lots(o.volume)} at ${mt5Px(o.price_open, o.digits)}`)}"
+        data-magic="${esc(String(magicOf(o) || 0))}"
+        title="delete this pending order">Cancel</button></td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No pending orders.</div>');
+
+  for (const b of document.querySelectorAll('[data-cancel]')) {
+    b.onclick = () => cancelOneOrder(b.dataset.cancel, b.dataset.what, b.dataset.magic);
+  }
+}
+
+/* Cancelling one order by hand. A pending order belonging to an EA that is
+   still running is allowed - sometimes that is exactly the point - but it is
+   said out loud first, because the EA may well place another one. */
+async function cancelOneOrder(ticket, what, magic) {
+  const owner = EA_BY_MAGIC[Number(magic)] || '';
+  const res = await ask({
+    title: `Cancel order #${ticket}`,
+    body: `${what}\n\nmagic ${magic}`
+      + (owner ? `\n\n${owner} is running and placed this. Deleting the order does`
+                 + ' not stop the EA, and it may place another.' : '')
+      + '\n\nOpen positions are not touched.',
+    yes: 'Cancel the order',
+    danger: true,
+    pin: true,
+  });
+  if (!res) return;
+  const d = await managerPost({ action: 'cancelpending', confirm: true, pin: res.pin,
+                                tickets: [Number(ticket)] });
+  toast(d.ok ? (d.message || 'order cancelled') : `Failed\n${d.error || d.message}`,
+        d.ok ? 'ok' : 'bad', d.ok ? 7 : 12);
+  loadMt5();
+  loadOrphans().catch(() => {});
 }
 
 /* The VPS answers for itself: which build the agent runs, whether the restart
@@ -3201,8 +3233,8 @@ async function clearOrphans() {
     title: `Delete ${ORPHANS.length} orphaned order${ORPHANS.length === 1 ? '' : 's'}`,
     body: 'No chart open in MT5 can account for these, so nothing is left to'
       + ' manage them if they fill:\n\n' + list.join('\n') + more
-      + '\n\nOpen positions are not touched. The agent checks the list again'
-      + ' before deleting, and refuses any order a running EA turns out to own.',
+      + '\n\nOpen positions are not touched, and only orders still in the book'
+      + ' can be deleted.',
     yes: `Delete ${ORPHANS.length} order${ORPHANS.length === 1 ? '' : 's'}`,
     danger: true,
     pin: true,
