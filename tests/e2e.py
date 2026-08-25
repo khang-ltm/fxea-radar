@@ -369,6 +369,7 @@ def run_once(run_no: int, port: int) -> None:
               "scroll lock is released on close and on Esc")
         check_page_script(html)
         check_agent_names()
+        check_trade_path()
         check_no_control_chars()
 
         status, tagged = http_json(f"http://127.0.0.1:{port}/api/posts?ea=0&group=0&kind=all&tag=has-ea-file")
@@ -433,6 +434,41 @@ def check_agent_names() -> None:
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     unknown = sorted(n for n in called - known if not hasattr(builtins, n))
     check(not unknown, f"agent calls only functions that exist{'' if not unknown else ': missing ' + ', '.join(unknown)}")
+
+
+def check_trade_path() -> None:
+    """The agent may cancel a pending order and do nothing else to a trade.
+
+    Cancelling pendings is the one trade request this agent can send, and it was
+    added on purpose: a stopped EA leaves orders that still fill. Everything else
+    - opening, closing, modifying a position - must stay impossible, so that a
+    stolen token can never move money. This asserts it in the source rather than
+    trusting a comment: every order_send must be TRADE_ACTION_REMOVE.
+    """
+    import ast
+
+    src = (ROOT / "app" / "mt5_agent.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    sends, actions = 0, set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr not in ("order_send", "order_check", "Close", "Buy", "Sell"):
+            continue
+        sends += 1
+        for arg in node.args:
+            if not isinstance(arg, ast.Dict):
+                actions.add("not a literal request")
+                continue
+            for k, v in zip(arg.keys, arg.values):
+                if isinstance(k, ast.Constant) and k.value == "action":
+                    actions.add(ast.unparse(v).split(".")[-1])
+
+    check(sends <= 1, f"the agent sends at most one kind of trade request (found {sends})")
+    check(actions <= {"TRADE_ACTION_REMOVE"},
+          "the only trade request is TRADE_ACTION_REMOVE"
+          + ("" if actions <= {"TRADE_ACTION_REMOVE"} else f" - found {sorted(actions)}"))
 
 
 def check_no_control_chars() -> None:

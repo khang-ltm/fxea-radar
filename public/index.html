@@ -3060,7 +3060,8 @@ async function managerAction(action, args, label) {
   const verb = { pause: 'Pause', forget: 'Discard', unload: 'Close' }[action] || 'Run';
   const note = action === 'pause'
     ? 'The EA stops. Its settings are saved, so Run brings it back. '
-      + 'Positions and orders it already placed stay open.'
+      + 'Open positions stay open, and if it left pending orders you are asked '
+      + 'about those next.'
     : action === 'forget'
       ? 'Drops it from this list along with the settings Run would have restored. '
         + 'Nothing is running, so nothing stops. Any trades it left stay open.'
@@ -3071,6 +3072,34 @@ async function managerAction(action, args, label) {
                    danger: action === 'forget' || action === 'unload' })) return;
   const d = await managerPost({ action, ...args, confirm: true });
   toast(d.ok ? d.message : `Failed\n${d.error || d.message}`, d.ok ? 'ok' : 'bad');
+  loadEas().then(loadCharts);
+  if (d.ok && d.pendings?.count) await offerPendingCleanup(args.chart, label, d.pendings);
+}
+
+/* A stopped EA leaves its stop and limit orders in the book, and they still
+   fill - opening a position with no EA left to manage it. The EA is already
+   stopped by the time this asks, so cancelling is a choice, not a condition:
+   Cancel leaves them exactly where they are. Deleting live orders needs the PIN
+   for the same reason removing an EA does. */
+async function offerPendingCleanup(chart, label, pendings) {
+  const n = pendings.count;
+  const where = (pendings.symbols || []).join(', ');
+  const res = await ask({
+    title: `${n} pending order${n === 1 ? '' : 's'} left behind`,
+    body: `${label} is stopped, but ${n === 1 ? 'a pending order' : n + ' pending orders'}`
+      + `${where ? ' on ' + where : ''} ${n === 1 ? 'is' : 'are'} still in the book.`
+      + ' They can still fill, and there is no EA left to manage the trade.'
+      + ' Delete them, or Cancel to leave them where they are. Open positions are'
+      + ' not touched either way, and only the orders listed when it stopped can'
+      + ' be deleted - not anything placed since.',
+    yes: `Delete ${n} order${n === 1 ? '' : 's'}`,
+    danger: true,
+    pin: true,
+  });
+  if (!res) { toast(`${n} pending order${n === 1 ? '' : 's'} left in place`, 'warn'); return; }
+  const d = await managerPost({ action: 'cancelpending', chart, confirm: true, pin: res.pin });
+  toast(d.ok ? (d.message || 'orders cancelled') : `Failed\n${d.error || d.message}`,
+        d.ok ? 'ok' : 'bad', d.ok ? 7 : 12);
   loadEas().then(loadCharts);
 }
 

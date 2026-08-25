@@ -623,7 +623,7 @@ def _stage_inputs(pairs, chart) -> object:
 # can do nothing until someone confirms it - so it costs no PIN, which is what
 # makes reviewing settings before enabling the easy path rather than the annoying
 # one.
-GUARDED = ("uninstall",)
+GUARDED = ("uninstall", "cancelpending")
 
 
 def needs_pin(action: str, body: dict) -> bool:
@@ -1409,6 +1409,146 @@ def delete_preset(name: str) -> dict:
     return out
 
 
+def _chart_magics(chart_id) -> set[int]:
+    """Which magic numbers belong to the EA on one chart.
+
+    The same rule the page shows: the magic the EA's own inputs carry, plus the
+    rest of its hundred block, minus any number another chart claims as its base.
+    EAs number their strategies around a base - a chart set to 77701 also trades
+    77704 and 77705 - and a chart that reports no magic gets an empty set, so its
+    orders are never guessed at and never touched.
+    """
+    charts = (read_charts().get("charts") or [])
+    want = str(chart_id)
+
+    def magic_of(c) -> int:
+        try:
+            return int(c.get("magic") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    mine = next((c for c in charts if str(c.get("chart")) == want), None)
+    base = magic_of(mine) if mine else 0
+    if not base:
+        return set()
+    others = {magic_of(c) for c in charts if str(c.get("chart")) != want}
+    block = base // 100 * 100
+    return {base} | {m for m in range(block, block + 100) if m not in others}
+
+
+def _chart_target(chart_id) -> dict:
+    """The chart's own magic, its block, and the symbol it trades."""
+    charts = (read_charts().get("charts") or [])
+    want = str(chart_id)
+    mine = next((c for c in charts if str(c.get("chart")) == want), None)
+    base = 0
+    if mine:
+        try:
+            base = int(mine.get("magic") or 0)
+        except (TypeError, ValueError):
+            base = 0
+    return {"base": base, "magics": _chart_magics(chart_id),
+            "symbol": str((mine or {}).get("symbol") or "")}
+
+
+def _order_is_ours(order: dict, target: dict) -> bool:
+    """Whether one pending order can be said to belong to this chart's EA.
+
+    The magic the EA carries is proof. The rest of its hundred block is only a
+    convention, and two charts of the same EA share that block - so a block magic
+    counts only when the order is on this chart's own symbol. Anything less
+    certain than that is left alone: leaving an order in place is recoverable,
+    cancelling someone else's is not.
+    """
+    if not target["base"]:
+        return False
+    if order["magic"] == target["base"]:
+        return True
+    return order["magic"] in target["magics"] and order["symbol"] == target["symbol"]
+
+
+def pending_orders_for(target: dict) -> list[dict]:
+    """The pending orders that belong to one chart's EA. Reads only."""
+    if not target.get("base"):
+        return []
+    with _ipc_lock:
+        mt5 = _connect()
+        if mt5 is None:
+            return []
+        try:
+            orders = mt5.orders_get() or ()
+        except Exception:                                      # noqa: BLE001
+            return []
+    out = []
+    for o in orders:
+        d = _as_dict(o)
+        try:
+            row = {"ticket": int(d.get("ticket") or 0),
+                   "magic": int(d.get("magic") or 0),
+                   "symbol": str(d.get("symbol") or "")}
+        except (TypeError, ValueError):
+            continue
+        if row["ticket"] and _order_is_ours(row, target):
+            out.append(row)
+    return out
+
+
+def cancel_pendings(tickets) -> dict:
+    """Delete these pending orders. The only trade request this agent can send.
+
+    A stopped EA leaves its stop and limit orders in the book, and they still
+    fill - opening a position with no EA left to manage it. Removing them is the
+    one thing worth being able to do from outside, so it is the one thing allowed
+    here: TRADE_ACTION_REMOVE against the exact tickets that were listed while
+    the EA was still on its chart. Nothing in this file can open, close or modify
+    a position, and no ticket is removed that is not still a pending order.
+    """
+    want = {int(t) for t in (tickets or []) if str(t).strip()}
+    if not want:
+        return {"ok": False, "error": "nothing to cancel - this EA reports no magic"
+                                      " number, so its orders cannot be told apart"
+                                      " from another EA's"}
+    with _ipc_lock:
+        mt5 = _connect()
+        if mt5 is None:
+            return {"ok": False, "error": _init_error or "terminal not reachable"}
+        try:
+            live = {int(_as_dict(o).get("ticket") or 0) for o in (mt5.orders_get() or ())}
+        except Exception as exc:                               # noqa: BLE001
+            return {"ok": False, "error": f"cannot read orders: {exc}"}
+
+        done, failed, gone = [], [], sorted(want - live)
+        for ticket in sorted(want & live):
+            try:
+                r = mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": ticket})
+            except Exception as exc:                           # noqa: BLE001
+                failed.append({"ticket": ticket, "error": str(exc)})
+                continue
+            code = getattr(r, "retcode", None)
+            if code == getattr(mt5, "TRADE_RETCODE_DONE", 10009):
+                done.append(ticket)
+            else:
+                failed.append({"ticket": ticket,
+                               "error": f"MT5 refused it: {code} "
+                                        f"{getattr(r, 'comment', '')}".strip()})
+
+    parts = [f"cancelled {len(done)} pending order{'' if len(done) == 1 else 's'}"]
+    if gone:
+        parts.append(f"{len(gone)} had already gone")
+    if failed:
+        parts.append(f"{len(failed)} refused by MT5")
+    out = {"ok": bool(done) or not failed, "cancelled": len(done),
+           "failed": failed, "already_gone": gone, "message": ", ".join(parts)}
+    _audit(out, {"cancelpending": done})
+    return out
+
+
+# The tickets an EA had when it was paused. Pausing closes its chart, and with
+# it the only record of which orders were its own, so they are remembered here
+# rather than guessed at afterwards.
+_PAUSED_ORDERS: dict[str, list[int]] = {}
+
+
 def magics_in_use() -> dict:
     """Magic -> what is using it: charts first, then anything that has traded.
 
@@ -1875,7 +2015,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(agent_health(fresh))
             return
         if path == "/api/health":
-            self._json({"ok": True, "agent": "read-only", "terminal_running": _terminal_running()})
+            self._json({"ok": True, "agent": "cancels pending orders, never opens or closes one",
+                        "terminal_running": _terminal_running()})
             return
         if path in ("/", "/index.html", "/mt5.html"):
             page = config.PUBLIC_DIR / "mt5.html"
@@ -1906,8 +2047,9 @@ class Handler(BaseHTTPRequestHandler):
         return origin in ALLOWED_ORIGINS
 
     def do_POST(self):  # noqa: N802
-        """Manager commands only. There is still no path here that can place,
-        modify or close a TRADE - unloading an EA leaves its positions open."""
+        """Manager commands, plus one trade request and only one: cancelling the
+        pending orders of an EA being stopped. Nothing here can open, close or
+        modify a position - unloading an EA leaves its positions open."""
         if urlparse(self.path).path != "/api/manager":
             self._json({"ok": False, "error": "no trade endpoints exist on this agent"}, 405)
             return
@@ -1945,11 +2087,11 @@ class Handler(BaseHTTPRequestHandler):
             _pin_fails.pop(who, None)
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
                           "attach", "forget", "install", "uninstall", "savepreset",
-                          "delpreset", "update", "reload"):
+                          "delpreset", "update", "reload", "cancelpending"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
         if action in ("pause", "unload", "setinputs", "attach", "forget",
-                      "install", "uninstall", "savepreset",
+                      "install", "uninstall", "savepreset", "cancelpending",
                       "delpreset") and not body.get("confirm"):
             self._json({"ok": False, "error": f"{action} requires confirm: true"}, 400)
             return
@@ -1962,6 +2104,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if action == "update":
             self._json(update_now())
+            return
+
+        if action == "cancelpending":
+            chart = str(body.get("chart") or "")
+            known = _PAUSED_ORDERS.get(chart)
+            if known is None:              # agent restarted, or the chart still open
+                known = [o["ticket"] for o in
+                         pending_orders_for(_chart_target(body.get("chart")))]
+            self._json(cancel_pendings(known))
             return
 
         if action == "delpreset":
@@ -1989,7 +2140,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_attach_and_verify(body))
             return
 
-        self._json(manager_command(
+        # what the EA has in the book has to be read while its chart is still
+        # open: pausing closes the chart, and with it the only record of which
+        # magic those orders belong to
+        pending = pending_orders_for(_chart_target(body.get("chart"))) \
+            if action == "pause" else []
+
+        out = manager_command(
             action,
             chart=body.get("chart"),
             symbol=body.get("symbol"),
@@ -2000,7 +2157,12 @@ class Handler(BaseHTTPRequestHandler):
             period=body.get("period"),
             mode=body.get("mode"),
             force=1 if (action == "setinputs" and body.get("force")) else None,
-        ))
+        )
+        if action == "pause" and out.get("ok") and pending:
+            _PAUSED_ORDERS[str(body.get("chart") or "")] = [o["ticket"] for o in pending]
+            out["pendings"] = {"count": len(pending),
+                               "symbols": sorted({o["symbol"] for o in pending if o["symbol"]})}
+        self._json(out)
 
 
 UPDATE_URL = os.environ.get(
