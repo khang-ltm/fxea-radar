@@ -752,6 +752,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <small>optional - leave blank to keep the EA's own, which may clash</small></label>
       <input id="attach-magic" inputmode="numeric" spellcheck="false" placeholder="e.g. 220819"></div>
     <p class="hint" id="attach-warn"></p>
+    <button class="chip ghost" id="attach-recheck" hidden>I refreshed MT5 - check again</button>
   </div>
   <div class="sheet__foot">
     <span class="hint" id="attach-note">The EA loads with its own default settings
@@ -2731,14 +2732,7 @@ async function openAttach(pre) {
   const [eas, syms] = await Promise.all([ask('/api/experts'), ask('/api/symbols')]);
 
   const eaSel = document.getElementById('attach-ea');
-  eaSel.innerHTML = (eas.ok ? eas.experts.filter(e => !notMine(e)) : [])
-    .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}"
-        data-new="${e.unregistered ? '1' : ''}">`
-      + esc(e.folder ? `${e.folder}/${e.name}` : e.name)
-      + (e.unregistered ? '  (new - not loaded by MT5 yet)' : '') + '</option>').join('')
-    || '<option value="">no .ex5 found</option>';
-  eaSel.disabled = false;
-  if (pre?.path) eaSel.value = pre.path;               // came from a catalog row
+  renderExpertOptions(eas, pre?.path);
   if (pre?.symbol) symbolSearch(pre.symbol);
 
   fillSymbols(syms);
@@ -2755,12 +2749,59 @@ async function openAttach(pre) {
 /* An EA installed while MT5 was running is not in its Navigator until someone
    refreshes it, and attaching such an EA sets the chart's name while nothing
    runs. Say so on selection rather than after the attempt. */
+function renderExpertOptions(eas, keepPath) {
+  const eaSel = document.getElementById('attach-ea');
+  const had = keepPath || eaSel.value;
+  eaSel.innerHTML = (eas.ok ? eas.experts.filter(e => !notMine(e)) : [])
+    .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}"
+        data-new="${e.unregistered ? '1' : ''}">`
+      + esc(e.folder ? `${e.folder}/${e.name}` : e.name)
+      + (e.unregistered ? '  (new - not loaded by MT5 yet)' : '') + '</option>').join('')
+    || '<option value="">no .ex5 found</option>';
+  eaSel.disabled = false;
+  if (had) eaSel.value = had;              // came from a catalog row, or was chosen
+}
+
+/* MT5 will not attach an .ex5 it has not registered, and the only way to make it
+   register one is the Navigator refresh - which the page cannot do. So it asks,
+   and then it has to be possible to say "done" and be believed or corrected,
+   rather than finding out by attaching to an empty chart. */
+async function recheckExperts(btn) {
+  const was = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'checking…';
+  let eas;
+  try {
+    eas = await (await fetch(`${MT5.url}/api/experts`, {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    })).json();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = was;
+    toast('cannot reach the agent: ' + e.message, 'bad');
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = was;
+  renderExpertOptions(eas);
+  warnIfUnregistered();
+  const still = document.getElementById('attach-ea').selectedOptions[0]?.dataset.new;
+  toast(still
+    ? 'MT5 still has not registered it - refresh Navigator > Expert Advisors again'
+    : 'MT5 has it now - attaching will work', still ? 'warn' : 'ok');
+}
+
+document.getElementById('attach-recheck').onclick = e => recheckExperts(e.currentTarget);
+
 function warnIfUnregistered() {
   const opt = document.getElementById('attach-ea').selectedOptions[0];
   const warn = document.getElementById('attach-warn');
-  if (opt?.dataset.new) {
+  const fresh = !!opt?.dataset.new;
+  document.getElementById('attach-recheck').hidden = !fresh;
+  if (fresh) {
     warn.innerHTML = '<span style="color:var(--color-warn)">MT5 has not loaded this EA yet.</span>'
-      + ' In MT5: right-click Navigator &gt; Expert Advisors &gt; Refresh, then attach.'
+      + ' In MT5: right-click Navigator &gt; Expert Advisors &gt; Refresh, then check again.'
       + ' Attaching without it opens a chart with no EA on it.';
   }
 }
@@ -2861,27 +2902,64 @@ document.getElementById('attach-go').onclick = async () => {
                                 pin: answer.pin, trading: !review,
                                 expert: opt.dataset.name, path: opt.value, symbol, period });
   go.disabled = false;
+  go.textContent = wasLabel;    // it said "Attaching..." for good after a failure
+  ticking.remove();             // and the 30s toast kept ticking under it
   const note = r.magic_note ? `\n${r.magic_note}` : '';
   warn.textContent = (r.ok ? (r.message || 'attached') : ('failed: ' + (r.error || r.message)))
     + (r.magic_note ? ` · ${r.magic_note}` : '');
   toast((r.ok ? r.message : `Attach failed\n${r.error || r.message}`) + note,
         r.ok ? (r.magic_note?.startsWith('warning') ? 'warn' : 'ok') : 'bad', 10);
   if (r.ok) {
-    setTimeout(async () => {
-      closeSheet(attachDlg);
+    closeSheet(attachDlg);
+    if (!review) {
       await loadEas();
       await loadCharts();
-      // straight into the settings of what just loaded: this is the moment its
-      // inputs are readable and nothing is trading yet
-      if (review) {
-        const mine = CHARTS.find(c => c.expert === opt.dataset.name
-                                      && c.symbol === symbol && !c.is_manager);
-        if (mine) openEaSettings(String(mine.chart), { review: true });
-        else toast('attached with trading off - open its settings from the row', 'warn');
-      }
-    }, 1200);
+      return;
+    }
+    // Straight into its settings: this is the moment its inputs are readable and
+    // nothing is trading yet. FxeaManager rewrites its status every few seconds
+    // and an EA takes a moment to report its inputs, so this waits for both
+    // rather than looking once and giving up.
+    const waiting = toast('reading its settings…', 'warn', 20);
+    const mine = await waitForAttached(opt.dataset.name, symbol);
+    await loadEas();
+    await loadCharts();
+    if (mine && (mine.inputs || []).length) {
+      openEaSettings(String(mine.chart), { review: true });
+    } else if (mine) {
+      toast(`${opt.dataset.name} is on the ${symbol} chart with trading off, but has`
+            + ' not reported its settings yet - open them from the row in a moment.', 'warn', 12);
+    } else {
+      toast('The chart opened but MT5 has not put the EA on it. That is the'
+            + ' Navigator refresh: right-click Navigator > Expert Advisors >'
+            + ' Refresh, then attach again.', 'bad', 15);
+    }
   }
 };
+
+/* The name on the .ex5 and the name the chart reports are usually the same and
+   sometimes are not - a renamed file, a @tag, a build suffix - so an exact match
+   is not enough to find what was just attached. */
+const eaKey = s => String(s || '').toLowerCase().replace(/@\S+/g, ' ').replace(/[^a-z0-9]+/g, '');
+
+async function waitForAttached(name, symbol, seconds = 14) {
+  const want = eaKey(name);
+  const until = Date.now() + seconds * 1000;
+  let seen = null;
+  while (Date.now() < until) {
+    await loadCharts(true).catch(() => {});
+    const live = CHARTS.filter(c => !c.is_manager && c.expert && c.symbol === symbol);
+    seen = live.find(c => c.expert === name)
+      || live.find(c => {
+           const k = eaKey(c.expert);
+           return k && want && (k.startsWith(want.slice(0, 12)) || want.startsWith(k.slice(0, 12)));
+         })
+      || seen;
+    if (seen && (seen.inputs || []).length) return seen;
+    await new Promise(done => setTimeout(done, 1200));
+  }
+  return seen;
+}
 
 /* ── EA settings dialog ────────────────────────────────────────────────────
    The values come from the chart template, so they are exactly what the EA is
