@@ -1155,6 +1155,15 @@ function installedFor(name) {
   return best;
 }
 
+/* The installed list is fetched once and cached, because it changes only when
+   something is installed, removed - or attached, which is what MT5 registering
+   an .ex5 looks like from here. Anything that can change it asks again through
+   this rather than flipping the flag itself and forgetting somewhere. */
+function refreshInstalled() {
+  installedAsked = false;
+  return loadInstalled();
+}
+
 async function loadInstalled() {
   if (installedAsked || !MT5?.url) return;
   installedAsked = true;
@@ -2335,8 +2344,7 @@ async function removeInstalled(path, name) {
   INSTALLED = INSTALLED.filter(e => e.path !== path);
   renderInstalled(CHARTS.filter(c => !c.is_manager), []);
   render();
-  installedAsked = false;
-  loadInstalled();
+  refreshInstalled();
 }
 
 /* <dialog>.showModal is missing in older mobile webviews and some in-app
@@ -2663,8 +2671,7 @@ async function installFromCatalog(btn) {
     + (r.dropped?.length ? `${r.dropped.length} other file(s) ignored\n` : '')
     + 'Attach it from My EA when you want it running.', eas.length ? 'ok' : 'warn', 10);
 
-  installedAsked = false;
-  loadInstalled();
+  refreshInstalled();
 }
 
 /* ── attaching an EA ────────────────────────────────────────────
@@ -2785,6 +2792,7 @@ async function recheckExperts(btn) {
   btn.disabled = false;
   btn.textContent = was;
   renderExpertOptions(eas);
+  refreshInstalled();
   warnIfUnregistered();
   const still = document.getElementById('attach-ea').selectedOptions[0]?.dataset.new;
   toast(still
@@ -2913,6 +2921,9 @@ document.getElementById('attach-go').onclick = async () => {
     + (r.magic_note ? ` · ${r.magic_note}` : '');
   toast((r.ok ? r.message : `Attach failed\n${r.error || r.message}`) + note,
         r.ok ? (r.magic_note?.startsWith('warning') ? 'warn' : 'ok') : 'bad', 10);
+  // whether it worked or not, what is installed and what MT5 has registered
+  // can both have changed - and this list is cached until something asks again
+  refreshInstalled();
   if (r.ok) {
     closeSheet(attachDlg);
     if (!review) {
