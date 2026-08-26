@@ -2803,6 +2803,10 @@ function warnIfUnregistered() {
     warn.innerHTML = '<span style="color:var(--color-warn)">MT5 has not loaded this EA yet.</span>'
       + ' In MT5: right-click Navigator &gt; Expert Advisors &gt; Refresh, then check again.'
       + ' Attaching without it opens a chart with no EA on it.';
+  } else if (warn.textContent.includes('has not loaded this EA')) {
+    // whatever it said about the last EA is now wrong, and leaving a red warning
+    // up after the check passed is worse than saying nothing
+    warn.textContent = 'MT5 has this EA loaded.';
   }
 }
 
