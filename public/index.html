@@ -1154,6 +1154,20 @@ const eaSlug = t => String(t || '').toLowerCase()
   .replace(/\b\d+(\s+\d+)*\b/g, ' ')
   .trim().split(/\s+/).filter(Boolean).join(' ');
 
+/* Words that carry the product, with the version dropped: "Quantum Queen X 4.3V"
+   is quantum/queen/x. Filler nobody means as part of the name goes too. */
+const FILLER = new Set(['the', 'official', 'new', 'edition', 'build']);
+const eaTokens = name => eaSlug(name).split(' ')
+  .filter(w => w && !/\d/.test(w) && !FILLER.has(w));
+
+/* Same product, whatever the version. Word-for-word, because substring matching
+   said Quantum Queen X was Quantum Queen - the X is the whole difference between
+   two EAs, and attaching from that row would have started the wrong one. */
+function sameEa(a, b) {
+  const x = eaTokens(a), y = eaTokens(b);
+  return x.length > 0 && x.length === y.length && x.every((w, i) => w === y[i]);
+}
+
 function installedFor(name) {
   const want = eaSlug(name);
   if (!want || want.length < 4) return null;
@@ -1162,10 +1176,8 @@ function installedFor(name) {
     const have = eaSlug(e.name);
     if (!have) continue;
     if (have === want) return e;                       // exact wins outright
-    if (!have.includes(want) && !want.includes(have)) continue;
-    // Closest length wins, not shortest: preferring the shortest made the
-    // "Quantum Queen X" row point at plain Quantum Queen, so the catalog reported
-    // one EA as running because a different one was.
+    if (!sameEa(name, e.name)) continue;
+    // Among builds of the same EA, the closest name is the likeliest build
     const gap = Math.abs(have.length - want.length);
     if (gap < bestGap) { best = e; bestGap = gap; }
   }
