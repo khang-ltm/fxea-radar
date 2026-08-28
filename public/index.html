@@ -548,6 +548,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 </header>
 
 <p class="stale" id="stale" hidden></p>
+<p class="hint" id="installoff" hidden></p>
 
 <main>
   <div id="view-eas">
@@ -1198,6 +1199,18 @@ async function loadInstalled() {
       headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
     }).then(x => x.json()).catch(() => null);
     if (can?.ok) INSTALLABLE = can;
+    // Without a Telegram login on the agent the install icon vanishes from every
+    // row at once, which reads as the page losing a feature rather than the VPS
+    // missing a credential. Say which it is.
+    const off = document.getElementById('installoff');
+    if (off) {
+      const why = !can?.ok ? 'the agent did not answer /api/installable'
+        : !can.telegram ? 'the agent has no Telegram login - run python -m app.tg_login_vps on the VPS'
+        : !can.extractor ? 'no unpacker on the VPS - install 7-Zip'
+        : '';
+      off.hidden = !why;
+      off.textContent = why ? `Installing straight to the VPS is off: ${why}. Download links still work.` : '';
+    }
     render();                                          // rows can offer buttons now
   } catch { /* catalog works fine without it */ }
 }
