@@ -906,6 +906,25 @@ def install_ea(channel: str, message_id) -> dict:
     if root is None:
         return {"ok": False, "error": _init_error or "terminal not readable"}
     result = installer.install_from_channel(channel, message_id, root)
+
+    # A source release has no .ex5 to attach, and MT5 will not build one on its
+    # own. Compiling here is what makes "install" mean the same thing for both.
+    if result.get("ok") and result.get("sources"):
+        built, failed = [], []
+        for item in result["sources"]:
+            src = root.parent / item["path"]
+            ok, why = compile_mq5(src)
+            (built if ok else failed).append(why if ok else f"{item['file']}: {why}")
+            if ok:
+                result.setdefault("experts", []).append(
+                    {"name": src.stem, "file": src.stem + ".ex5",
+                     "path": str(pathlib.PurePath(item["path"]).with_suffix(".ex5")),
+                     "kind": "ea", "size_bytes": src.with_suffix(".ex5").stat().st_size})
+        result["compiled"] = built
+        result["compile_failed"] = failed
+        if built:
+            installer.note_installed([pathlib.PurePath(b).stem for b in built])
+
     if result.get("ok") and result.get("experts"):
         # a file MT5 has not registered cannot be attached, and it registers on
         # its own schedule - so ask it to look now
@@ -2372,6 +2391,55 @@ def _metaeditor() -> pathlib.Path | None:
         if cand.exists():
             return cand
     return None
+
+
+def compile_mq5(path: pathlib.Path) -> tuple[bool, str]:
+    """Build one .mq5 with MetaEditor and say what happened.
+
+    Compiling is not running: MetaEditor reads the source and writes an .ex5,
+    and nothing executes until an EA is attached to a chart - which is a separate
+    action, behind the PIN. The source can only have arrived through install_ea,
+    which takes files from the allowlisted channels and keeps nothing but .mq5,
+    .mqh, .ex5 and .set, and this refuses any path outside MQL5/Experts.
+    """
+    import subprocess
+
+    experts = experts_dir()
+    if experts is None:
+        return False, _init_error or "terminal not readable"
+    try:
+        path.resolve().relative_to(experts.resolve())
+    except ValueError:
+        return False, "refusing to compile a file outside MQL5/Experts"
+
+    editor = _metaeditor()
+    if editor is None:
+        return False, "MetaEditor was not found - compile it once by hand"
+
+    log = path.with_suffix(".compile.log")
+    try:
+        subprocess.run([str(editor), f"/compile:{path}", f"/log:{log}"],
+                       capture_output=True, timeout=300, creationflags=0x08000000)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"compile could not run: {exc}"
+
+    ex5 = path.with_suffix(".ex5")
+    if ex5.exists() and ex5.stat().st_mtime >= path.stat().st_mtime - 5:
+        return True, ex5.name
+
+    why = ""
+    for encoding in ("utf-16", "utf-8"):
+        try:
+            rows = [r.strip() for r in
+                    log.read_text(encoding=encoding, errors="replace").splitlines() if r.strip()]
+        except OSError:
+            break
+        except UnicodeError:
+            continue
+        bad = [r for r in rows if " error " in r.lower() or r.lower().startswith("error")]
+        why = (bad or rows)[-1] if rows else ""
+        break
+    return False, why or "see the .compile.log beside the source"
 
 
 def sync_manager_ea() -> str:

@@ -2665,8 +2665,12 @@ async function installFromCatalog(btn) {
 
   const eas = (r.experts || []).map(e => e.file);
   const sets = (r.presets || []).map(e => e.file);
+  const built = (r.compiled || []).join(', ');
+  const broke = (r.compile_failed || []).join('; ');
   toast(`Installed ${ea}\n`
-    + (eas.length ? `EA: ${eas.join(', ')}\n` : 'no .ex5 in the archive\n')
+    + (built ? `Compiled from source: ${built}\n` : '')
+    + (broke ? `Could not compile: ${broke}\n` : '')
+    + (eas.length ? `EA: ${eas.join(', ')}\n` : broke ? '' : 'no .ex5 in the archive\n')
     + (sets.length ? `Preset: ${sets.join(', ')}\n` : '')
     + (r.dropped?.length ? `${r.dropped.length} other file(s) ignored\n` : '')
     + 'Attach it from My EA when you want it running.', eas.length ? 'ok' : 'warn', 10);
