@@ -33,12 +33,7 @@ from . import config
 # every EA on this terminal that works was installed exactly like this - a
 # subfolder and a tidied name are differences with nothing to gain.
 INSTALL_FOLDER = ""
-KEEP_SUFFIXES = (".ex5", ".set", ".mq5", ".mqh")
-# Source releases ship .mq5 and its headers instead of a compiled EA. They are
-# kept together in their own folder so the includes beside them still resolve,
-# and only when the archive has no .ex5 - a pack with both is a compiled EA that
-# happens to ship its source, and Experts should not fill up with either.
-SOURCE_SUFFIXES = (".mq5", ".mqh")
+KEEP_SUFFIXES = (".ex5", ".set")
 MAX_ARCHIVE_BYTES = 60 * 1024 * 1024
 MAX_MEMBERS = 200
 MAX_MEMBER_BYTES = 40 * 1024 * 1024
@@ -248,22 +243,13 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
         if why:
             return {"ok": False, "error": why}
         eas = [f for f in found if f.suffix.lower() == ".ex5"]
-        sources = [f for f in found if f.suffix.lower() == ".mq5"]
-        if not eas and not sources:
+        if not eas:
             others = ", ".join(sorted({f.suffix.lstrip('.') for f in found})) or "nothing"
             return {"ok": False,
-                    "error": f"no .ex5 or .mq5 inside {archive.name} (found {others})"
-                             " - it may be an MT4 EA or an indicator"}
-        # a compiled EA that also ships its source is still a compiled EA
-        if eas:
-            found = [f for f in found if f.suffix.lower() not in SOURCE_SUFFIXES]
+                    "error": f"no .ex5 inside {archive.name} (found {others})"
+                             " - it may be an MT4 EA, a source-only release, or an indicator"}
 
-        # source files go in a folder of their own, named after the archive, so
-        # the .mqh files an .mq5 includes are still next to it after installing
-        src_folder = _tidy_name(archive.stem) if not eas else ""
         target = experts_dir / INSTALL_FOLDER if INSTALL_FOLDER else experts_dir
-        if src_folder:
-            target = experts_dir / src_folder
         target.mkdir(parents=True, exist_ok=True)
         # MT5 loads presets from MQL5/Presets - a .set sitting in Experts is a file
         # nothing will ever offer you in the EA's Load dialog
@@ -272,18 +258,14 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
         # A preset called "audcad m15" says nothing about whose settings it is, and
         # the pairing is only knowable here - so the EA's name goes in front of it.
         # The file MT5 loads is unchanged; only what it is called changes.
-        owner = next((f.stem for f in found if f.suffix.lower() == ".ex5"),
-                     next((f.stem for f in found if f.suffix.lower() == ".mq5"), ""))
+        owner = next((f.stem for f in found if f.suffix.lower() == ".ex5"), "")
         installed, skipped, seen_items = [], [], []
         for f in found:
             if f.suffix.lower() == ".set" and owner and not f.name.startswith(owner):
                 dst = presets / f"{owner} - {f.name}"
             else:
                 dst = (presets if f.suffix.lower() == ".set" else target) / f.name
-            kind = ("ea" if dst.suffix.lower() == ".ex5"
-                    else "set" if dst.suffix.lower() == ".set"
-                    else "source" if dst.suffix.lower() == ".mq5"
-                    else "include")
+            kind = "ea" if dst.suffix.lower() == ".ex5" else "set"
             seen_items.append({"file": dst.name, "name": dst.stem, "kind": kind})
             if dst.exists():
                 if dst.read_bytes() == f.read_bytes():
@@ -294,18 +276,14 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
                 skipped.append(f.name + " (kept the installed version)")
                 continue
             shutil.copy2(f, dst)
-            if dst.suffix.lower() == ".set":
-                where = pathlib.PurePath("Presets") / dst.name
-            elif src_folder:
-                where = pathlib.PurePath("Experts") / src_folder / dst.name
-            elif INSTALL_FOLDER:
-                where = pathlib.PurePath("Experts") / INSTALL_FOLDER / dst.name
-            else:
-                where = pathlib.PurePath("Experts") / dst.name
-            installed.append({"name": dst.name if dst.suffix.lower() == ".set" else dst.stem,
+            installed.append({"name": dst.stem if dst.suffix.lower() == ".ex5" else dst.name,
                               "file": dst.name,
-                              "path": str(where),
-                              "kind": kind,
+                              "path": str(pathlib.PurePath("Presets") / dst.name)
+                                      if dst.suffix.lower() == ".set"
+                                      else (str(pathlib.PurePath("Experts") / INSTALL_FOLDER / dst.name)
+                                            if INSTALL_FOLDER
+                                            else str(pathlib.PurePath("Experts") / dst.name)),
+                              "kind": "ea" if dst.suffix.lower() == ".ex5" else "set",
                               "size_bytes": dst.stat().st_size})
 
         # What an EA needs beyond its .ex5 is worth naming: a pack that shipped a
@@ -318,7 +296,5 @@ def install_from_channel(channel: str, message_id: int, experts_dir: pathlib.Pat
         note_installed([x["name"] for x in seen_items if x["kind"] == "ea"])
         return {"ok": True, "archive": archive.name, "installed": installed,
                 "unchanged": skipped, "dropped": dropped[:40],
-                "folder": src_folder,
                 "experts": [x for x in installed if x["kind"] == "ea"],
-                "presets": [x for x in installed if x["kind"] == "set"],
-                "sources": [x for x in installed if x["kind"] == "source"]}
+                "presets": [x for x in installed if x["kind"] == "set"]}
