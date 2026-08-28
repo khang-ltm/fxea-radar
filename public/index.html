@@ -634,6 +634,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div id="mt5-pos">
 
     <section class="mt5sect"><h2>Open positions <span class="num" id="mt5poscount"></span></h2>
+      <div class="pickbar" id="pospickbar" hidden></div>
       <div class="wrap" id="mt5positions"></div></section>
     </div>
 
@@ -1727,11 +1728,18 @@ function renderMt5(d) {
 
   const pos = d.positions || [];
   document.getElementById('mt5poscount').textContent = pos.length ? `(${pos.length})` : '';
+  MT5_POSITIONS = pos;
   setHtml('mt5positions', pos.length ? `<table class="mt5">
-    <thead><tr><th>Symbol</th><th>Side</th><th>By</th><th class="n">Lots</th><th class="n">Entry</th>
+    <thead><tr><th style="width:24px"><input type="checkbox" class="ordpick" id="pospick-all"
+        aria-label="select every open position"></th>
+      <th>Symbol</th><th>Side</th><th>By</th><th class="n">Lots</th><th class="n">Entry</th>
       <th class="n">Now</th><th class="n">SL</th><th class="n">TP</th><th class="n">P&amp;L</th>
-      <th class="n">Magic</th><th>Comment</th><th>Opened<span data-tz></span></th></tr></thead>
+      <th class="n">Magic</th><th>Comment</th><th>Opened<span data-tz></span></th>
+      <th style="text-align:right">Action</th></tr></thead>
     <tbody>${pos.map(p => `<tr>
+      <td><input type="checkbox" class="ordpick" data-p="${esc(String(p.ticket))}"
+        aria-label="select position ${esc(String(p.ticket))}"
+        ${POS_PICK.has(Number(p.ticket)) ? 'checked' : ''}></td>
       <td>${esc(p.symbol)}</td>
       <td><span class="badge ${p.type === 'buy' ? 'badge--pass' : 'badge--loss'}">${esc(p.type)}</span></td>
       <td>${placedBy(p.magic)}</td>
@@ -1740,8 +1748,36 @@ function renderMt5(d) {
       <td class="n">${mt5Px(p.sl, p.digits)}</td><td class="n">${mt5Px(p.tp, p.digits)}</td>
       <td class="n ${mt5Cls(p.profit)}">${mt5Money(p.profit, '')}</td>
       <td class="n">${mt5Magic(magicOf(p))}</td><td>${esc(p.comment || '')}</td>
-      <td class="mono">${esc(mt5Time(p.opened_at))}</td></tr>`).join('')}</tbody></table>`
+      <td class="mono">${esc(mt5Time(p.opened_at))}</td>
+      <td style="text-align:right"><button class="chip ghost" data-close-pos="${esc(String(p.ticket))}"
+        title="close this trade at the market">Close</button></td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No open positions.</div>');
+
+  for (const b of document.querySelectorAll('[data-close-pos]')) {
+    b.onclick = () => closePositions([Number(b.dataset.closePos)]);
+  }
+  for (const t of [...POS_PICK]) {
+    if (!pos.some(x => Number(x.ticket) === t)) POS_PICK.delete(t);
+  }
+  for (const box of document.querySelectorAll('.ordpick[data-p]')) {
+    box.onchange = () => {
+      const t = Number(box.dataset.p);
+      if (box.checked) POS_PICK.add(t); else POS_PICK.delete(t);
+      renderPositionPicks();
+    };
+  }
+  const allPos = document.getElementById('pospick-all');
+  if (allPos) {
+    allPos.onchange = () => {
+      POS_PICK.clear();
+      if (allPos.checked) for (const x of pos) POS_PICK.add(Number(x.ticket));
+      for (const box of document.querySelectorAll('.ordpick[data-p]')) {
+        box.checked = POS_PICK.has(Number(box.dataset.p));
+      }
+      renderPositionPicks();
+    };
+  }
+  renderPositionPicks();
 
   const ords = d.orders || [];
   document.getElementById('mt5ordcount').textContent = ords.length ? `(${ords.length})` : '';
@@ -1797,7 +1833,72 @@ function renderMt5(d) {
 }
 
 let MT5_ORDERS = [];
+let MT5_POSITIONS = [];
 const ORD_PICK = new Set();
+const POS_PICK = new Set();
+
+function renderPositionPicks() {
+  const bar = document.getElementById('pospickbar');
+  if (!bar) return;
+  const n = POS_PICK.size;
+  const all = document.getElementById('pospick-all');
+  if (all) {
+    all.checked = n > 0 && n === MT5_POSITIONS.length;
+    all.indeterminate = n > 0 && n < MT5_POSITIONS.length;
+  }
+  bar.hidden = !n;
+  if (!n) return;
+  const rows = MT5_POSITIONS.filter(p => POS_PICK.has(Number(p.ticket)));
+  const pl = rows.reduce((sum, p) => sum + (p.profit || 0), 0);
+  bar.innerHTML = `<span><b>${n}</b> position${n === 1 ? '' : 's'} selected`
+    + ` · <span class="${mt5Cls(pl)}">${esc(mt5Money(pl, ''))}</span></span>`
+    + '<span class="pickbar__sp"></span>'
+    + '<button class="chip ghost" id="pospick-none">Clear</button>'
+    + '<button class="chip" id="pospick-go">Close selected</button>';
+  document.getElementById('pospick-go').onclick = () => closePositions([...POS_PICK]);
+  document.getElementById('pospick-none').onclick = () => {
+    POS_PICK.clear();
+    for (const box of document.querySelectorAll('.ordpick[data-p]')) box.checked = false;
+    renderPositionPicks();
+  };
+}
+
+/* Closing a trade is the one thing this panel could not do, and the one thing
+   worth being able to do at two in the morning. It takes the money as it stands
+   - the confirm shows what that is - and it does not stop the EA that opened it,
+   which is a separate decision and is said so here. */
+async function closePositions(tickets) {
+  if (!tickets.length) return;
+  const row = t => MT5_POSITIONS.find(p => Number(p.ticket) === t) || {};
+  const pl = tickets.reduce((sum, t) => sum + (row(t).profit || 0), 0);
+  const owners = [...new Set(tickets.map(t => EA_BY_MAGIC[Number(row(t).magic)]).filter(Boolean))];
+  const res = await ask({
+    title: tickets.length === 1 ? `Close ${row(tickets[0]).symbol || 'this trade'}`
+                                : `Close ${tickets.length} positions`,
+    body: tickets.map(t => {
+        const p = row(t);
+        return `  #${t} ${p.symbol || ''} ${p.type || ''} ${mt5Lots(p.volume)} `
+          + `${mt5Money(p.profit, '')}`;
+      }).join(chr10())
+      + chr10() + chr10() + `Closing takes ${mt5Money(pl, '')} as it stands right now.`
+      + (owners.length
+          ? ` ${owners.join(', ')} ${owners.length === 1 ? 'is' : 'are'} still running and`
+            + ' may open another - pause it first if that is not what you want.'
+          : '')
+      + chr10() + chr10() + 'Pending orders are not touched.',
+    yes: tickets.length === 1 ? 'Close it' : `Close ${tickets.length}`,
+    danger: true,
+    pin: true,
+  });
+  if (!res) return;
+  const d = await managerPost({ action: 'closeposition', confirm: true, pin: res.pin,
+                                remember: res.remember, tickets });
+  toast(d.ok ? (d.message || 'closed') : `Failed${chr10()}${d.error || d.message}`,
+        d.ok ? 'ok' : 'bad', d.ok ? 8 : 12);
+  POS_PICK.clear();
+  loadMt5();
+  loadEas().then(loadCharts).catch(() => {});
+}
 
 function renderOrderPicks() {
   const bar = document.getElementById('ordpickbar');

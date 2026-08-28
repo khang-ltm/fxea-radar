@@ -437,38 +437,74 @@ def check_agent_names() -> None:
 
 
 def check_trade_path() -> None:
-    """The agent may cancel a pending order and do nothing else to a trade.
+    """The agent may remove a pending order or close a position. Nothing else.
 
-    Cancelling pendings is the one trade request this agent can send, and it was
-    added on purpose: a stopped EA leaves orders that still fill. Everything else
-    - opening, closing, modifying a position - must stay impossible, so that a
-    stolen token can never move money. This asserts it in the source rather than
-    trusting a comment: every order_send must be TRADE_ACTION_REMOVE.
+    Both were added on purpose - a stopped EA leaves orders that still fill, and
+    there has to be a way out of a trade from the page. Both only remove
+    something that exists. Opening a trade, and modifying one, must stay
+    impossible, so that a stolen token can never put money at risk. This asserts
+    it in the source rather than trusting a comment: every order_send is either
+    TRADE_ACTION_REMOVE, or TRADE_ACTION_DEAL naming the position it closes.
     """
     import ast
 
     src = (ROOT / "app" / "mt5_agent.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
 
-    sends, actions = 0, set()
+    src_lines = src.splitlines()
+
+    def request_of(node):
+        """The dict literal a request was built from, following one local name."""
+        for arg in node.args:
+            if isinstance(arg, ast.Dict):
+                return arg
+            if isinstance(arg, ast.Name):                  # req = {...}; order_send(req)
+                for other in ast.walk(tree):
+                    if isinstance(other, ast.Assign) and isinstance(other.value, ast.Dict) \
+                            and any(isinstance(x, ast.Name) and x.id == arg.id
+                                    for x in other.targets):
+                        return other.value
+                    # req = dict(base) - follow to what base was
+                    if isinstance(other, ast.Assign) and isinstance(other.value, ast.Call) \
+                            and getattr(other.value.func, "id", "") == "dict" \
+                            and any(isinstance(x, ast.Name) and x.id == arg.id
+                                    for x in other.targets) and other.value.args:
+                        inner = other.value.args[0]
+                        if isinstance(inner, ast.Name):
+                            for again in ast.walk(tree):
+                                if isinstance(again, ast.Assign) \
+                                        and isinstance(again.value, ast.Dict) \
+                                        and any(isinstance(x, ast.Name) and x.id == inner.id
+                                                for x in again.targets):
+                                    return again.value
+        return None
+
+    bad = []
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
         if node.func.attr not in ("order_send", "order_check", "Close", "Buy", "Sell"):
             continue
-        sends += 1
-        for arg in node.args:
-            if not isinstance(arg, ast.Dict):
-                actions.add("not a literal request")
-                continue
-            for k, v in zip(arg.keys, arg.values):
-                if isinstance(k, ast.Constant) and k.value == "action":
-                    actions.add(ast.unparse(v).split(".")[-1])
+        where = f"line {node.lineno}: {src_lines[node.lineno - 1].strip()[:60]}"
+        req = request_of(node)
+        if req is None:
+            bad.append(f"{where} - request is not a literal this test can read")
+            continue
+        keys = {k.value for k in req.keys if isinstance(k, ast.Constant)}
+        action = ""
+        for k, v in zip(req.keys, req.values):
+            if isinstance(k, ast.Constant) and k.value == "action":
+                action = ast.unparse(v).split(".")[-1]
+        if action == "TRADE_ACTION_REMOVE":
+            continue
+        if action == "TRADE_ACTION_DEAL" and "position" in keys:
+            continue                                       # closing what already exists
+        bad.append(f"{where} - {action or 'no action'}"
+                   + (" without a position to close" if action == "TRADE_ACTION_DEAL" else ""))
 
-    check(sends <= 1, f"the agent sends at most one kind of trade request (found {sends})")
-    check(actions <= {"TRADE_ACTION_REMOVE"},
-          "the only trade request is TRADE_ACTION_REMOVE"
-          + ("" if actions <= {"TRADE_ACTION_REMOVE"} else f" - found {sorted(actions)}"))
+    check(not bad,
+          "every trade request removes something that exists"
+          + ("" if not bad else " - " + "; ".join(bad)))
 
 
 def check_no_control_chars() -> None:

@@ -650,7 +650,7 @@ def _stage_inputs(pairs, chart) -> object:
 # can do nothing until someone confirms it - so it costs no PIN, which is what
 # makes reviewing settings before enabling the easy path rather than the annoying
 # one.
-GUARDED = ("uninstall", "cancelpending")
+GUARDED = ("uninstall", "cancelpending", "closeposition")
 
 
 def needs_pin(action: str, body: dict) -> bool:
@@ -1646,6 +1646,94 @@ def orphan_pendings() -> dict:
             "count": len(orphans)}
 
 
+def close_positions(tickets) -> dict:
+    """Close open positions by ticket. The second and last trade request here.
+
+    Cancelling an order that has not filled is tidying up; closing a position is
+    taking money off the table, and there was no way to do it from here at all -
+    the one thing anyone wants at two in the morning. So it exists, drawn as
+    narrowly as closing can be drawn: the caller names a ticket and nothing else.
+    Everything the request says - symbol, volume, direction, the position it
+    closes - is read back out of MT5's own record of that position, so there is
+    no argument anyone can pass that opens exposure rather than removing it. A
+    ticket that is not an open position is refused, not guessed at.
+    """
+    want = {int(t) for t in (tickets or []) if str(t).strip()}
+    if not want:
+        return {"ok": False, "error": "no ticket numbers given"}
+
+    with _ipc_lock:
+        mt5 = _connect()
+        if mt5 is None:
+            return {"ok": False, "error": _init_error or "terminal not reachable"}
+        try:
+            live = {int(_as_dict(p).get("ticket") or 0): _as_dict(p)
+                    for p in (mt5.positions_get() or ())}
+        except Exception as exc:                               # noqa: BLE001
+            return {"ok": False, "error": f"cannot read positions: {exc}"}
+
+        # A broker accepts one filling mode and rejects the others with 10030,
+        # and which one is per symbol - so try what it declares, then the rest.
+        fills = [getattr(mt5, name) for name in
+                 ("ORDER_FILLING_FOK", "ORDER_FILLING_IOC", "ORDER_FILLING_RETURN")
+                 if hasattr(mt5, name)]
+
+        done, failed, gone = [], [], sorted(want - set(live))
+        for ticket in sorted(want & set(live)):
+            p = live[ticket]
+            symbol = str(p.get("symbol") or "")
+            is_buy = int(p.get("type") or 0) == getattr(mt5, "POSITION_TYPE_BUY", 0)
+            try:
+                tick = mt5.symbol_info_tick(symbol)
+            except Exception:                                  # noqa: BLE001
+                tick = None
+            price = float(getattr(tick, "bid" if is_buy else "ask", 0) or 0)
+            base = {"action": mt5.TRADE_ACTION_DEAL,
+                    "position": ticket,
+                    "symbol": symbol,
+                    "volume": float(p.get("volume") or 0),
+                    "type": (mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY),
+                    "price": price,
+                    "deviation": 30,
+                    "magic": int(p.get("magic") or 0),
+                    "comment": "closed from fxea-radar"}
+
+            last = ""
+            for fill in (fills or [None]):
+                req = dict(base)
+                if fill is not None:
+                    req["type_filling"] = fill
+                try:
+                    r = mt5.order_send(req)
+                except Exception as exc:                       # noqa: BLE001
+                    last = str(exc)
+                    continue
+                code = getattr(r, "retcode", None)
+                if code == getattr(mt5, "TRADE_RETCODE_DONE", 10009):
+                    done.append({"ticket": ticket, "symbol": symbol,
+                                 "profit": round(float(p.get("profit") or 0), 2)})
+                    last = ""
+                    break
+                last = f"{code} {getattr(r, 'comment', '')}".strip()
+                if code != 10030:            # only the filling mode is worth retrying
+                    break
+            if last:
+                failed.append({"ticket": ticket, "error": f"MT5 refused it: {last}"})
+
+    took = round(sum(d["profit"] for d in done), 2)
+    parts = [f"closed {len(done)} position{'' if len(done) == 1 else 's'}"]
+    if done:
+        parts[0] += f" for {took:+.2f}"
+    if gone:
+        parts.append(f"{len(gone)} had already closed")
+    if failed:
+        parts.append(f"{len(failed)} refused by MT5")
+    out = {"ok": bool(done) or not failed, "closed": len(done), "profit": took,
+           "failed": failed, "already_gone": gone, "message": ", ".join(parts)}
+    _audit(out, {"closeposition": [d["ticket"] for d in done]})
+    return out
+
+
 def cancel_pendings(tickets) -> dict:
     """Delete these pending orders. The only trade request this agent can send.
 
@@ -2176,7 +2264,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(agent_health(fresh))
             return
         if path == "/api/health":
-            self._json({"ok": True, "agent": "cancels pending orders, never opens or closes one",
+            self._json({"ok": True,
+                        "agent": "closes trades and cancels orders, never opens one",
                         "terminal_running": _terminal_running()})
             return
         if path in ("/", "/index.html", "/mt5.html"):
@@ -2208,9 +2297,10 @@ class Handler(BaseHTTPRequestHandler):
         return origin in ALLOWED_ORIGINS
 
     def do_POST(self):  # noqa: N802
-        """Manager commands, plus one trade request and only one: cancelling the
-        pending orders of an EA being stopped. Nothing here can open, close or
-        modify a position - unloading an EA leaves its positions open."""
+        """Manager commands, plus exactly two trade requests: cancelling a pending
+        order, and closing an open position by its ticket. Both only ever remove
+        something that already exists - there is no path here that opens a trade,
+        and unloading an EA still leaves its positions alone unless asked."""
         if urlparse(self.path).path != "/api/manager":
             self._json({"ok": False, "error": "no trade endpoints exist on this agent"}, 405)
             return
@@ -2250,12 +2340,13 @@ class Handler(BaseHTTPRequestHandler):
                 _pin_grant(who)
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
                           "attach", "forget", "install", "uninstall", "savepreset",
-                          "delpreset", "update", "reload", "cancelpending"):
+                          "delpreset", "update", "reload", "cancelpending",
+                          "closeposition"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
         if action in ("pause", "unload", "setinputs", "attach", "forget",
                       "install", "uninstall", "savepreset", "cancelpending",
-                      "delpreset") and not body.get("confirm"):
+                      "closeposition", "delpreset") and not body.get("confirm"):
             self._json({"ok": False, "error": f"{action} requires confirm: true"}, 400)
             return
 
@@ -2267,6 +2358,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if action == "update":
             self._json(update_now())
+            return
+
+        if action == "closeposition":
+            self._json(close_positions((body.get("tickets") or [])[:50]))
             return
 
         if action == "cancelpending":
