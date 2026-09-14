@@ -1519,6 +1519,13 @@ def _order_is_ours(order: dict, target: dict) -> bool:
         return False
     if order["magic"] == target["base"]:
         return True
+    # Some EAs number their strategies by appending to the base rather than
+    # counting up from it: a chart set to 111111 trades 11111122. Six or more
+    # leading digits matching, with at most three appended, is not a coincidence
+    # anyone has to worry about - and the hundred block below cannot see it.
+    base, magic = str(target["base"]), str(order["magic"])
+    if len(base) >= 5 and len(magic) > len(base) and len(magic) - len(base) <= 3             and magic.startswith(base):
+        return True
     return (order["magic"] in target["magics"]
             and _sym_key(order["symbol"]) == _sym_key(target["symbol"]))
 
