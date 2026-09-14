@@ -2268,7 +2268,12 @@ let chartsPrefetched = false;
 function placedBy(magic) {
   const m = Number(magic) || 0;
   if (!m) return '<span class="badge">manual</span>';
-  const name = EA_BY_MAGIC[m];
+  // EA_BY_MAGIC only knows magics that traded inside the window the EAs tab
+  // asked for, so a deal from four months ago showed as a nameless "EA" even
+  // when the chart that placed it is open right now. The chart's own magic
+  // answers for its family whatever the date.
+  const name = EA_BY_MAGIC[m] || (CHARTS.find(c => !c.is_manager && c.expert
+      && (Number(c.magic) === m || sameMagicFamily(Number(c.magic) || 0, m))) || {}).expert;
   return name
     ? `<span class="badge badge--pass" title="${esc(name)}">${esc(shortEa(name))}</span>`
     : '<span class="badge badge--pass">EA</span>';
