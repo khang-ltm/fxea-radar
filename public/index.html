@@ -3575,9 +3575,12 @@ async function loadOrphans() {
     // version of an empty bar
     bar.hidden = !unsure.length;
     if (unsure.length) {
+      // the agent says which running EA it thinks each one belongs to; repeating
+      // that is the difference between "trust me" and a claim you can check
+      const why = [...new Set(unsure.map(o => o.why).filter(Boolean))].join('; ');
       bar.innerHTML = `<span>${unsure.length} pending order${unsure.length === 1 ? '' : 's'} on `
-        + `${esc([...new Set(unsure.map(o => o.symbol))].join(', '))} cannot be checked -`
-        + ' the EA there keeps its magic inside the compiled code.</span>';
+        + `${esc([...new Set(unsure.map(o => o.symbol))].join(', '))} left alone`
+        + `${why ? ': ' + esc(why) : ' - cannot be tied to a running EA either way'}.</span>`;
     }
     return;
   }

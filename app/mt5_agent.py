@@ -1519,7 +1519,8 @@ def _order_is_ours(order: dict, target: dict) -> bool:
         return False
     if order["magic"] == target["base"]:
         return True
-    return order["magic"] in target["magics"] and order["symbol"] == target["symbol"]
+    return (order["magic"] in target["magics"]
+            and _sym_key(order["symbol"]) == _sym_key(target["symbol"]))
 
 
 def pending_orders_for(target: dict) -> dict:
@@ -1565,6 +1566,42 @@ def pending_orders_for(target: dict) -> dict:
     return {"orders": guess, "certain": False}
 
 
+def _sym_key(symbol) -> str:
+    """BTCUSD, BTCUSD.p and BTCUSDm are one instrument for the purpose of saying
+    whose order this is. Brokers suffix the same symbol a dozen ways, and an
+    order was being called abandoned because its chart spelled it differently."""
+    s = re.sub(r"[^A-Za-z0-9]", "", str(symbol or ""))
+    trimmed = re.sub(r"[a-z]+$", "", s)
+    return (trimmed or s).upper()
+
+
+_EA_NOISE = {"ea", "mt4", "mt5", "v", "ver", "version", "final", "fix", "pro",
+             "robot", "free", "fx", "the", "bot", "expert"}
+
+
+def _ea_words(text) -> list:
+    cleaned = re.sub(r"[@#]\S+", " ", str(text or "")).lower()
+    cleaned = re.sub(r"[^a-z0-9]+", " ", cleaned)
+    return [w for w in cleaned.split()
+            if w not in _EA_NOISE and not any(ch.isdigit() for ch in w)]
+
+
+def _comment_of_ea(comment, expert) -> bool:
+    """Whether a trade comment reads like it came from this EA.
+
+    EAs stamp their own name into the comment - "BTC X EA", "QQX[T5/S09]" - and
+    when the chart hides its magic that stamp is the only other thing tying an
+    order to something still running. Two shared words, or one long one, is
+    enough to stop calling the order abandoned; being wrong this way only means
+    not offering to delete it.
+    """
+    a_words, b_words = set(_ea_words(comment)), set(_ea_words(expert))
+    if not a_words or not b_words:
+        return False
+    shared = a_words & b_words
+    return len(shared) >= 2 or any(len(w) >= 4 for w in shared)
+
+
 def _chart_claims(charts: list) -> tuple[list[dict], set[str]]:
     """What each open chart can claim, and the symbols nothing can speak for.
 
@@ -1586,8 +1623,10 @@ def _chart_claims(charts: list) -> tuple[list[dict], set[str]]:
     for c in live:
         base, symbol = magic_of(c), str(c.get("symbol") or "")
         if not base:
+            # an EA that hides its magic still speaks for its symbol, and for
+            # anything carrying its name in the comment
             if c.get("expert"):
-                unknown.add(symbol)
+                unknown.add(_sym_key(symbol))
             continue
         block = base // 100 * 100
         claims.append({"base": base, "symbol": symbol,
@@ -1637,13 +1676,24 @@ def orphan_pendings() -> dict:
         tag_magic(row)
         if any(_order_is_ours(row, t) for t in claims):
             continue                       # a running chart owns it
-        if row["symbol"] in unknown:
-            uncertain.append(row)          # an EA is on that symbol, hiding its magic
+        if _sym_key(row["symbol"]) in unknown:
+            row["why"] = "an EA on this symbol keeps its magic to itself"
+            uncertain.append(row)
+            continue
+        named = next((c.get("expert") for c in (status.get("charts") or [])
+                      if not c.get("is_manager") and c.get("expert")
+                      and _comment_of_ea(row.get("comment"), c.get("expert"))), "")
+        if named:
+            # the comment carries a running EA's name: not something to offer up
+            row["why"] = f"the comment reads like {named}, which is running"
+            uncertain.append(row)
             continue
         orphans.append(row)
 
     return {"ok": True, "orphans": orphans, "uncertain": uncertain,
-            "count": len(orphans)}
+            "count": len(orphans),
+            "claimed_by": [{"magic": c["base"], "symbol": c["symbol"]} for c in claims],
+            "unchecked_symbols": sorted(unknown)}
 
 
 def close_positions(tickets) -> dict:
