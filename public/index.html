@@ -2301,6 +2301,15 @@ const eaWords = t => String(t || '').toLowerCase()
 
 const eaAcronym = name => eaWords(name).map(w => w[0]).join('');
 
+/* Counting up from a base is one scheme - 77701 also trades 77704 - and
+   appending to it is another: a chart set to 111111 trades 11111122. The block
+   rule below only sees the first, which left those trades out of the row's own
+   numbers. Five leading digits and at most three appended is that family. */
+function sameMagicFamily(base, magic) {
+  const b = String(base), m = String(magic);
+  return b.length >= 5 && m.length > b.length && m.length - b.length <= 3 && m.startsWith(b);
+}
+
 function matchMagic(chart, rows, taken = new Set()) {
   const manual = eaMap()[chart.chart];
   if (manual !== undefined) {
@@ -2316,6 +2325,7 @@ function matchMagic(chart, rows, taken = new Set()) {
   if (base) {
     const block = Math.floor(base / 100) * 100;
     const hit = rows.filter(r => r.magic === base
+      || sameMagicFamily(base, r.magic)
       || (r.magic >= block && r.magic < block + 100 && !taken.has(r.magic)));
     return { rows: hit, how: 'magic' };
   }
