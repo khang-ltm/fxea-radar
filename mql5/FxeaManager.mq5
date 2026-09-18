@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.30"
+#property version   "1.31"
 #property strict
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
@@ -43,6 +43,10 @@ input bool ReportInputs    = true;   // report each EA settings (magic, lots, ..
 #define STATUS_FILE  "fxea_status.json"
 #define PAUSED_FILE  "fxea_paused.txt"
 #define INPUTS_FILE  "fxea_inputs.txt"
+// how long a reading that found nothing is allowed to stand before it is taken
+// again: long enough not to hammer a chart that will never answer, short enough
+// that an EA caught mid-reload is readable again while you are still looking
+#define PROBE_RETRY_SECONDS 60
 #define EDIT_NAME    "fxea_edit"
 #define ATTACH_NAME  "fxea_attach"
 
@@ -149,7 +153,8 @@ string Part(const string row, const int index)
 //+------------------------------------------------------------------+
 #define PROBE_NAME "fxea_probe"
 
-long   g_pm_chart[];
+long     g_pm_chart[];
+datetime g_pm_when[];            // when that reading was taken
 string g_pm_expert[];
 long   g_pm_magic[];
 string g_pm_inputs[];
@@ -245,21 +250,43 @@ void ChartProbe(const long id, const string expert, long &magic, string &inputs,
    if(!ReportInputs || StringLen(expert) == 0)
       return;
 
+   int found = -1;
    for(int i = 0; i < ArraySize(g_pm_chart); i++)
       if(g_pm_chart[i] == id && g_pm_expert[i] == expert)
         {
-         magic  = g_pm_magic[i];           // recomputed only when the EA changes
-         inputs = g_pm_inputs[i];
-         mode   = g_pm_mode[i];
-         return;
+         found = i;
+         break;
         }
+   // A reading that found nothing is worth taking again later: a chart caught
+   // while its EA reloads answers perfectly a minute afterwards, and caching
+   // that failure for the life of the EA is what made a freshly edited EA read
+   // as one with no magic and no settings at all.
+   if(found >= 0 && (StringLen(g_pm_inputs[found]) > 0
+                     || TimeLocal() - g_pm_when[found] < PROBE_RETRY_SECONDS))
+     {
+      magic  = g_pm_magic[found];          // recomputed only when the EA changes
+      inputs = g_pm_inputs[found];
+      mode   = g_pm_mode[found];
+      return;
+     }
 
    // A probe that fails gets cached as a failure too: retrying a template save
    // every five seconds against a chart that will not answer is how this EA ends
    // up stuck behind the terminal instead of serving commands.
    ReadInputsFromTemplate(id, magic, inputs, mode);
 
+   if(found >= 0)                        // refresh the reading in place
+     {
+      g_pm_magic[found]  = magic;
+      g_pm_inputs[found] = inputs;
+      g_pm_mode[found]   = mode;
+      g_pm_when[found]   = TimeLocal();
+      return;
+     }
+
    int n = ArraySize(g_pm_chart);
+   ArrayResize(g_pm_when, n + 1);
+   g_pm_when[n] = TimeLocal();
    ArrayResize(g_pm_chart, n + 1);
    ArrayResize(g_pm_expert, n + 1);
    ArrayResize(g_pm_magic, n + 1);
@@ -725,6 +752,24 @@ void DoSetInputs(const string id, const long chart, const bool force, const int 
      {
       WriteResult(id, false, StringFormat("ChartApplyTemplate failed (error %d)", GetLastError()));
       return;
+     }
+   // The EA is re-initialising right now, and a template saved from a chart
+   // mid-reload comes back without its inputs. That reading used to be taken
+   // immediately and cached as a failure, which left the chart reporting no
+   // magic and no settings until something else changed it. Wait for the EA to
+   // answer for itself first.
+   ForgetProbe(chart);
+   for(int wait = 0; wait < 60; wait++)
+     {
+      Sleep(100);
+      if(StringLen(ChartGetString(chart, CHART_EXPERT_NAME)) == 0)
+         continue;
+      long   back_magic = 0;
+      string back_dump  = "";
+      int    back_mode  = 0;
+      ReadInputsFromTemplate(chart, back_magic, back_dump, back_mode);
+      if(StringLen(back_dump) > 0)
+         break;
      }
    ForgetProbe(chart);
    WriteResult(id, true, StringFormat("%d setting(s) applied - %s reloaded%s",

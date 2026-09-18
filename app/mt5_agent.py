@@ -513,6 +513,7 @@ def read_charts() -> dict:
     except (OSError, json.JSONDecodeError) as exc:
         return {"ok": False, "attached": False, "error": f"unreadable status file: {exc}"}
     _remember_inputs(data.get("charts") or [])
+    _fill_from_memory(data.get("charts") or [])
     for chart in (data.get("charts") or []):
         tag_magic(chart)
     age = time.time() - f.stat().st_mtime
@@ -1249,6 +1250,49 @@ def _remember_inputs(charts: list) -> None:
             EA_INPUTS_FILE.write_text(json.dumps(known, ensure_ascii=False), encoding="utf-8")
         except OSError:
             pass
+
+
+def _fill_from_memory(charts: list) -> None:
+    """Lend a chart its last known settings when it reports none.
+
+    Applying settings reloads the EA, and the manager re-reads the chart while
+    MT5 is still bringing it back - so the reading fails, and a failed reading is
+    cached. The row then says the EA has no magic and no settings, which is how
+    an EA that was perfectly linked a second ago turns into an unlinked one.
+    What it had a moment ago is a better answer than nothing, as long as the row
+    admits that is what it is.
+    """
+    try:
+        known = json.loads(EA_INPUTS_FILE.read_text(encoding="utf-8")) \
+            if EA_INPUTS_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        return
+
+    for c in charts:
+        name = c.get("expert")
+        if not name or c.get("is_manager"):
+            continue
+        try:
+            magic = int(c.get("magic") or 0)
+        except (TypeError, ValueError):
+            magic = 0
+        if (c.get("inputs") or []) and magic:
+            continue
+        snapshot = known.get(name) or []
+        if not snapshot:
+            continue
+        if not (c.get("inputs") or []):
+            c["inputs"] = [dict(i) for i in snapshot]
+            c["inputs_remembered"] = True
+        if not magic:
+            key = _magic_key_of(snapshot)
+            try:
+                c["magic"] = int(str(dict((i["k"], i["v"]) for i in snapshot)[key]).strip()) \
+                    if key else 0
+            except (KeyError, TypeError, ValueError):
+                c["magic"] = 0
+            if c.get("magic"):
+                c["magic_remembered"] = True
 
 
 def read_ea_inputs(expert: str) -> dict:
