@@ -2290,8 +2290,8 @@ async function loadEas(quiet) {
   const row = m => {
     const k = String(m);
     if (!rows.has(k)) {
-      rows.set(k, { magic: m, name: '', symbols: [], open: 0, lots: 0, floating: 0,
-                    pending: 0, trades: 0, wins: 0, realised: 0, last: '' });
+      rows.set(k, { magic: m, name: '', ea: '', symbols: [], open: 0, lots: 0,
+                    floating: 0, pending: 0, trades: 0, wins: 0, realised: 0, last: '' });
     }
     return rows.get(k);
   };
@@ -2310,6 +2310,9 @@ async function loadEas(quiet) {
   }
   for (const e of (hist?.ok ? hist.by_ea : []) || []) {
     const r = row(e.magic || 0);
+    // the agent keeps a ledger of which EA used which magic, so a deal from an
+    // EA that has since been removed still says whose it was
+    if (e.ea) { r.ea = e.ea; EA_BY_MAGIC[e.magic || 0] = e.ea; }
     r.trades += e.trades || 0; r.wins += e.wins || 0; r.realised += e.profit || 0;
     if (!r.name && (e.comments || [])[0]) r.name = e.comments[0];
     for (const sym of e.symbols || []) if (!r.symbols.includes(sym)) r.symbols.push(sym);
@@ -3834,13 +3837,17 @@ const PICK_RULES = [
 /* Your own account outranks everything else here, because it is the only
    evidence that is about you. */
 function myResult(p) {
+  // What this EA did on your account, whether or not it is on a chart now. The
+  // agent's ledger keeps magic -> EA across removals, which is the only reason
+  // an EA you tried in July can still answer for itself in September.
+  const past = EA_ROWS.filter(r => r.ea && sameEa(r.ea, p.name));
   const hit = installedFor(p.name);
-  if (!hit) return null;
-  const live = CHARTS.find(c => !c.is_manager && c.expert === hit.name);
-  const rows = live ? matchMagic(live, EA_ROWS, new Set()).rows : [];
+  const live = hit && CHARTS.find(c => !c.is_manager && c.expert === hit.name);
+  const rows = past.length ? past
+    : live ? matchMagic(live, EA_ROWS, new Set()).rows : [];
   const sum = sumRows(rows);
   if (!sum || !sum.trades) return live ? { running: true, realised: 0, trades: 0 } : null;
-  return { running: !!live, realised: sum.realised, trades: sum.trades };
+  return { running: !!live, realised: sum.realised, trades: sum.trades, gone: !live };
 }
 
 function pickScore(p) {
@@ -3858,7 +3865,8 @@ function pickScore(p) {
     const points = mine.realised > 0 ? 5 : -6;
     score += points;
     reasons.push({ points,
-      text: `on your account: ${mt5Money(mine.realised, '')} over ${mine.trades} trade${mine.trades === 1 ? '' : 's'}` });
+      text: `on your account: ${mt5Money(mine.realised, '')} over ${mine.trades}`
+        + ` trade${mine.trades === 1 ? '' : 's'}${mine.gone ? ', before you removed it' : ''}` });
   } else if (mine?.running) {
     reasons.push({ points: 0, text: 'running on your account, no closed trades yet' });
   }

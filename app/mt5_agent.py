@@ -280,6 +280,27 @@ def _read_state_locked(now: float) -> dict:
 DEAL_ENTRY_OUT = (1, 3)          # OUT and OUT_BY: the leg that realises a result
 
 
+def _name_ea(row: dict, owners: dict) -> dict:
+    """Put the EA's name on a history row when the ledger knows it.
+
+    The deal history keeps a magic and nothing else, so a month later the
+    account cannot say which robot made or lost the money. The ledger can.
+    """
+    magic = str(row.get("magic") or "")
+    owner = owners.get(magic)
+    if not owner and magic.isdigit():
+        # the appended-strategy scheme again: 11111122 belongs to 111111
+        for known, info in owners.items():
+            if known.isdigit() and len(known) >= 5 and magic.startswith(known) \
+                    and 0 < len(magic) - len(known) <= 3:
+                owner = info
+                break
+    if owner:
+        row["ea"] = owner.get("ea")
+        row["ea_symbol"] = owner.get("symbol")
+    return row
+
+
 def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
     """Realised results from closed deals, grouped per EA.
 
@@ -287,6 +308,7 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
     happened. Times are UTC; a broker on another server time can shift day
     boundaries slightly, which matters for "today" but not for the totals.
     """
+    owners = magic_owners()
     now = time.time()
     key = (days, tz_minutes)
     if (_hist_cache["data"] is not None and _hist_cache["days"] == key
@@ -419,7 +441,7 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
             "week": window(7),
             "month": window(30),
         },
-        "by_ea": sorted((tag_magic(e) for e in by_ea.values()),
+        "by_ea": sorted((tag_magic(_name_ea(e, owners)) for e in by_ea.values()),
                         key=lambda e: e["profit"]),
         "by_day": [{"date": k, "profit": v} for k, v in sorted(by_day.items(), reverse=True)][:60],
         "closed": [tag_magic(c) for c in closed[:2000]],
@@ -514,6 +536,7 @@ def read_charts() -> dict:
         return {"ok": False, "attached": False, "error": f"unreadable status file: {exc}"}
     _remember_inputs(data.get("charts") or [])
     _fill_from_memory(data.get("charts") or [])
+    _remember_magics(data.get("charts") or [])
     for chart in (data.get("charts") or []):
         tag_magic(chart)
     age = time.time() - f.stat().st_mtime
@@ -1220,6 +1243,67 @@ def _read_set(path: pathlib.Path) -> tuple[str, str]:
 
 
 EA_INPUTS_FILE = config.DATA_DIR / "ea_inputs.json"
+
+
+MAGIC_LEDGER_FILE = config.DATA_DIR / "magic_owners.json"
+
+
+def _remember_magics(charts: list) -> None:
+    """Tie each magic to the EA using it, and keep that after the chart closes.
+
+    Which EA placed a trade is knowable only while its chart is open: the magic
+    is all the deal history keeps, and the moment an EA is removed, everything
+    it ever did becomes an anonymous number. That is exactly the wrong thing to
+    forget - the EAs worth judging are the ones you tried and took off again.
+
+    So it is written down as it happens. Nothing here decides anything; it only
+    means the question "what did that one actually do for me" stays answerable.
+    """
+    try:
+        known = json.loads(MAGIC_LEDGER_FILE.read_text(encoding="utf-8")) \
+            if MAGIC_LEDGER_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        known = {}
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    changed = False
+    for c in charts:
+        name = c.get("expert")
+        if not name or c.get("is_manager"):
+            continue
+        try:
+            magic = int(c.get("magic") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not magic:
+            continue
+        row = known.get(str(magic))
+        if row is None:
+            known[str(magic)] = {"ea": name, "symbol": c.get("symbol") or "",
+                                 "first_seen": today, "last_seen": today}
+            changed = True
+        elif row.get("ea") != name or row.get("last_seen") != today:
+            # a magic reused by another EA is worth recording as the new owner:
+            # the trades after today are that EA's, whatever came before
+            row["ea"], row["last_seen"] = name, today
+            changed = True
+    if changed:
+        try:
+            MAGIC_LEDGER_FILE.parent.mkdir(parents=True, exist_ok=True)
+            MAGIC_LEDGER_FILE.write_text(json.dumps(known, ensure_ascii=False, indent=1),
+                                         encoding="utf-8")
+        except OSError:
+            pass
+
+
+def magic_owners() -> dict:
+    """magic (as text) -> the EA that used it, as far as anyone here knows."""
+    try:
+        known = json.loads(MAGIC_LEDGER_FILE.read_text(encoding="utf-8")) \
+            if MAGIC_LEDGER_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return known if isinstance(known, dict) else {}
 
 
 def _remember_inputs(charts: list) -> None:
