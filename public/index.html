@@ -308,6 +308,20 @@ details[open] > summary svg { transform: rotate(90deg); }
 .rawmore { margin-top: var(--space-2); }
 .rawmore summary { list-style: none; display: inline-flex; width: max-content; }
 .rawmore summary::-webkit-details-marker { display: none; }
+.pick { padding: var(--space-3); border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm); background: var(--color-surface);
+  margin-bottom: var(--space-2); }
+.pick__head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.pick__head .row__open { font-weight: 600; font-size: 14px; }
+.pick__score { margin-left: auto; font-family: var(--font-head); font-weight: 600;
+  font-size: 13px; }
+.pick__score.pro { color: var(--color-accent); }
+.pick__score.con { color: var(--color-destructive); }
+.pick__why { margin: var(--space-2) 0 0; padding-left: 18px; display: grid; gap: 2px;
+  font-size: 12.5px; color: var(--color-muted-fg); }
+.pick__why li.pro { color: var(--color-foreground); }
+.pick__why li.con { color: #FCA5A5; }
+.pick__act { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
 .quotes { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
 .quote { padding: 8px 10px; border-radius: var(--radius-sm); font-size: 12.5px;
   line-height: 1.5; background: var(--color-muted);
@@ -502,6 +516,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 
     <div class="segmented" role="tablist" aria-label="View">
       <button class="btn" id="tab-eas" role="tab" aria-selected="true">EA catalog</button>
+      <button class="btn" id="tab-picks" role="tab" aria-selected="false">Shortlist</button>
       <button class="btn" id="tab-mt5" role="tab" aria-selected="false">My MT5</button>
       <button class="btn" id="tab-myea" role="tab" aria-selected="false">My EA</button>
     </div>
@@ -611,6 +626,21 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
         <div class="wrap" id="insttable"></div>
       </section>
     </div>
+  </div>
+
+  <div id="view-picks" hidden style="min-width: 0">
+    <section class="mt5sect">
+      <h2>Worth a look <span class="num" id="pickcount"></span></h2>
+      <p class="hint">Ranked by what is actually known about each EA: the channel's
+      own test, what its chat says, how risky the post admits it is, and how it has
+      done on your account if you have run it. Every line says why it is there.
+      Nothing here is advice - it is the reading you would do yourself.</p>
+      <div id="picklist"></div>
+    </section>
+    <section class="mt5sect">
+      <h2>Best avoided <span class="num" id="avoidcount"></span></h2>
+      <div id="avoidlist"></div>
+    </section>
   </div>
 
   <div id="view-mt5" hidden style="min-width: 0">
@@ -3761,11 +3791,123 @@ document.getElementById('log-sym').onclick = e => {
   loadEaLog();
 };
 
+/* ── the shortlist ─────────────────────────────────────────────────────────
+   A hundred and fifty EAs, no time, and every one of them presented by whoever
+   is selling it. This is the only page that takes a position: it adds up what
+   is actually known - the channel's own test, what the chat says afterwards,
+   what the post admits about risk, and what the thing did on your own account -
+   and shows the reasons next to the score, because a ranking you cannot argue
+   with is a ranking you cannot use. */
+const PICK_RULES = [
+  { at: p => p.shot?.verdict === 'pass', points: 4,
+    why: () => "the channel's own test made money" },
+  { at: p => p.shot && !p.shot.verdict && p.shot.status === 'running', points: 1,
+    why: () => 'a test is running now' },
+  { at: p => p.shot?.verdict === 'loss', points: -5,
+    why: () => "the channel's own test lost money" },
+  { at: p => p.shot?.verdict === 'scam', points: -9,
+    why: () => 'flagged as a scam by the channel' },
+  { at: p => p.shot?.verdict === 'no-trade', points: -2,
+    why: () => 'tested and never opened a trade' },
+  { at: p => p.shot?.myfxbook, points: 1,
+    why: () => 'has a Myfxbook account to check' },
+  { at: p => (p.buzz?.good || 0) > (p.buzz?.bad || 0), points: 2,
+    why: p => `${p.buzz.good} chat message${p.buzz.good === 1 ? '' : 's'} report it working` },
+  { at: p => (p.buzz?.bad || 0) > (p.buzz?.good || 0), points: -3,
+    why: p => `${p.buzz.bad} chat message${p.buzz.bad === 1 ? '' : 's'} report losses` },
+  { at: p => (p.buzz?.mentions || 0) >= 5, points: 1,
+    why: p => `${p.buzz.mentions} people brought it up` },
+  { at: p => (p.tags || []).includes('martingale'), points: -4,
+    why: () => 'martingale: it doubles down on losers' },
+  { at: p => (p.tags || []).includes('grid'), points: -2,
+    why: () => 'grid: stacks positions against the move' },
+  { at: p => (p.tags || []).includes('has-set-file'), points: 1,
+    why: () => 'ships a .set, so it can be run as the author intended' },
+  { at: p => (p.version_count || 1) >= 3, points: 1,
+    why: p => `${p.version_count} versions posted - still being worked on` },
+  { at: p => isSource(p), points: -2,
+    why: () => 'source code: nothing to attach until it is compiled in MetaEditor' },
+  { at: p => (p.tags || []).includes('has-archive') && !(p.files || []).length, points: -1,
+    why: () => 'the file never downloaded, so it cannot be installed from here' },
+];
+
+/* Your own account outranks everything else here, because it is the only
+   evidence that is about you. */
+function myResult(p) {
+  const hit = installedFor(p.name);
+  if (!hit) return null;
+  const live = CHARTS.find(c => !c.is_manager && c.expert === hit.name);
+  const rows = live ? matchMagic(live, EA_ROWS, new Set()).rows : [];
+  const sum = sumRows(rows);
+  if (!sum || !sum.trades) return live ? { running: true, realised: 0, trades: 0 } : null;
+  return { running: !!live, realised: sum.realised, trades: sum.trades };
+}
+
+function pickScore(p) {
+  const reasons = [];
+  let score = 0;
+  for (const rule of PICK_RULES) {
+    let on = false;
+    try { on = !!rule.at(p); } catch { on = false; }
+    if (!on) continue;
+    score += rule.points;
+    reasons.push({ points: rule.points, text: rule.why(p) });
+  }
+  const mine = myResult(p);
+  if (mine && mine.trades) {
+    const points = mine.realised > 0 ? 5 : -6;
+    score += points;
+    reasons.push({ points,
+      text: `on your account: ${mt5Money(mine.realised, '')} over ${mine.trades} trade${mine.trades === 1 ? '' : 's'}` });
+  } else if (mine?.running) {
+    reasons.push({ points: 0, text: 'running on your account, no closed trades yet' });
+  }
+  return { score, reasons };
+}
+
+function pickCard(p, judged) {
+  const pos = judged.reasons.filter(r => r.points > 0);
+  const neg = judged.reasons.filter(r => r.points < 0);
+  const flat = judged.reasons.filter(r => r.points === 0);
+  const line = r => `<li class="${r.points > 0 ? 'pro' : r.points < 0 ? 'con' : ''}">${esc(r.text)}</li>`;
+  return `<div class="pick">
+    <div class="pick__head">
+      <button class="row__open" data-key="${esc(p.family || p.dedupe_key || p.key)}"
+        title="${esc(p.name)} - click for full details">${esc(p.name)}</button>
+      ${verdictBadge(p)}${buzzBadge(p)}
+      <span class="pick__score ${judged.score >= 0 ? 'pro' : 'con'}">${judged.score > 0 ? '+' : ''}${judged.score}</span>
+    </div>
+    <ul class="pick__why">${[...pos, ...flat, ...neg].map(line).join('')}</ul>
+    <div class="pick__act">${attachBtn(p)}${downloadBtn(p)}</div>
+  </div>`;
+}
+
+function renderPicks() {
+  const judged = POSTS.filter(p => p.is_ea !== false)
+    .map(p => ({ p, j: pickScore(p) }))
+    .filter(x => x.j.reasons.length);
+  const good = judged.filter(x => x.j.score > 0).sort((a, b) => b.j.score - a.j.score).slice(0, 25);
+  const bad = judged.filter(x => x.j.score < 0).sort((a, b) => a.j.score - b.j.score).slice(0, 12);
+
+  document.getElementById('pickcount').textContent = good.length ? `(${good.length})` : '';
+  document.getElementById('avoidcount').textContent = bad.length ? `(${bad.length})` : '';
+  setHtml('picklist', good.length
+    ? good.map(x => pickCard(x.p, x.j)).join('')
+    : `<div class="empty">Nothing scores above zero yet. The catalog needs a sync,
+       or nothing posted lately has a test or any chat behind it.</div>`);
+  setHtml('avoidlist', bad.length
+    ? bad.map(x => pickCard(x.p, x.j)).join('')
+    : '<div class="empty">Nothing has scored badly enough to warn about.</div>');
+  wireCards();
+  // the shortlist reads your account too, and that is only loaded on the MT5 tabs
+  if (MT5?.url && !EA_ROWS.length) loadEas(true).then(() => renderPicks()).catch(() => {});
+}
+
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 const TAB_KEY = 'fxea_tab';
 let TAB = oneOf(urlParams.get('tab'), ['eas', 'mt5', 'myea'], localStorage.getItem(TAB_KEY) || 'eas');
 
-const TABS = ['eas', 'mt5', 'myea'];        // catalog | account | EA control
+const TABS = ['eas', 'picks', 'mt5', 'myea'];   // catalog | shortlist | account | control
 
 function showTab(name) {
   TAB = TABS.includes(name) ? name : 'eas';
@@ -3784,6 +3926,7 @@ function showTab(name) {
   }
   if (!isEas) document.getElementById('stale').hidden = true;
 
+  if (TAB === 'picks') renderPicks();
   if (TAB === 'mt5') { showSub(SUBTAB); loadMt5(); }
   if (TAB === 'myea') { showEaSub(EASUB); loadEas().then(loadCharts); }
 }
