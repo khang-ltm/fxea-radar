@@ -18,6 +18,7 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import config
+from .buzz import attach_buzz
 from .grouping import group_products
 from .shots import attach_shots
 from .store import load_posts, load_state
@@ -283,7 +284,7 @@ class Handler(SimpleHTTPRequestHandler):
             collapsed = 0
             if grouped:
                 before = len(selected)
-                selected = group_products(selected)
+                selected = attach_buzz(group_products(selected), posts)
                 attach_shots(selected)
                 collapsed = before - len(selected)
             matched = len(selected)

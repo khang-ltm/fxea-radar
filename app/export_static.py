@@ -14,6 +14,7 @@ import re
 from datetime import datetime, timezone
 
 from . import config
+from .buzz import attach_buzz
 from .grouping import group_products
 from .server import summarize
 from .shots import attach_shots
@@ -28,7 +29,7 @@ def build_payload(limit: int = 3000) -> dict:
 
     selected = [p for p in posts if p.get("is_ea") and (p.get("kind") or "ea") == "ea"]
     before = len(selected)
-    grouped = group_products(selected)
+    grouped = attach_buzz(group_products(selected), posts)
     attach_shots(grouped)
     collapsed = before - len(grouped)
 

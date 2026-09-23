@@ -308,6 +308,13 @@ details[open] > summary svg { transform: rotate(90deg); }
 .rawmore { margin-top: var(--space-2); }
 .rawmore summary { list-style: none; display: inline-flex; width: max-content; }
 .rawmore summary::-webkit-details-marker { display: none; }
+.quotes { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+.quote { padding: 8px 10px; border-radius: var(--radius-sm); font-size: 12.5px;
+  line-height: 1.5; background: var(--color-muted);
+  border-left: 3px solid var(--color-border); white-space: pre-wrap; }
+.quote--good { border-left-color: var(--color-accent); }
+.quote--bad { border-left-color: var(--color-destructive); }
+.quote__meta { color: var(--color-muted-fg); font-size: 11px; margin-bottom: 3px; }
 pre.raw { margin: var(--space-2) 0 0; padding: var(--space-3); background: var(--color-background);
   border: 1px solid var(--color-border-soft); border-radius: var(--radius); color: #CBD5E1;
   font: 400 12px/1.55 var(--font-head); white-space: pre-wrap; max-height: 320px; overflow: auto; }
@@ -511,6 +518,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <select id="sort">
       <option value="new">Newest first</option>
       <option value="verdict">Best tested first</option>
+      <option value="buzz">Most talked about</option>
       <option value="old">Oldest first</option>
       <option value="versions">Most versions</option>
       <option value="name">Name A–Z</option>
@@ -527,6 +535,8 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <button class="chip" id="f-img" aria-pressed="false">Has test</button>
       <button class="chip" id="f-fx" aria-pressed="false" title="only EAs with a Myfxbook account link">Myfxbook</button>
       <button class="chip" id="f-multi" aria-pressed="false">Multi-version</button>
+    <button class="chip" id="f-talk" aria-pressed="false"
+      title="only EAs the channel's chat actually mentions">Talked about</button>
     </div>
 
     <span class="fdiv" aria-hidden="true"></span>
@@ -866,9 +876,26 @@ const ICON = {
   refresh: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>',
   log: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16"/><path d="M4 10h10"/><path d="M4 15h13"/><path d="M4 20h7"/></svg>',
   code: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l-6-6 6-6"/><path d="M15 6l6 6-6 6"/></svg>',
+  talk: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 7 0 0 1-8 7 9 9 0 0 1-3-.5L4 20l1.3-3.3A7 7 0 0 1 3 12a8 7 0 0 1 8-7h2a8 7 0 0 1 8 7z"/></svg>',
   chart: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
 const RISKY = new Set(['cracked', 'martingale', 'grid']);
+
+/* Seventy EAs and no way to tell which ones anyone actually runs. The channel's
+   own chat is the only opinion here that is not the seller's, so the badge says
+   how often an EA comes up and which way: green when people report it working,
+   red when they report losses, plain when they only ask about it. The number is
+   just a way to sort - the quotes in the detail sheet are the real answer. */
+function buzzBadge(p) {
+  const b = p.buzz;
+  if (!b?.mentions) return '';
+  const mood = b.good > b.bad ? 'badge--pass' : b.bad > b.good ? 'badge--loss' : '';
+  const said = b.good || b.bad
+    ? ` - ${b.good} good, ${b.bad} bad`
+    : ' - asked about, nobody reporting results';
+  return `<span class="badge ${mood}" title="mentioned ${b.mentions} time${b.mentions === 1 ? '' : 's'}`
+    + ` in the channel chat${said}. Last on ${esc(b.last_iso || '?')}">${ICON.talk}${b.mentions}</span>`;
+}
 /* A "Source code" release ships .mq5, not a compiled .ex5. Installing one puts
    nothing on the VPS that can go on a chart - it has to be opened in MetaEditor
    and compiled there first. Worth knowing before the download, not after. */
@@ -916,6 +943,7 @@ function matches(p) {
   if (filters.img && !p.shot) return false;
   if (filters.fx && !p.shot?.myfxbook) return false;
   if (filters.multi && !((p.version_count || 1) > 1)) return false;
+  if (filters.talk && !(p.buzz?.mentions)) return false;
   if (filters.pair && !(p.pairs || []).includes(filters.pair)) return false;
   if (filters.tf && !(p.timeframes || []).includes(filters.tf)) return false;
   for (const t of filters.tags) if (!(p.tags || []).includes(t)) return false;
@@ -937,6 +965,7 @@ const sorters = {
   old:      (a, b) => a.date - b.date,
   verdict:  (a, b) => (verdictScore(b) - verdictScore(a)) || (b.date - a.date),
   versions: (a, b) => ((b.version_count || 1) - (a.version_count || 1)) || (b.date - a.date),
+  buzz:     (a, b) => ((b.buzz?.score || 0) - (a.buzz?.score || 0)) || (b.date - a.date),
   name:     (a, b) => String(a.name).localeCompare(String(b.name)),
 };
 
@@ -1057,6 +1086,16 @@ function detailHtml(p) {
 
     ${visibleTags(p).length ? `<section class="sect"><h3>Tags</h3>
       <div class="badges">${visibleTags(p).map(t => `<span class="badge${RISKY.has(t) ? ' badge--risk' : ''}">${esc(t)}</span>`).join('')}</div>
+    </section>` : ''}
+
+    ${p.buzz?.quotes?.length ? `<section class="sect">
+      <h3>What the channel says <span class="num">${p.buzz.mentions} mention${p.buzz.mentions === 1 ? '' : 's'}</span></h3>
+      <p class="hint">Chat messages naming this EA, newest first. Nobody here is a
+      reviewer and half of it is people asking for a set file - but it is the only
+      word on these EAs that is not the seller's.</p>
+      <div class="quotes">${p.buzz.quotes.map(q => `<div class="quote quote--${q.tone > 0 ? 'good' : q.tone < 0 ? 'bad' : 'flat'}">
+        <div class="quote__meta">${esc(q.date_iso)}${q.url ? ` · <a href="${esc(q.url)}" target="_blank" rel="noopener">open</a>` : ''}</div>
+        <div>${esc(q.text)}</div></div>`).join('')}</div>
     </section>` : ''}
 
     ${(p.rules || []).length ? `<section class="sect"><h3>Rules &amp; settings from the post</h3>
@@ -1288,7 +1327,7 @@ function row(p) {
         title="${esc(p.name)} - click for full details">${esc(p.name)}</button>
       ${p.version ? `<span class="badge badge--ver">${esc(p.version)}</span>` : ''}
     </div>
-    <div>${verdictBadge(p) || '<span class="shot-none">—</span>'}</div>
+    <div>${verdictBadge(p) || (buzzBadge(p) ? '' : '<span class="shot-none">—</span>')}${buzzBadge(p)}</div>
     <div class="row__hide">${testLinks(p, true)}</div>
     <div class="badges row__hide2">${chips}</div>
     <div class="row__num row__hide2">${esc(p.deposit || '—')}</div>
@@ -1409,7 +1448,7 @@ function clearFilters() {
   document.getElementById('q').value = '';
   document.getElementById('pair').value = '';
   document.getElementById('tf').value = '';
-  for (const id of ['f-pass', 'f-noloss', 'f-img', 'f-fx', 'f-multi']) document.getElementById(id).setAttribute('aria-pressed', 'false');
+  for (const id of ['f-pass', 'f-noloss', 'f-img', 'f-fx', 'f-multi', 'f-talk']) document.getElementById(id).setAttribute('aria-pressed', 'false');
   document.querySelectorAll('#tagpanel input[data-tag]').forEach(cb => { cb.checked = false; cb.closest('.tagopt').dataset.on = 'false'; });
   visible = PAGE;
   render();
@@ -1421,7 +1460,8 @@ document.getElementById('sort').onchange = e => { filters.sort = e.target.value;
 document.getElementById('pair').onchange = e => { filters.pair = e.target.value; visible = PAGE; render(); };
 document.getElementById('tf').onchange = e => { filters.tf = e.target.value; visible = PAGE; render(); };
 
-for (const [id, key] of [['f-pass', 'pass'], ['f-noloss', 'noloss'], ['f-img', 'img'], ['f-fx', 'fx'], ['f-multi', 'multi']]) {
+for (const [id, key] of [['f-pass', 'pass'], ['f-noloss', 'noloss'], ['f-img', 'img'],
+                         ['f-fx', 'fx'], ['f-multi', 'multi'], ['f-talk', 'talk']]) {
   document.getElementById(id).onclick = e => {
     filters[key] = !filters[key];
     e.currentTarget.setAttribute('aria-pressed', String(filters[key]));

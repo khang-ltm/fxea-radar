@@ -515,7 +515,7 @@ def check_no_control_chars() -> None:
     ran the result. A byte scan costs nothing and catches every repeat.
     """
     for rel in ("public/index.html", "app/mt5_agent.py", "app/installer.py",
-                "install_vps.ps1", "mql5/FxeaManager.mq5"):
+                "app/buzz.py", "install_vps.ps1", "mql5/FxeaManager.mq5"):
         f = ROOT / rel
         if not f.exists():
             continue
