@@ -3954,7 +3954,8 @@ function renderPicks() {
 
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 const TAB_KEY = 'fxea_tab';
-let TAB = oneOf(urlParams.get('tab'), ['eas', 'mt5', 'myea'], localStorage.getItem(TAB_KEY) || 'eas');
+let TAB = oneOf(urlParams.get('tab'), ['eas', 'picks', 'mt5', 'myea'],
+                localStorage.getItem(TAB_KEY) || 'eas');
 
 const TABS = ['eas', 'picks', 'mt5', 'myea'];   // catalog | shortlist | account | control
 
@@ -3998,9 +3999,9 @@ function showEaSub(name) {
 }
 for (const v of EASUBS) document.getElementById('easub-' + v).onclick = () => showEaSub(v);
 
-document.getElementById('tab-eas').onclick = () => showTab('eas');
-document.getElementById('tab-mt5').onclick = () => showTab('mt5');
-document.getElementById('tab-myea').onclick = () => showTab('myea');
+// wired from TABS, not one line per tab: the Shortlist shipped with a button
+// that did nothing because this list was written out by hand and not updated
+for (const t of TABS) document.getElementById('tab-' + t).onclick = () => showTab(t);
 showTab(TAB);
 
 /* ── real-time stream ──────────────────────────────────────────────────────
