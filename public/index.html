@@ -155,6 +155,13 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
   font-family: var(--font-head); font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 52vh; overflow: auto; }
 .logbox b { color: var(--color-accent); font-weight: 600; }
+.deadbar[hidden] { display: none; }
+.deadbar:not([hidden]) { display: block; margin: 0 0 var(--space-3);
+  padding: 9px 12px; border-radius: var(--radius-sm); font-size: 13px;
+  color: var(--color-warn);
+  background: color-mix(in srgb, var(--color-warn) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warn) 45%, transparent); }
+.deadbar b { color: var(--color-foreground); }
 .orphanbar[hidden] { display: none; }
 .orphanbar:not([hidden]) { display: flex; align-items: center; gap: var(--space-3);
   flex-wrap: wrap; margin: 0 0 var(--space-3); padding: 8px 12px;
@@ -573,6 +580,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 </header>
 
 <p class="stale" id="stale" hidden></p>
+<p class="deadbar" id="deadbar" hidden></p>
 <p class="hint" id="installoff" hidden></p>
 
 <main>
@@ -3441,6 +3449,9 @@ async function loadCharts(quiet) {
     if (!c.expert) continue;
     for (const r of matchMagic(c, EA_ROWS, takenBy(c)).rows) EA_BY_MAGIC[r.magic] = c.expert;
   }
+  // even a quiet refresh knows whether the manager is alive, and that is worth
+  // saying on whatever tab is open
+  markManagerDown(d.attached ? 0 : Math.round(d.age_seconds || 0));
   if (quiet) return;                       // called only to learn the mapping
   const withEa = charts.filter(c => c.expert);
   stats.textContent = `(${withEa.length})`;
@@ -3449,10 +3460,14 @@ async function loadCharts(quiet) {
   // been closed. Saying "stale" in small print was not enough: say how old.
   const age = Math.round(d.age_seconds || 0);
   const frozen = !d.attached;
+  // "not answering for 439242s" is a number nobody converts in their head, and
+  // the warning only ever appeared on this tab - so a manager that stopped five
+  // days ago went unnoticed for five days, with every control silently dead.
+  markManagerDown(frozen ? age : 0);
   document.getElementById('easstats').innerHTML =
     `<b>${withEa.length}</b> EA${withEa.length === 1 ? '' : 's'} attached to charts`
     + (frozen
-        ? ` · <span style="color:var(--color-warn)">manager not answering for ${age}s -`
+        ? ` · <span style="color:var(--color-warn)">manager silent for ${esc(fmtAge(age))} -`
           + ' this list is frozen</span>'
         : ' · manager connected')
     + (d.version ? ` <span class="hint">v${esc(d.version)}</span>` : '');
@@ -3793,6 +3808,32 @@ document.getElementById('log-sym').onclick = e => {
   e.currentTarget.setAttribute('aria-pressed', String(LOG_VIEW.symOnly));
   loadEaLog();
 };
+
+/* FxeaManager is the only thing that can touch a chart, so when it stops, every
+   control on this page is dead while still looking alive. That has to be said
+   wherever you happen to be - not only on the tab you were not looking at. */
+let MANAGER_DOWN_SINCE = 0;
+
+const fmtAge = seconds => {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 90) return `${s} seconds`;
+  if (s < 5400) return `${Math.round(s / 60)} minutes`;
+  if (s < 172800) return `${Math.round(s / 3600)} hours`;
+  return `${Math.round(s / 86400)} days`;
+};
+
+function markManagerDown(seconds) {
+  MANAGER_DOWN_SINCE = seconds || 0;
+  const bar = document.getElementById('deadbar');
+  if (!bar) return;
+  bar.hidden = !seconds;
+  if (!seconds) return;
+  bar.innerHTML = `<b>FxeaManager has not answered for ${esc(fmtAge(seconds))}.</b>`
+    + ' Pause, Run, Attach and settings all do nothing until it is back, and the'
+    + ' EA list is a snapshot from when it stopped. Your EAs are unaffected and'
+    + ' still trading. In MT5: Navigator &rsaquo; Expert Advisors &rsaquo; Refresh,'
+    + ' then drag FxeaManager onto a chart.';
+}
 
 /* ── the shortlist ─────────────────────────────────────────────────────────
    A hundred and fifty EAs, no time, and every one of them presented by whoever
