@@ -199,6 +199,13 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
   font-family: var(--font-body); background: var(--color-background);
   border: 1px solid var(--color-border); border-radius: var(--radius-sm);
   color: var(--color-foreground); }
+.setrow select.eafield { width: 100%; padding: 4px 6px; font-size: 12.5px;
+  font-family: var(--font-head); background: var(--color-background);
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  color: var(--color-foreground); }
+.setrow.dirty select.eafield { border-color: var(--color-accent); color: var(--color-accent); }
+.setrow select.eafield:disabled { border-color: transparent; background: none;
+  color: var(--color-muted-fg); }
 .setrow input[readonly] { background: none; border-color: transparent; color: var(--color-muted-fg);
    cursor: default; }
 .setrow.text { grid-template-columns: 1fr; gap: 4px; }
@@ -3345,12 +3352,53 @@ const headingText = k => String(k).replace(/^[>#*=~\s-]+|[:=\s]+$/g, '')
 
 /* Drawn as a function rather than inline, because a label arriving from the
    agent a moment after the dialog opens has to be able to redraw the rows. */
+/* MT5 shows a tick box for a bool and a named dropdown for an enum. The names
+   are compiled away, but the shape of the control is not a guess: a value of
+   true or false is a tick box wherever it came from, and a number is a number.
+
+   Enum choices come from your own note - "0 = fixed lots, 1 = risk %" becomes
+   exactly those two options and nothing else. If the EA is set to a value your
+   note does not mention, that value is offered too, marked as what it currently
+   is, because the note is your reading and the EA is the fact. */
+const OPTION_RE = /(-?\d+)\s*[=:]\s*([^,;\n]{1,40})/g;
+
+function noteOptions(note) {
+  const out = [];
+  for (const m of String(note || '').matchAll(OPTION_RE)) {
+    const value = m[1].trim(), label = m[2].trim().replace(/[.\s]+$/, '');
+    if (label && !out.some(o => o.value === value)) out.push({ value, label });
+  }
+  return out.length >= 2 ? out : [];
+}
+
+function eaField(i, n, noted, readonly) {
+  const value = String(i.v);
+  const attrs = `id="ea-in-${n}" data-idx="${n}"${readonly ? ' disabled' : ''}`;
+  const isBool = /^(true|false)$/i.test(value.trim());
+  if (isBool) {
+    const on = value.trim().toLowerCase() === 'true';
+    return `<select ${attrs} class="eafield">
+      <option value="true" ${on ? 'selected' : ''}>true</option>
+      <option value="false" ${on ? '' : 'selected'}>false</option></select>`;
+  }
+  const options = /^-?\d+$/.test(value.trim()) ? noteOptions(noted?.note) : [];
+  if (options.length) {
+    const known = options.some(o => o.value === value.trim());
+    return `<select ${attrs} class="eafield">
+      ${options.map(o => `<option value="${esc(o.value)}" ${o.value === value.trim() ? 'selected' : ''}>`
+        + `${esc(o.value)} - ${esc(o.label)}</option>`).join('')}
+      ${known ? '' : `<option value="${esc(value)}" selected>${esc(value)} - not in your note</option>`}
+    </select>`;
+  }
+  return `<input ${attrs.replace(' disabled', ' readonly')} value="${esc(value)}" spellcheck="false">`;
+}
+
 function renderEaRows() {
   if (!EA_EDIT) return;
   const dirty = new Set([...document.querySelectorAll('#ea-inputs .setrow.dirty')]
     .map(r => Number(r.dataset.row)));
   const typed = {};
-  for (const el of document.querySelectorAll('#ea-inputs input[data-idx]')) {
+  for (const el of document.querySelectorAll('#ea-inputs [data-idx]')) {
     typed[Number(el.dataset.idx)] = el.value;          // never lose a half-typed value
   }
   document.getElementById('ea-inputs').innerHTML = EA_EDIT.inputs.map((i, n) => {
@@ -3366,16 +3414,17 @@ function renderEaRows() {
         ? ' <span class="badge" title="how the EA recognises its own trades - not editable from here">locked</span>'
         : ''}<small>${esc(i.k)}${noted?.note ? ' · ' + esc(noted.note) : ''}${
           noted?.from ? ' · noted on ' + esc(shortEa(noted.from)) : ''}</small></label>
-      <input id="ea-in-${n}" data-idx="${n}" value="${esc(i.v)}" spellcheck="false"
-        ${EA_EDIT.open || isMagicKey(i.k) ? 'readonly' : ''}></div>`;
+      ${eaField(i, n, noted, EA_EDIT.open || isMagicKey(i.k))}</div>`;
   }).join('');
 
-  for (const el of document.querySelectorAll('#ea-inputs input[data-idx]')) {
-    el.oninput = () => {
+  for (const el of document.querySelectorAll('#ea-inputs [data-idx]')) {
+    const mark = () => {
       const n = Number(el.dataset.idx);
       el.closest('.setrow').classList.toggle('dirty', el.value !== EA_EDIT.inputs[n].v);
       refreshEaButtons();
     };
+    el.oninput = mark;
+    el.onchange = mark;                       // a dropdown does not fire input
   }
 
   for (const [idx, value] of Object.entries(typed)) {
@@ -3411,8 +3460,9 @@ function eaChanges() {
   const out = {};
   if (!EA_EDIT) return out;
   // [data-idx] only: the label boxes are inputs too, and they are notes about
-  // settings, never settings
-  for (const el of document.querySelectorAll('#ea-inputs input[data-idx]')) {
+  // settings, never settings. Selects count - a bool and an enum are edited as
+  // choices, and what gets written is still the value behind the choice.
+  for (const el of document.querySelectorAll('#ea-inputs [data-idx]')) {
     const n = Number(el.dataset.idx);
     const k = EA_EDIT.inputs[n].k;
     if (isMagicKey(k)) continue;          // identity, not a setting: never sent
