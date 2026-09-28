@@ -2731,7 +2731,7 @@ class Handler(BaseHTTPRequestHandler):
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
                           "attach", "forget", "install", "uninstall", "savepreset",
                           "delpreset", "update", "reload", "cancelpending",
-                          "closeposition", "setnote", "readlabels"):
+                          "closeposition", "setnote", "readlabels", "seenloaded"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
         if action in ("pause", "unload", "setinputs", "attach", "forget",
@@ -2752,6 +2752,23 @@ class Handler(BaseHTTPRequestHandler):
 
         if action == "closeposition":
             self._json(close_positions((body.get("tickets") or [])[:50]))
+            return
+
+        if action == "seenloaded":
+            # The mark means "never seen running here", and only an actual load
+            # clears it - so when someone who can see the terminal says it is
+            # there, that is better evidence than waiting for a log line.
+            name = str(body.get("expert") or "").strip()
+            if not name:
+                self._json({"ok": False, "error": "which EA?"}, 400)
+                return
+            try:
+                from . import installer
+                installer.note_loaded(name)
+                self._json({"ok": True, "expert": name,
+                            "message": f"{name} will not be flagged as new again"})
+            except Exception as exc:                           # noqa: BLE001
+                self._json({"ok": False, "error": f"could not save: {exc}"}, 500)
             return
 
         if action == "readlabels":

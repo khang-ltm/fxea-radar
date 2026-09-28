@@ -201,9 +201,12 @@ def note_installed(names: list) -> None:
 
 
 def note_loaded(name: str) -> None:
+    """Stop flagging this EA as never-seen. Also accepts a name that was never
+    recorded as installed here - an EA put in Experts by hand is still an EA
+    somebody has now seen load."""
     known = _read_json(FRESH_FILE)
-    if name in known and not known[name].get("loaded"):
-        known[name]["loaded"] = True
+    if not known.get(name, {}).get("loaded"):
+        known[name] = {"loaded": True}
         _write_json(FRESH_FILE, known)
 
 

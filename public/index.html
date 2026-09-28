@@ -817,7 +817,8 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <small>optional - leave blank to keep the EA's own, which may clash</small></label>
       <input id="attach-magic" inputmode="numeric" spellcheck="false" placeholder="e.g. 220819"></div>
     <p class="hint" id="attach-warn"></p>
-    <button class="chip ghost" id="attach-recheck" hidden>I refreshed MT5 - check again</button>
+    <button class="chip ghost" id="attach-recheck" hidden>Check again</button>
+    <button class="chip ghost" id="attach-seen" hidden>It is in MT5 - stop warning</button>
   </div>
   <div class="sheet__foot">
     <span class="hint" id="attach-note">The EA loads with its own default settings
@@ -3061,21 +3062,37 @@ async function recheckExperts(btn) {
   warnIfUnregistered();
   const still = document.getElementById('attach-ea').selectedOptions[0]?.dataset.new;
   toast(still
-    ? 'MT5 still has not registered it - refresh Navigator > Expert Advisors again'
-    : 'MT5 has it now - attaching will work', still ? 'warn' : 'ok');
+    ? 'Still never seen running here. That is expected for an EA you have not attached'
+      + ' yet - refresh Navigator if it is new, or say it is there to stop the warning.'
+    : 'Seen running - attaching will work', still ? 'warn' : 'ok', still ? 10 : 6);
 }
 
 document.getElementById('attach-recheck').onclick = e => recheckExperts(e.currentTarget);
+
+document.getElementById('attach-seen').onclick = async (e) => {
+  const opt = document.getElementById('attach-ea').selectedOptions[0];
+  if (!opt?.dataset.name) return;
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  const r = await managerPost({ action: 'seenloaded', expert: opt.dataset.name });
+  btn.disabled = false;
+  toast(r.ok ? r.message : `Failed\n${r.error || r.message}`, r.ok ? 'ok' : 'bad');
+  if (r.ok) { opt.dataset.new = ''; warnIfUnregistered(); refreshInstalled(); }
+};
 
 function warnIfUnregistered() {
   const opt = document.getElementById('attach-ea').selectedOptions[0];
   const warn = document.getElementById('attach-warn');
   const fresh = !!opt?.dataset.new;
   document.getElementById('attach-recheck').hidden = !fresh;
+  document.getElementById('attach-seen').hidden = !fresh;
   if (fresh) {
-    warn.innerHTML = '<span style="color:var(--color-warn)">MT5 has not loaded this EA yet.</span>'
-      + ' In MT5: right-click Navigator &gt; Expert Advisors &gt; Refresh, then check again.'
-      + ' Attaching without it opens a chart with no EA on it.';
+    warn.innerHTML = '<span style="color:var(--color-warn)">This EA has never been seen'
+      + ' running here.</span> That mark clears the first time it actually loads on a'
+      + ' chart - a Navigator refresh alone will not clear it, because MT5 logs nothing'
+      + ' when you refresh. If it is newly installed, refresh Navigator &gt; Expert'
+      + ' Advisors first, or attaching opens a chart with no EA on it. If you can see it'
+      + ' in MT5 already, say so and the warning stops.';
   } else if (warn.textContent.includes('has not loaded this EA')) {
     // whatever it said about the last EA is now wrong, and leaving a red warning
     // up after the check passed is worse than saying nothing
