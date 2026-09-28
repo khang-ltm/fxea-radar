@@ -1200,12 +1200,13 @@ function openDetail(key) {
   tg.hidden = !p.url;
   if (p.url) tg.href = p.url;
   document.getElementById('detail-body').innerHTML = detailHtml(p);
+  // Installing a version puts files on the VPS and nothing else - the same
+  // thing the catalog row does. These used to close the sheet and open Attach
+  // instead, carrying an install payload that openAttach has never read since
+  // downloading and attaching became two decisions: the button neither
+  // installed the version nor filled anything in.
   for (const b of detailDlg.querySelectorAll('[data-install]')) {
-    b.onclick = () => { closeSheet(detailDlg); openAttach({
-      symbol: b.dataset.sym, period: Number(b.dataset.tf) || 0,
-      install: { channel: b.dataset.channel, message_id: Number(b.dataset.install),
-                 name: b.dataset.ea, file: b.dataset.file },
-    }); };
+    b.onclick = () => installFromCatalog(b);
   }
   openSheet(detailDlg);
   document.getElementById('detail-body').scrollTop = 0;
