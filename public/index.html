@@ -194,6 +194,7 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .needed { outline: 2px solid var(--color-warn) !important; outline-offset: -1px; }
 .setrow.dirty input { border-color: var(--color-accent); color: var(--color-accent); }
 .setrow .noted { border-bottom: 1px dotted var(--color-muted-fg); }
+.setrow .noted.common { border-bottom-style: dashed; color: var(--color-muted-fg); }
 .labeledit { grid-column: 1 / -1; display: grid; gap: 4px; margin-top: 4px; }
 .labeledit input { width: 100%; padding: 4px 7px; text-align: left; font-size: 12px;
   font-family: var(--font-body); background: var(--color-background);
@@ -3360,6 +3361,49 @@ const headingText = k => String(k).replace(/^[>#*=~\s-]+|[:=\s]+$/g, '')
    exactly those two options and nothing else. If the EA is set to a value your
    note does not mention, that value is offered too, marked as what it currently
    is, because the note is your reading and the EA is the fact. */
+/* Labelling seventy EAs one input at a time is not a plan. Most of these
+   settings are the same handful MQL5 has always had, spelled a dozen ways, and
+   naming those costs nothing and risks little: "InpMagicNumber" is a magic
+   number in every EA ever written.
+
+   It is still a convention rather than a reading, so it is shown as one - a
+   different mark from your own notes, and it says so on hover. Anything you
+   write yourself replaces it, and nothing here ever supplies enum options,
+   because what 0 and 1 mean is exactly the part that differs per EA. */
+const GLOSSARY = [
+  [/^(inp)?magic(number|no)?$/, 'Magic number'],
+  [/^(inp)?(fixed)?lot(s|size)?$/, 'Lot size'],
+  [/^(inp)?(auto|dynamic)lot(s|size)?$/, 'Auto lot'],
+  [/^(inp)?lot(multiplier|factor)$/, 'Lot multiplier'],
+  [/^(inp)?risk(percent|perc|pct|level)?$/, 'Risk'],
+  [/^(inp)?(max)?slippage$/, 'Slippage (points)'],
+  [/^(inp)?deviation$/, 'Max deviation (points)'],
+  [/^(inp)?(max)?spread(limit|max)?$/, 'Max spread'],
+  [/^(inp)?(take)?profit(points|pips)?$/, 'Take profit'],
+  [/^(inp)?tp(points|pips)?$/, 'Take profit'],
+  [/^(inp)?stop(loss)?(points|pips)?$/, 'Stop loss'],
+  [/^(inp)?sl(points|pips)?$/, 'Stop loss'],
+  [/^(inp)?(use)?trail(ing)?(stop|step)?$/, 'Trailing stop'],
+  [/^(inp)?(use)?breakeven$/, 'Break even'],
+  [/^(inp)?(max)?(trades|positions|orders)(open|total)?$/, 'Max open trades'],
+  [/^(inp)?(max)?(draw)?down(percent)?$/, 'Max drawdown'],
+  [/^(inp)?grid(step|distance|size)$/, 'Grid step'],
+  [/^(inp)?(start|begin)(hour|time)$/, 'Trading starts'],
+  [/^(inp)?(end|stop|finish)(hour|time)$/, 'Trading ends'],
+  [/^(inp)?(gmt|time)offset$/, 'GMT offset'],
+  [/^(inp)?(trade)?comment$/, 'Trade comment'],
+  [/^(inp)?(use)?news(filter)?$/, 'News filter'],
+  [/^(inp)?(min|max)?equity(stop|protect)?$/, 'Equity stop'],
+];
+
+const glossaryKey = key => String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function commonLabel(key) {
+  const flat = glossaryKey(key);
+  for (const [re, label] of GLOSSARY) if (re.test(flat)) return label;
+  return '';
+}
+
 const OPTION_RE = /(-?\d+)\s*[=:]\s*([^,;\n]{1,40})/g;
 
 function noteOptions(note) {
@@ -3405,12 +3449,15 @@ function renderEaRows() {
     if (isHeading(i)) return `<h3>${esc(headingText(i.k))}</h3>`;
     const long = String(i.v).length > 18 || /[a-z]{4,}\s/i.test(String(i.v));
     const noted = eaNoteFor(i.k);
-    const shown = noted?.label || prettyKey(i.k);
+    const common = noted?.label ? '' : commonLabel(i.k);
+    const shown = noted?.label || common || prettyKey(i.k);
     return `<div class="setrow${long ? ' text' : ''}" data-row="${n}">
       <label for="ea-in-${n}">
-        <span class="${noted ? 'noted' : ''}"${noted?.from
+        <span class="${noted?.label ? 'noted' : common ? 'noted common' : ''}"${noted?.from
           ? ` title="your note, taken on ${esc(noted.from)} - a different build of this EA"`
-          : noted ? ' title="your note"' : ''}>${esc(shown)}</span>${isMagicKey(i.k)
+          : noted?.label ? ' title="your note"'
+          : common ? ' title="the usual meaning of this name in MQL5, not read from this EA'
+                     + ' - label it yourself to be certain"' : ''}>${esc(shown)}</span>${isMagicKey(i.k)
         ? ' <span class="badge" title="how the EA recognises its own trades - not editable from here">locked</span>'
         : ''}<small>${esc(i.k)}${noted?.note ? ' · ' + esc(noted.note) : ''}${
           noted?.from ? ' · noted on ' + esc(shortEa(noted.from)) : ''}</small></label>
