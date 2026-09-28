@@ -127,6 +127,41 @@ def _version_sort(v: str | None) -> tuple:
     return tuple(int(x) for x in re.findall(r"\d+", v)) or (0,)
 
 
+def variant_of(post: dict) -> str:
+    """Which build of a product this post is: platform, and compiled or source.
+
+    The Gold Reaper shipped a compiled v4.6 for MT5 and a v4.1 source release for
+    MT4. Collapsed into one family they became a single row headlined by whichever
+    came last - a source release for the wrong platform, with the EA anyone would
+    actually run hidden inside it as an older "version". They are not versions of
+    each other: one is a file MT4 loads, one is a file MT5 loads, and one is not a
+    file either terminal can load at all until it is compiled.
+
+    The file name decides the platform where there is one, because a post whose
+    text mentions both gets tagged with both.
+    """
+    names = " ".join((f.get("name") or "") for f in post.get("files") or [])
+    name = post.get("name") or ""
+    tags = set(post.get("tags") or [])
+
+    platform = ""
+    for hay in (names, name):
+        low = hay.lower()
+        has4, has5 = "mt4" in low, "mt5" in low
+        if has4 != has5:
+            platform = "mt4" if has4 else "mt5"
+            break
+    if not platform:
+        if ("mt4" in tags) != ("mt5" in tags):
+            platform = "mt4" if "mt4" in tags else "mt5"
+        else:
+            platform = "any"
+
+    source = "source-code" in tags or re.search(r"\bsource\s*code\b", name, re.I) \
+        or bool(re.search(r"\.mq[45]\b", names, re.I))
+    return f"{platform}{'/src' if source else ''}"
+
+
 def group_products(posts: list[dict]) -> list[dict]:
     """One entry per product, newest post as the headline, versions listed inside.
 
@@ -141,7 +176,9 @@ def group_products(posts: list[dict]) -> list[dict]:
         if not key:
             out.append(p)
             continue
-        fam = canon.get(key, key)
+        # families group by product; a family still splits per build, so an MT4
+        # release never swallows the MT5 one and source never fronts for an EA
+        fam = f"{canon.get(key, key)}#{variant_of(p)}"
         head = index.get(fam)
 
         if head is None:
