@@ -2245,6 +2245,9 @@ def working_expertmode() -> int:
     return _working_expertmode()
 
 
+_UNSURE = "unsure"      # attached, with no word from MT5 either way yet
+
+
 def _attach_and_verify(body: dict) -> dict:
     """Attach, then check MT5 actually loaded the EA rather than just naming it.
 
@@ -2284,43 +2287,66 @@ def _attach_and_verify(body: dict) -> dict:
     # second and a half later called a successful attach a failure. Poll instead,
     # and take the manager's own view as corroboration: a chart reporting the EA's
     # inputs can only be a chart with that EA loaded on it.
-    loaded, waited = None, 0.0
-    while waited < 12:
+    # Three outcomes, not two. MT5 logs "loaded successfully" when it worked and
+    # says so plainly when it did not - "cannot open", "not found" - and between
+    # those two there is silence, which means the Journal has not caught up or
+    # the manager could not read the chart's inputs. Silence used to be reported
+    # as failure, which sent people to refresh a Navigator that was already fine
+    # while their EA sat on the chart trading.
+    trouble = ("cannot open", "not found", "failed to load", "no such file",
+               "cannot load", "access denied")
+    loaded, refused, waited = None, "", 0.0
+    while waited < 15:
         time.sleep(1.5)
         waited += 1.5
-        log = read_terminal_log(200, "loaded successfully", "terminal")
+        log = read_terminal_log(300, expert, "terminal")
         if not log.get("ok"):
             loaded = None
             break
-        if any(expert in line for line in (log.get("lines") or [])):
+        lines = log.get("lines") or []
+        if any("loaded successfully" in line.lower() for line in lines):
             loaded = True
             break
-        loaded = False
+        hit = next((line for line in lines
+                    if any(word in line.lower() for word in trouble)), "")
+        if hit:
+            loaded, refused = False, hit.strip()
+            break
         charts = read_charts()
         if any(c.get("expert") == expert and (c.get("inputs") or [])
                for c in (charts.get("charts") or [])):
             loaded = True
             break
 
-    if loaded:
+    if loaded is None and waited >= 15:
+        loaded = _UNSURE                           # no proof either way, 15s of looking
+
+    if loaded is True:
         try:
             from . import installer
             installer.note_loaded(expert)          # stop warning about this one
         except Exception:                          # noqa: BLE001
             pass
 
-    if loaded:
+    if loaded is True or loaded is _UNSURE:
         answer.update(_settle_magic(expert, before, magic_number))
 
     if loaded is False:
         answer["ok"] = False
-        answer["error"] = (f"the chart is set to {expert} but MT5 never loaded it - "
-                           "in MT5 right-click Navigator > Expert Advisors > Refresh, "
-                           "then attach again")
+        answer["error"] = (f"MT5 refused to load {expert}: {refused}"
+                           if refused else
+                           f"MT5 could not load {expert} - in MT5 right-click Navigator"
+                           " > Expert Advisors > Refresh, then attach again")
         answer["chart_open"] = True
     elif loaded is None:
         answer["message"] = (answer.get("message", "") +
                              " (could not read the Journal to confirm it loaded)")
+    elif loaded is _UNSURE:
+        # the chart is open and set to it; whether the EA is running is a
+        # question the row itself answers in a few seconds
+        answer["verified"] = False
+        answer["message"] = (f"chart opened with {expert} - MT5 has not logged it loading"
+                             " yet, so check the row in a moment. Nothing was undone.")
     return answer
 
 
