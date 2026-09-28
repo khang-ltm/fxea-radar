@@ -1440,7 +1440,7 @@ def read_ea_notes(expert: str = "") -> dict:
     return {"ok": True, "expert": expert, "notes": mine, "inherited": inherited}
 
 
-def write_ea_note(expert: str, key: str, label, note) -> dict:
+def write_ea_note(expert: str, key: str, label, note, origin: str = "you") -> dict:
     """Store one label. Free text about an input, never a value to apply."""
     expert, key = str(expert or "").strip(), str(key or "").strip()
     if not expert or not key:
@@ -1463,6 +1463,7 @@ def write_ea_note(expert: str, key: str, label, note) -> dict:
         rows.pop(key, None)                      # clearing both removes the note
     else:
         rows[key] = {"label": label_text, "note": note_text,
+                     "origin": origin if origin in ("you", "source") else "you",
                      "at": datetime.now(timezone.utc).date().isoformat()}
     if not rows:
         known.pop(expert, None)
@@ -1475,6 +1476,105 @@ def write_ea_note(expert: str, key: str, label, note) -> dict:
         return {"ok": False, "error": f"could not save: {exc}"}
     return {"ok": True, "expert": expert, "key": key,
             "message": "note saved" if (label_text or note_text) else "note cleared"}
+
+
+def known_input_keys(expert: str) -> list:
+    """The settings this EA is known to have, from the last time it ran here."""
+    have = read_ea_inputs(expert)
+    keys = [i.get("k") for i in (have.get("items") or []) if i.get("k")]
+    if keys:
+        return keys
+    status = read_charts()
+    for c in (status.get("charts") or []):
+        if c.get("expert") == expert:
+            return [i.get("k") for i in (c.get("inputs") or []) if i.get("k")]
+    return []
+
+
+def _mq5_in(folder: pathlib.Path) -> list:
+    try:
+        return [f for f in folder.rglob("*.mq5") if f.is_file()][:60]
+    except OSError:
+        return []
+
+
+def read_source_labels(expert: str, channel: str = "", message_id=None,
+                       apply: bool = True) -> dict:
+    """Take an EA's parameter labels from its own source, where one exists.
+
+    This is the only faithful answer to a dialog that reads "LotCalcMode = 0".
+    The .ex5 has the labels compressed past reading, but a source release spells
+    them out - the comment after each input is the label MT5 shows, and the enum
+    behind a setting names its own members. Read as text; nothing is compiled,
+    installed or run.
+
+    The source is looked for in MQL5/Experts first, then fetched from the
+    channel post if one is named - into a temporary folder that is deleted
+    either way, because wanting an EA's labels is not the same as wanting its
+    code on the machine.
+    """
+    import shutil
+    import tempfile
+
+    from . import installer, mq5_inputs
+
+    expert = str(expert or "").strip()
+    if not expert:
+        return {"ok": False, "error": "which EA?"}
+    keys = known_input_keys(expert)
+    if not keys:
+        return {"ok": False, "error": "this EA has never reported its settings here,"
+                                      " so there is nothing to check a source against"}
+
+    candidates: list = []
+    root = experts_dir()
+    if root is not None:
+        candidates = _mq5_in(root)
+
+    tmp = None
+    try:
+        if not candidates and channel and message_id is not None:
+            tmp = pathlib.Path(tempfile.mkdtemp(prefix="fxea_src_"))
+            archive, why = asyncio.run(installer._download(str(channel), int(message_id), tmp))
+            if archive is None:
+                return {"ok": False, "error": why or "could not fetch that post"}
+            found, why = installer._unpack(archive, tmp / "out", [])
+            if why:
+                return {"ok": False, "error": why}
+            candidates = [f for f in found if f.suffix.lower() == ".mq5"] or _mq5_in(tmp / "out")
+
+        if not candidates:
+            return {"ok": False, "error": "no .mq5 found - this EA ships compiled only,"
+                                          " so its labels cannot be read from outside MT5"}
+
+        best, best_rows, best_why = None, {}, ""
+        for f in candidates:
+            try:
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            rows = mq5_inputs.parse_inputs(text)
+            ok, why = mq5_inputs.verify_against(rows, keys)
+            if ok and len(rows) > len(best_rows):
+                best, best_rows, best_why = f, rows, why
+        if best is None:
+            return {"ok": False, "error": "found source, but it declares different"
+                                          " settings than this EA reports"}
+
+        wrote = 0
+        if apply:
+            for key, row in best_rows.items():
+                if key not in keys:
+                    continue                    # never label a setting this EA lacks
+                out = write_ea_note(expert, key, row.get("label"), row.get("note"),
+                                    origin="source")
+                wrote += 1 if out.get("ok") else 0
+        return {"ok": True, "expert": expert, "source": best.name, "labels": len(best_rows),
+                "applied": wrote, "match": best_why,
+                "message": f"read {wrote} label(s) from {best.name} - {best_why}"}
+    finally:
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def read_ea_inputs(expert: str) -> dict:
@@ -2631,7 +2731,7 @@ class Handler(BaseHTTPRequestHandler):
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
                           "attach", "forget", "install", "uninstall", "savepreset",
                           "delpreset", "update", "reload", "cancelpending",
-                          "closeposition", "setnote"):
+                          "closeposition", "setnote", "readlabels"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
         if action in ("pause", "unload", "setinputs", "attach", "forget",
@@ -2652,6 +2752,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if action == "closeposition":
             self._json(close_positions((body.get("tickets") or [])[:50]))
+            return
+
+        if action == "readlabels":
+            self._json(read_source_labels(str(body.get("expert") or ""),
+                                          str(body.get("channel") or ""),
+                                          body.get("message_id")))
             return
 
         if action == "setnote":

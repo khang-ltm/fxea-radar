@@ -195,6 +195,7 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .setrow.dirty input { border-color: var(--color-accent); color: var(--color-accent); }
 .setrow .noted { border-bottom: 1px dotted var(--color-muted-fg); }
 .setrow .noted.common { border-bottom-style: dashed; color: var(--color-muted-fg); }
+.setrow .noted.fromsrc { border-bottom-style: solid; border-bottom-color: var(--color-accent); }
 .labeledit { grid-column: 1 / -1; display: grid; gap: 4px; margin-top: 4px; }
 .labeledit input { width: 100%; padding: 4px 7px; text-align: left; font-size: 12px;
   font-family: var(--font-body); background: var(--color-background);
@@ -838,6 +839,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div class="foot__row">
       <select id="ea-preset" hidden aria-label="Preset to import"></select>
       <button class="btn" id="ea-import" hidden>Import .set</button>
+      <button class="chip ghost" id="ea-source" title="read this EA's real labels from its source release">From source</button>
       <button class="chip ghost" id="ea-label">Label settings</button>
       <button class="btn foot__right" id="ea-reset" hidden>Undo changes</button>
       <button class="btn btn--primary" id="ea-save" disabled>Apply</button>
@@ -3453,8 +3455,10 @@ function renderEaRows() {
     const shown = noted?.label || common || prettyKey(i.k);
     return `<div class="setrow${long ? ' text' : ''}" data-row="${n}">
       <label for="ea-in-${n}">
-        <span class="${noted?.label ? 'noted' : common ? 'noted common' : ''}"${noted?.from
+        <span class="${noted?.label ? (noted.origin === 'source' ? 'noted fromsrc' : 'noted')
+                       : common ? 'noted common' : ''}"${noted?.from
           ? ` title="your note, taken on ${esc(noted.from)} - a different build of this EA"`
+          : noted?.origin === 'source' ? " title=\"read from this EA's own source - the label MT5 shows\""
           : noted?.label ? ' title="your note"'
           : common ? ' title="the usual meaning of this name in MQL5, not read from this EA'
                      + ' - label it yourself to be certain"' : ''}>${esc(shown)}</span>${isMagicKey(i.k)
@@ -3546,6 +3550,27 @@ function refreshEaButtons() {
         + ' at the price the old settings chose - cancel them in MT5 if that is wrong.'
       : 'Applying reloads the EA: open trades stay, its memory of them does not.';
 }
+
+/* The labels MT5 shows exist in one readable place: the EA's own source, when
+   the channel posted one. The agent reads the file as text - nothing compiled,
+   nothing installed - checks that it declares the settings this EA actually
+   reports, and keeps what it found. Where no source exists, this says so
+   rather than inventing anything. */
+document.getElementById('ea-source').onclick = async (e) => {
+  if (!EA_EDIT) return;
+  const btn = e.currentTarget;
+  const was = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'reading…';
+  // a source release for this EA in the catalog, if the channel posted one
+  const src = POSTS.find(x => isSource(x) && x.message_id && sameEa(x.name, EA_EDIT.expert));
+  const r = await managerPost({ action: 'readlabels', expert: EA_EDIT.expert,
+                                channel: src?.channel || '', message_id: src?.message_id || null });
+  btn.disabled = false;
+  btn.textContent = was;
+  toast(r.ok ? r.message : `No labels read\n${r.error || r.message}`, r.ok ? 'ok' : 'warn', 10);
+  if (r.ok) { await loadEaNotes(EA_EDIT.expert); renderEaRows(); }
+};
 
 document.getElementById('ea-label').onclick = () => {
   if (EA_LABELLING) { saveEaNotes(); return; }
