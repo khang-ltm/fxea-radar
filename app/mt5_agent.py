@@ -1336,6 +1336,19 @@ def _remember_inputs(charts: list) -> None:
             pass
 
 
+_EA_NOISE = {"ea", "mt4", "mt5", "v", "ver", "version", "final", "fix", "pro",
+             "robot", "free", "fx", "the"}
+
+
+def _ea_words(name) -> tuple:
+    """The product words of an EA name, version and packaging dropped, so two
+    builds of one EA compare equal and two different EAs never do."""
+    cleaned = re.sub(r"[@#]\S+", " ", str(name or "")).lower()
+    cleaned = re.sub(r"[^a-z0-9]+", " ", cleaned)
+    return tuple(w for w in cleaned.split()
+                 if w not in _EA_NOISE and not any(c.isdigit() for c in w))
+
+
 def _fill_from_memory(charts: list) -> None:
     """Lend a chart its last known settings when it reports none.
 
@@ -1377,6 +1390,91 @@ def _fill_from_memory(charts: list) -> None:
                 c["magic"] = 0
             if c.get("magic"):
                 c["magic_remembered"] = True
+
+
+EA_NOTES_FILE = config.DATA_DIR / "ea_notes.json"
+NOTE_LABEL_MAX = 120
+NOTE_TEXT_MAX = 300
+
+
+def _clean_note(value, limit: int) -> str:
+    """No control characters, no runaway length. Notes are shown as text and
+    stored as JSON; neither wants a newline or a megabyte."""
+    text = "".join(ch for ch in str(value or "") if ch.isprintable())
+    return text.strip()[:limit]
+
+
+def read_ea_notes(expert: str = "") -> dict:
+    """What you wrote down about an EA's settings.
+
+    MT5 renders its parameter dialog from the compiled .ex5 - the label after an
+    input, the names behind an enum - and none of that survives compilation in
+    any form readable from outside the terminal. This is the honest substitute:
+    whatever you noted while looking at that dialog, kept against the EA and the
+    input name, shown next to the raw key rather than in place of it. Nothing
+    here is guessed, and nothing here changes what an EA is set to.
+    """
+    try:
+        known = json.loads(EA_NOTES_FILE.read_text(encoding="utf-8")) \
+            if EA_NOTES_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        known = {}
+    if not isinstance(known, dict):
+        return {"ok": True, "expert": expert, "notes": {}, "inherited": {}}
+    if not expert:
+        return {"ok": True, "experts": sorted(known)}
+
+    mine = known.get(expert) or {}
+    # A note taken on one build of an EA usually still applies to the next, but
+    # "usually" is not "verified": it comes back separately, so the page can say
+    # where it came from instead of presenting it as read from this EA.
+    inherited: dict = {}
+    if mine is not None:
+        want = _ea_words(expert)
+        for other, notes in known.items():
+            if other == expert or not want or _ea_words(other) != want:
+                continue
+            for key, row in (notes or {}).items():
+                if key not in mine and key not in inherited:
+                    inherited[key] = {**row, "from": other}
+    return {"ok": True, "expert": expert, "notes": mine, "inherited": inherited}
+
+
+def write_ea_note(expert: str, key: str, label, note) -> dict:
+    """Store one label. Free text about an input, never a value to apply."""
+    expert, key = str(expert or "").strip(), str(key or "").strip()
+    if not expert or not key:
+        return {"ok": False, "error": "an EA and a setting name are required"}
+    if not _INPUT_KEY.match(key):
+        return {"ok": False, "error": f"bad setting name: {key}"}
+
+    try:
+        known = json.loads(EA_NOTES_FILE.read_text(encoding="utf-8")) \
+            if EA_NOTES_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        known = {}
+    if not isinstance(known, dict):
+        known = {}
+
+    label_text = _clean_note(label, NOTE_LABEL_MAX)
+    note_text = _clean_note(note, NOTE_TEXT_MAX)
+    rows = known.setdefault(expert, {})
+    if not label_text and not note_text:
+        rows.pop(key, None)                      # clearing both removes the note
+    else:
+        rows[key] = {"label": label_text, "note": note_text,
+                     "at": datetime.now(timezone.utc).date().isoformat()}
+    if not rows:
+        known.pop(expert, None)
+
+    try:
+        EA_NOTES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        EA_NOTES_FILE.write_text(json.dumps(known, ensure_ascii=False, indent=1),
+                                 encoding="utf-8")
+    except OSError as exc:
+        return {"ok": False, "error": f"could not save: {exc}"}
+    return {"ok": True, "expert": expert, "key": key,
+            "message": "note saved" if (label_text or note_text) else "note cleared"}
 
 
 def read_ea_inputs(expert: str) -> dict:
@@ -2424,6 +2522,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(orphan_pendings())
             return
+        if path == "/api/eanotes":
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            want = parse_qs(urlparse(self.path).query).get("expert", [""])[0]
+            self._json(read_ea_notes(want))
+            return
         if path == "/api/eainputs":
             if not self._authorized():
                 self._json({"ok": False, "error": "unauthorized"}, 401)
@@ -2526,7 +2631,7 @@ class Handler(BaseHTTPRequestHandler):
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
                           "attach", "forget", "install", "uninstall", "savepreset",
                           "delpreset", "update", "reload", "cancelpending",
-                          "closeposition"):
+                          "closeposition", "setnote"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
         if action in ("pause", "unload", "setinputs", "attach", "forget",
@@ -2547,6 +2652,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if action == "closeposition":
             self._json(close_positions((body.get("tickets") or [])[:50]))
+            return
+
+        if action == "setnote":
+            self._json(write_ea_note(str(body.get("expert") or ""),
+                                     str(body.get("key") or ""),
+                                     body.get("label"), body.get("note")))
             return
 
         if action == "cancelpending":

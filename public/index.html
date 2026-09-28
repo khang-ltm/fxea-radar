@@ -193,6 +193,12 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .setrow input:focus { outline: 2px solid var(--color-accent); outline-offset: -1px; }
 .needed { outline: 2px solid var(--color-warn) !important; outline-offset: -1px; }
 .setrow.dirty input { border-color: var(--color-accent); color: var(--color-accent); }
+.setrow .noted { border-bottom: 1px dotted var(--color-muted-fg); }
+.labeledit { grid-column: 1 / -1; display: grid; gap: 4px; margin-top: 4px; }
+.labeledit input { width: 100%; padding: 4px 7px; text-align: left; font-size: 12px;
+  font-family: var(--font-body); background: var(--color-background);
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  color: var(--color-foreground); }
 .setrow input[readonly] { background: none; border-color: transparent; color: var(--color-muted-fg);
    cursor: default; }
 .setrow.text { grid-template-columns: 1fr; gap: 4px; }
@@ -824,6 +830,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div class="foot__row">
       <select id="ea-preset" hidden aria-label="Preset to import"></select>
       <button class="btn" id="ea-import" hidden>Import .set</button>
+      <button class="chip ghost" id="ea-label">Label settings</button>
       <button class="btn foot__right" id="ea-reset" hidden>Undo changes</button>
       <button class="btn btn--primary" id="ea-save" disabled>Apply</button>
     </div>
@@ -3200,6 +3207,89 @@ document.getElementById('attach-go').onclick = async () => {
   }
 };
 
+/* MT5 builds its parameter dialog from the compiled .ex5: the comment after an
+   input becomes the label, an enum's members become the dropdown. None of that
+   survives compilation in any form readable from outside the terminal - the
+   chart template carries "LotCalcMode=0" and nothing else, which is why this
+   dialog shows raw names and numbers.
+
+   So the labels are yours. Write down what MT5's own dialog says once, against
+   the EA and the input name, and every later edit of that EA shows it. Nothing
+   is guessed: an unlabelled setting keeps its raw name, and a note carried over
+   from another build of the same EA says so rather than passing itself off as
+   read from this one. */
+let EA_NOTES = { notes: {}, inherited: {} };
+let EA_LABELLING = false;
+
+function eaNoteFor(key) {
+  const own = EA_NOTES.notes?.[key];
+  if (own && (own.label || own.note)) return own;
+  const other = EA_NOTES.inherited?.[key];
+  return other && (other.label || other.note) ? other : null;
+}
+
+async function loadEaNotes(expert) {
+  EA_NOTES = { notes: {}, inherited: {} };
+  if (!MT5?.url || !expert) return;
+  try {
+    const d = await (await fetch(`${MT5.url}/api/eanotes?expert=${encodeURIComponent(expert)}`, {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    })).json();
+    if (d?.ok) {
+      EA_NOTES = { notes: d.notes || {}, inherited: d.inherited || {} };
+      if (EA_EDIT) renderEaRows();
+    }
+  } catch { /* labels are a convenience; the dialog works without them */ }
+}
+
+function renderEaLabelFields() {
+  const btn = document.getElementById('ea-label');
+  if (btn) btn.textContent = EA_LABELLING ? 'Save labels' : 'Label settings';
+  for (const row of document.querySelectorAll('#ea-inputs .setrow')) {
+    const n = Number(row.dataset.row);
+    const key = EA_EDIT?.inputs?.[n]?.k;
+    if (!key) continue;
+    const old = row.querySelector('.labeledit');
+    if (old) old.remove();
+    if (!EA_LABELLING) continue;
+    const noted = eaNoteFor(key) || {};
+    const box = document.createElement('div');
+    box.className = 'labeledit';
+    box.innerHTML = `<input data-note-label="${esc(key)}" placeholder="label, as MT5 shows it"
+        value="${esc(noted.label || '')}" spellcheck="false">
+      <input data-note-text="${esc(key)}" placeholder="what the values mean, e.g. 0 = fixed lots"
+        value="${esc(noted.note || '')}" spellcheck="false">`;
+    row.appendChild(box);
+  }
+}
+
+async function saveEaNotes() {
+  if (!EA_EDIT) return;
+  const jobs = [];
+  for (const el of document.querySelectorAll('[data-note-label]')) {
+    const key = el.dataset.noteLabel;
+    const note = document.querySelector(`[data-note-text="${CSS.escape(key)}"]`);
+    const was = eaNoteFor(key) || {};
+    const label = el.value.trim(), text = (note?.value || '').trim();
+    // an inherited note left untouched stays inherited rather than being copied
+    const mine = EA_NOTES.notes?.[key] || {};
+    if (label === (mine.label || '') && text === (mine.note || '')) continue;
+    if (!EA_NOTES.notes?.[key] && label === (was.label || '') && text === (was.note || '')) continue;
+    jobs.push(managerPost({ action: 'setnote', expert: EA_EDIT.expert, key, label, note: text }));
+  }
+  if (!jobs.length) { EA_LABELLING = false; renderEaLabelFields(); return; }
+  const done = await Promise.all(jobs);
+  const bad = done.filter(r => !r.ok);
+  toast(bad.length ? `${bad.length} label(s) refused: ${bad[0].error}`
+                   : `${done.length} label${done.length === 1 ? '' : 's'} saved`,
+        bad.length ? 'bad' : 'ok');
+  EA_LABELLING = false;
+  await loadEaNotes(EA_EDIT.expert);
+  renderEaLabelFields();
+  refreshEaButtons();
+}
+
 /* The name on the .ex5 and the name the chart reports are usually the same and
    sometimes are not - a renamed file, a @tag, a build suffix - so an exact match
    is not enough to find what was just attached. */
@@ -3253,6 +3343,51 @@ const isHeading = i => !String(i.v ?? '').trim();
 const headingText = k => String(k).replace(/^[>#*=~\s-]+|[:=\s]+$/g, '')
   .replace(/^input group/i, 'Group').trim() || 'Settings';
 
+/* Drawn as a function rather than inline, because a label arriving from the
+   agent a moment after the dialog opens has to be able to redraw the rows. */
+function renderEaRows() {
+  if (!EA_EDIT) return;
+  const dirty = new Set([...document.querySelectorAll('#ea-inputs .setrow.dirty')]
+    .map(r => Number(r.dataset.row)));
+  const typed = {};
+  for (const el of document.querySelectorAll('#ea-inputs input[data-idx]')) {
+    typed[Number(el.dataset.idx)] = el.value;          // never lose a half-typed value
+  }
+  document.getElementById('ea-inputs').innerHTML = EA_EDIT.inputs.map((i, n) => {
+    if (isHeading(i)) return `<h3>${esc(headingText(i.k))}</h3>`;
+    const long = String(i.v).length > 18 || /[a-z]{4,}\s/i.test(String(i.v));
+    const noted = eaNoteFor(i.k);
+    const shown = noted?.label || prettyKey(i.k);
+    return `<div class="setrow${long ? ' text' : ''}" data-row="${n}">
+      <label for="ea-in-${n}">
+        <span class="${noted ? 'noted' : ''}"${noted?.from
+          ? ` title="your note, taken on ${esc(noted.from)} - a different build of this EA"`
+          : noted ? ' title="your note"' : ''}>${esc(shown)}</span>${isMagicKey(i.k)
+        ? ' <span class="badge" title="how the EA recognises its own trades - not editable from here">locked</span>'
+        : ''}<small>${esc(i.k)}${noted?.note ? ' · ' + esc(noted.note) : ''}${
+          noted?.from ? ' · noted on ' + esc(shortEa(noted.from)) : ''}</small></label>
+      <input id="ea-in-${n}" data-idx="${n}" value="${esc(i.v)}" spellcheck="false"
+        ${EA_EDIT.open || isMagicKey(i.k) ? 'readonly' : ''}></div>`;
+  }).join('');
+
+  for (const el of document.querySelectorAll('#ea-inputs input[data-idx]')) {
+    el.oninput = () => {
+      const n = Number(el.dataset.idx);
+      el.closest('.setrow').classList.toggle('dirty', el.value !== EA_EDIT.inputs[n].v);
+      refreshEaButtons();
+    };
+  }
+
+  for (const [idx, value] of Object.entries(typed)) {
+    const el = document.getElementById('ea-in-' + idx);
+    if (el && value !== undefined) el.value = value;
+  }
+  for (const n of dirty) {
+    document.querySelector(`#ea-inputs .setrow[data-row="${n}"]`)?.classList.add('dirty');
+  }
+  renderEaLabelFields();
+}
+
 function openEaSettings(chartId, opts) {
   const c = CHARTS.find(x => String(x.chart) === String(chartId));
   if (!c) return;
@@ -3265,24 +3400,8 @@ function openEaSettings(chartId, opts) {
   document.getElementById('ea-sub').textContent =
     `${c.symbol} ${tfName(c.period)} · magic ${magicOf(c) || 'unknown'} · ${EA_EDIT.inputs.length} settings`;
 
-  document.getElementById('ea-inputs').innerHTML = EA_EDIT.inputs.map((i, n) => {
-    if (isHeading(i)) return `<h3>${esc(headingText(i.k))}</h3>`;
-    const long = String(i.v).length > 18 || /[a-z]{4,}\s/i.test(String(i.v));
-    return `<div class="setrow${long ? ' text' : ''}" data-row="${n}">
-      <label for="ea-in-${n}">${esc(prettyKey(i.k))}${isMagicKey(i.k)
-        ? ' <span class="badge" title="how the EA recognises its own trades - not editable from here">locked</span>'
-        : ''}<small>${esc(i.k)}</small></label>
-      <input id="ea-in-${n}" data-idx="${n}" value="${esc(i.v)}" spellcheck="false"
-        ${EA_EDIT.open || isMagicKey(i.k) ? 'readonly' : ''}></div>`;
-  }).join('');
-
-  for (const el of document.querySelectorAll('#ea-inputs input')) {
-    el.oninput = () => {
-      const n = Number(el.dataset.idx);
-      el.closest('.setrow').classList.toggle('dirty', el.value !== EA_EDIT.inputs[n].v);
-      refreshEaButtons();
-    };
-  }
+  loadEaNotes(c.expert);
+  renderEaRows();
   refreshEaButtons();
   fillPresetPicker();
   openSheet(eaDlg);
@@ -3291,7 +3410,9 @@ function openEaSettings(chartId, opts) {
 function eaChanges() {
   const out = {};
   if (!EA_EDIT) return out;
-  for (const el of document.querySelectorAll('#ea-inputs input')) {
+  // [data-idx] only: the label boxes are inputs too, and they are notes about
+  // settings, never settings
+  for (const el of document.querySelectorAll('#ea-inputs input[data-idx]')) {
     const n = Number(el.dataset.idx);
     const k = EA_EDIT.inputs[n].k;
     if (isMagicKey(k)) continue;          // identity, not a setting: never sent
@@ -3328,6 +3449,16 @@ function refreshEaButtons() {
         + ' at the price the old settings chose - cancel them in MT5 if that is wrong.'
       : 'Applying reloads the EA: open trades stay, its memory of them does not.';
 }
+
+document.getElementById('ea-label').onclick = () => {
+  if (EA_LABELLING) { saveEaNotes(); return; }
+  EA_LABELLING = true;
+  renderEaLabelFields();
+  document.getElementById('ea-label').textContent = 'Save labels';
+  document.getElementById('ea-note').textContent =
+    "MT5's own labels are compiled into the .ex5 and cannot be read from here."
+    + ' Write what its dialog says; it is kept against this EA and shown every time.';
+};
 
 document.getElementById('ea-close').onclick = async () => {
   if (EA_EDIT?.review) {
