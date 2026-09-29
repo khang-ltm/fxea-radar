@@ -30,6 +30,12 @@
 #property version   "1.31"
 #property strict
 
+// The version the status file reports, and therefore the one the page shows.
+// It was written out by hand in two other places, so a build could - and did -
+// run 1.31 while telling everybody it was 1.30. Keep this equal to the
+// #property above; MQL5 will not take a macro there.
+#define MANAGER_VERSION "1.31"
+
 input int  TimerSeconds    = 1;      // how often to poll for a command
 input int  StatusEverySecs = 5;      // how often to rewrite the status file
 input bool AllowControl    = true;   // master switch for pause / run
@@ -60,7 +66,7 @@ int OnInit()
    EventSetTimer(MathMax(1, TimerSeconds));
    if(VerboseLog)
       PrintFormat("FxeaManager %s on chart %I64d (%s). Control allowed: %s",
-                  "1.30", g_self_chart, _Symbol, AllowControl ? "yes" : "no");
+                  MANAGER_VERSION, g_self_chart, _Symbol, AllowControl ? "yes" : "no");
    WriteStatus();
    return(INIT_SUCCEEDED);
   }
@@ -352,7 +358,7 @@ void WriteStatus()
    string json = StringFormat(
                     "{\"at\":\"%s\",\"version\":\"%s\",\"login\":%I64d,\"algo_trading\":%s,"
                     "\"control_allowed\":%s,\"charts\":[%s],\"paused\":[%s]}",
-                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), "1.30",
+                    TimeToString(TimeGMT(), TIME_DATE | TIME_SECONDS), MANAGER_VERSION,
                     AccountInfoInteger(ACCOUNT_LOGIN),
                     TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false",
                     AllowControl ? "true" : "false",
