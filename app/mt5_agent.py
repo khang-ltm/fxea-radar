@@ -1161,6 +1161,108 @@ def _remote_sha_cached(fresh: bool = False, max_age: float = 600.0) -> str:
     return sha
 
 
+def self_check() -> dict:
+    """Every part of this setup, in one answer, each saying ok or why not.
+
+    Nothing here is new information: the agent's build, the manager's heartbeat,
+    the terminal, the disk, the Telegram login and the orphaned orders were all
+    readable already. They were readable in five different places, in small
+    print, on tabs nobody had open - which is how a manager stayed dead for five
+    days while the page it controls looked fine, and how a build reported a
+    version it was not running. Scattered facts are not a status.
+
+    Each line is state, a verdict, and what to do about it. "unknown" is its own
+    verdict: a check that could not run has not passed.
+    """
+    rows = []
+
+    def row(name, state, detail, fix=""):
+        rows.append({"name": name, "state": state, "detail": detail, "fix": fix})
+
+    health = agent_health()
+    here, there = health.get("code") or "unknown", health.get("remote") or ""
+    if there and health.get("update"):
+        row("agent", "warn", f"running {here}, GitHub has {there}",
+            "press the update button next to Connect")
+    else:
+        row("agent", "ok" if here != "unknown" else "unknown",
+            f"running {here}" + (", current with GitHub" if there else
+                                 " (GitHub not reachable to compare)"))
+
+    status = read_charts()
+    age = round(status.get("age_seconds") or 0)
+    if not status.get("ok"):
+        row("manager", "bad", status.get("error") or "not reporting",
+            "in MT5: Navigator > Expert Advisors > Refresh, then drag FxeaManager onto a chart")
+    elif not status.get("attached"):
+        row("manager", "bad", f"silent for {age}s - every control is dead",
+            "in MT5: drag FxeaManager onto a chart again")
+    else:
+        live = [c for c in (status.get("charts") or []) if c.get("expert") and not c.get("is_manager")]
+        row("manager", "ok", f"v{status.get('version') or '?'}, answered {age}s ago,"
+                             f" {len(live)} EA{'' if len(live) == 1 else 's'} on charts")
+
+    if health.get("terminal_build"):
+        row("terminal", "ok", f"MT5 build {health['terminal_build']}")
+    else:
+        row("terminal", "warn" if _terminal_running() else "bad",
+            "running, but not answering the API" if _terminal_running() else "not running",
+            "start MetaTrader 5 on the VPS")
+
+    algo = working_expertmode()
+    row("algo trading", "ok" if algo else "warn",
+        "on" if algo else "off - EAs will load but not trade",
+        "" if algo else "turn on Algo Trading in MT5's toolbar")
+
+    free = health.get("disk_free_gb")
+    if free is None:
+        row("disk", "unknown", "could not read the disk")
+    else:
+        row("disk", "ok" if free >= 3 else "bad", f"{free} GB free",
+            "" if free >= 3 else "MT5 stops writing history below about 1 GB - clear space now")
+
+    watchdog = health.get("watchdog")
+    row("watchdog", "ok" if watchdog else "warn" if watchdog is False else "unknown",
+        "registered - the agent restarts itself" if watchdog
+        else "not registered - a crashed agent stays down" if watchdog is False
+        else "could not check",
+        "" if watchdog else "re-run install_vps.ps1 on the VPS")
+
+    try:
+        from . import installer
+        row("telegram", "ok" if installer.session_ready() else "warn",
+            "logged in - EAs can be installed from the channel" if installer.session_ready()
+            else "no login - installing from the catalog is off",
+            "" if installer.session_ready() else "run python -m app.tg_login_vps on the VPS")
+        row("unpacker", "ok" if installer._extractor(".rar") else "warn",
+            "7-Zip found" if installer._extractor(".rar") else "no .rar unpacker",
+            "" if installer._extractor(".rar") else "install 7-Zip on the VPS")
+    except Exception as exc:                                   # noqa: BLE001
+        row("telegram", "unknown", f"could not check: {exc}")
+
+    row("PIN", "ok" if AGENT_PIN else "warn",
+        "set - trading actions ask for it" if AGENT_PIN
+        else "not set - trading actions are refused outright",
+        "" if AGENT_PIN else "set MT5_PIN in .env.mt5 and restart the agent")
+
+    orphans = orphan_pendings()
+    if not orphans.get("ok"):
+        row("orders", "unknown", orphans.get("error") or "could not check")
+    elif orphans.get("count"):
+        row("orders", "warn", f"{orphans['count']} pending order(s) with no EA to manage them",
+            "clear them from Running now")
+    else:
+        row("orders", "ok", "every pending order belongs to a running EA")
+
+    worst = "ok"
+    for r in rows:
+        if r["state"] == "bad" or (r["state"] == "warn" and worst == "ok") \
+                or (r["state"] == "unknown" and worst == "ok"):
+            worst = r["state"] if r["state"] != "unknown" else "warn"
+    return {"ok": True, "at": datetime.now(timezone.utc).isoformat(),
+            "state": worst, "rows": rows}
+
+
 def agent_health(fresh: bool = False) -> dict:
     """Version, watchdog, disk. The three things worth knowing about the VPS.
 
@@ -2671,6 +2773,12 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 want = parse_qs(urlparse(self.path).query).get("name", [""])[0]
                 self._json(read_preset(want))
+            return
+        if path == "/api/selfcheck":
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            self._json(self_check())
             return
         if path == "/api/agent":
             if not self._authorized():

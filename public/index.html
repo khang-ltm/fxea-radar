@@ -155,6 +155,22 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
   font-family: var(--font-head); font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 52vh; overflow: auto; }
 .logbox b { color: var(--color-accent); font-weight: 600; }
+.checks { display: grid; gap: 1px; background: var(--color-border);
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  overflow: hidden; }
+.check { display: grid; grid-template-columns: 14px 120px 1fr; gap: var(--space-2);
+  align-items: baseline; padding: 7px 10px; background: var(--color-surface);
+  font-size: 12.5px; }
+.check__dot { width: 8px; height: 8px; border-radius: 50%; align-self: center;
+  background: var(--color-muted-fg); }
+.check--ok .check__dot { background: var(--color-accent); }
+.check--warn .check__dot { background: var(--color-warn); }
+.check--bad .check__dot { background: var(--color-destructive); }
+.check__name { color: var(--color-muted-fg); }
+.check__fix { display: block; color: var(--color-warn); font-size: 11.5px; margin-top: 2px; }
+.check--ok.num, .num.check--ok { color: var(--color-accent); }
+.num.check--warn { color: var(--color-warn); }
+.num.check--bad { color: var(--color-destructive); }
 .deadbar[hidden] { display: none; }
 .deadbar:not([hidden]) { display: block; margin: 0 0 var(--space-3);
   padding: 9px 12px; border-radius: var(--radius-sm); font-size: 13px;
@@ -667,6 +683,11 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
   </div>
 
   <div id="view-mt5" hidden style="min-width: 0">
+    <section class="mt5sect">
+      <h2>System check <span class="num" id="checkstate"></span>
+        <button class="chip ghost" id="checkagain">Check again</button></h2>
+      <div id="checklist"></div>
+    </section>
     <section class="mt5bar">
       <div class="mt5bar__head">
         <span class="mt5bar__title">
@@ -1704,6 +1725,7 @@ const mt5Time = iso => {
 const magicOf = row => row?.magic_text || row?.magic;
 const mt5Magic = v => (!Number(v) ? '<span class="badge">manual</span>' : esc(String(v)));
 
+document.getElementById('checkagain').onclick = () => loadSelfCheck(true);
 document.getElementById('mt5conf').onclick = () => {
   let url = MT5?.url || window.__MT5_URL__ || '';
   if (!url) {
@@ -3922,6 +3944,45 @@ async function managerPost(body) {
   }
 }
 
+/* Everything here was readable before, in five places, in small print, on tabs
+   nobody had open - which is how a dead manager went unnoticed for five days
+   and a build reported a version it was not running. Scattered facts are not a
+   status, so this is the one screen that answers "is any of this working". */
+let checkAt = 0;
+
+async function loadSelfCheck(force) {
+  const box = document.getElementById('checklist');
+  if (!box || !MT5?.url) return;
+  if (!force && Date.now() - checkAt < 55000) return;
+  checkAt = Date.now();
+  let d;
+  try {
+    d = await (await fetch(`${MT5.url}/api/selfcheck`, {
+      credentials: 'include',
+      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
+    })).json();
+  } catch (e) {
+    setHtml('checklist', `<div class="empty">The agent did not answer: ${esc(e.message)}</div>`);
+    return;
+  }
+  if (!d?.ok) {
+    setHtml('checklist', `<div class="empty">${esc(d?.error || 'no answer')}</div>`);
+    return;
+  }
+
+  const word = { ok: 'all good', warn: 'needs a look', bad: 'something is down' }[d.state] || '';
+  const tag = document.getElementById('checkstate');
+  tag.textContent = word;
+  tag.className = `num check--${d.state}`;
+  setHtml('checklist', `<div class="checks">${(d.rows || []).map(r => `
+    <div class="check check--${esc(r.state)}">
+      <span class="check__dot"></span>
+      <span class="check__name">${esc(r.name)}</span>
+      <span class="check__detail">${esc(r.detail)}${r.fix
+        ? `<span class="check__fix">${esc(r.fix)}</span>` : ''}</span>
+    </div>`).join('')}</div>`);
+}
+
 /* ── orders with nobody left to manage them ────────────────────────────────
    Hooking the pending-order question onto the Pause command only answered it
    when Pause itself reported success - and an EA can also be removed in MT5 by
@@ -4248,7 +4309,7 @@ function showTab(name) {
   if (!isEas) document.getElementById('stale').hidden = true;
 
   if (TAB === 'picks') renderPicks();
-  if (TAB === 'mt5') { showSub(SUBTAB); loadMt5(); }
+  if (TAB === 'mt5') { showSub(SUBTAB); loadMt5(); loadSelfCheck(); }
   if (TAB === 'myea') { showEaSub(EASUB); loadEas().then(loadCharts); }
 }
 
@@ -4350,6 +4411,8 @@ document.addEventListener('visibilitychange', () => {
 syncMt5Transport();
 setInterval(loadMt5, 10000);       // fallback only: skipped while a stream is live
 setInterval(renderMt5Freshness, 5000);   // turns wordy only if frames stop
+setInterval(() => { if (TAB === 'mt5' && document.visibilityState === 'visible') loadSelfCheck(); },
+            60000);
 
 load();
 // The catalog is rebuilt twice a day, so re-fetching every 2 min was pointless
