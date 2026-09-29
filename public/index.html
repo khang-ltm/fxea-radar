@@ -155,6 +155,14 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
   font-family: var(--font-head); font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 52vh; overflow: auto; }
 .logbox b { color: var(--color-accent); font-weight: 600; }
+.checkfold { all: unset; cursor: pointer; display: inline-flex; align-items: center;
+  gap: 6px; font: inherit; color: inherit; }
+.checkfold:hover { color: var(--color-info); }
+.checkfold__arrow { display: inline-block; width: 0; height: 0; border-left: 5px solid currentColor;
+  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  transition: transform .12s ease; }
+.checkfold[aria-expanded="true"] .checkfold__arrow { transform: rotate(90deg); }
+#checklist[hidden] { display: none; }
 .checks { display: grid; gap: 1px; background: var(--color-border);
   border: 1px solid var(--color-border); border-radius: var(--radius-sm);
   overflow: hidden; }
@@ -684,7 +692,9 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 
   <div id="view-mt5" hidden style="min-width: 0">
     <section class="mt5sect">
-      <h2>System check <span class="num" id="checkstate"></span>
+      <h2><button class="checkfold" id="checkfold" aria-expanded="true"
+          aria-controls="checklist"><span class="checkfold__arrow"></span>System check</button>
+        <span class="num" id="checkstate"></span>
         <button class="chip ghost" id="checkagain">Check again</button></h2>
       <div id="checklist"></div>
     </section>
@@ -1726,6 +1736,11 @@ const magicOf = row => row?.magic_text || row?.magic;
 const mt5Magic = v => (!Number(v) ? '<span class="badge">manual</span>' : esc(String(v)));
 
 document.getElementById('checkagain').onclick = () => loadSelfCheck(true);
+document.getElementById('checkfold').onclick = () => {
+  const open = document.getElementById('checklist').hidden;
+  localStorage.setItem(CHECK_FOLD_KEY, open ? '1' : '0');
+  showCheck(open);
+};
 document.getElementById('mt5conf').onclick = () => {
   let url = MT5?.url || window.__MT5_URL__ || '';
   if (!url) {
@@ -3949,6 +3964,25 @@ async function managerPost(body) {
    and a build reported a version it was not running. Scattered facts are not a
    status, so this is the one screen that answers "is any of this working". */
 let checkAt = 0;
+const CHECK_FOLD_KEY = 'fxea_check_open';
+
+/* Ten green lines are worth one line of screen; ten lines with a red one in
+   them are worth all of it. So it folds itself by what it found, unless you
+   have said otherwise - and what you say is remembered. */
+function foldCheck(state) {
+  const saved = localStorage.getItem(CHECK_FOLD_KEY);
+  const open = saved === null ? state !== 'ok' : saved === '1';
+  showCheck(open);
+}
+
+function showCheck(open) {
+  const list = document.getElementById('checklist');
+  const btn = document.getElementById('checkfold');
+  if (!list || !btn) return;
+  list.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+  document.getElementById('checkagain').hidden = !open;
+}
 
 async function loadSelfCheck(force) {
   const box = document.getElementById('checklist');
@@ -3972,7 +4006,12 @@ async function loadSelfCheck(force) {
 
   const word = { ok: 'all good', warn: 'needs a look', bad: 'something is down' }[d.state] || '';
   const tag = document.getElementById('checkstate');
-  tag.textContent = word;
+  const bad = (d.rows || []).filter(r => r.state === 'bad').length;
+  const warn = (d.rows || []).filter(r => r.state !== 'ok' && r.state !== 'bad').length;
+  // folded, this line is the whole panel: it has to carry the count
+  tag.textContent = word + (bad || warn
+    ? ` · ${[bad ? `${bad} down` : '', warn ? `${warn} to look at` : ''].filter(Boolean).join(', ')}`
+    : ` · ${(d.rows || []).length} checks`);
   tag.className = `num check--${d.state}`;
   setHtml('checklist', `<div class="checks">${(d.rows || []).map(r => `
     <div class="check check--${esc(r.state)}">
@@ -3981,6 +4020,7 @@ async function loadSelfCheck(force) {
       <span class="check__detail">${esc(r.detail)}${r.fix
         ? `<span class="check__fix">${esc(r.fix)}</span>` : ''}</span>
     </div>`).join('')}</div>`);
+  foldCheck(d.state);
 }
 
 /* ── orders with nobody left to manage them ────────────────────────────────
