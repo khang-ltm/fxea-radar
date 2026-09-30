@@ -318,12 +318,21 @@ def _name_ea(row: dict, owners: dict) -> dict:
     magic = str(row.get("magic") or "")
     owner = owners.get(magic)
     if not owner and magic.isdigit():
-        # the appended-strategy scheme again: 11111122 belongs to 111111
+        bases = [k for k in owners if str(k).isdigit()]
+        # the appended-strategy scheme: 11111122 belongs to 111111
         for known, info in owners.items():
-            if known.isdigit() and len(known) >= 5 and magic.startswith(known) \
-                    and 0 < len(magic) - len(known) <= 3:
+            if known.isdigit() and magic_in_family(known, magic, bases):
                 owner = info
                 break
+        # and the counting-up scheme: a chart set to 77701 also trades 77704,
+        # 77705 and 77706. The order check has always known that; history
+        # naming did not, so an EA's own strategies belonged to nobody and its
+        # drawdown was measured on a fraction of what it actually traded.
+        if not owner:
+            block = int(magic) // 100
+            rivals = [k for k in bases if int(k) // 100 == block]
+            if len(rivals) == 1:
+                owner = owners[rivals[0]]
     if owner:
         row["ea"] = owner.get("ea")
         row["ea_symbol"] = owner.get("symbol")
