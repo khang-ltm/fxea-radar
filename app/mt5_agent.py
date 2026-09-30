@@ -470,10 +470,18 @@ def _positions_of(closed_rows: list, magics, cutoff: float) -> tuple:
                            + float(row.get("commission") or 0)))
         if entry is None or not opened_at:
             continue
+        # side is the opening deal's direction. Where an older payload lacks it,
+        # fall back to the closing deal and invert: MT5 closes a buy with a sell,
+        # so taking that at face value turns every long position into a short and
+        # manufactures losses out of winning trades.
+        side = str(row.get("side") or "").lower()
+        if side in ("buy", "sell"):
+            kind = 0 if side == "buy" else 1
+        else:
+            kind = 1 if str(row.get("type", "")).lower() == "buy" else 0
         positions.append({"symbol": row.get("symbol"), "volume": row.get("volume") or 0,
                           "entry": float(entry), "opened_at": opened_at,
-                          "closed_at": closed_at,
-                          "type": 0 if str(row.get("type", "")).lower() == "buy" else 1})
+                          "closed_at": closed_at, "type": kind})
     return positions, closes
 
 
@@ -800,7 +808,11 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
                 comment_of_position[pid] = cm
             if pid not in open_of_position:
                 opened = datetime.fromtimestamp(int(d.get("time") or 0), tz=timezone.utc)
-                open_of_position[pid] = (float(d.get("price") or 0), opened.isoformat())
+                # the opening deal's direction IS the position's; the closing
+                # one is its mirror, and reading the mirror prices every long
+                # as a short
+                open_of_position[pid] = (float(d.get("price") or 0), opened.isoformat(),
+                                         int(d.get("type") or 0))
 
     for dl in deals:
         d = _as_dict(dl)
@@ -838,7 +850,7 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
         legs.setdefault(magic, []).append((when.timestamp(), net))
         day = when.astimezone(local).date().isoformat()
         by_day[day] = round(by_day.get(day, 0.0) + net, 2)
-        entry_price, opened_at = open_of_position.get(pid, (None, ""))
+        entry_price, opened_at, opened_type = open_of_position.get(pid, (None, "", None))
         closed.append({
             "ticket": d.get("position_id") or d.get("ticket"),
             "symbol": sym,
@@ -848,6 +860,8 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
             "price_open": entry_price,
             "price_close": d.get("price"),
             "opened_at": opened_at,
+            # what the position was, not what closing it looked like
+            "side": POSITION_TYPE.get(opened_type, "") if opened_type is not None else "",
             "profit": net,
             "magic": magic,
             "comment": cm,
