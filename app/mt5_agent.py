@@ -512,6 +512,28 @@ def open_positions_of(mt5, magics) -> list:
     return out
 
 
+def deepest_over(closed_rows: list, magics, hours: int) -> dict:
+    """The worst any one basket of this EA went, across the whole window.
+
+    One long rebuild gets whatever bars the terminal happens to hold - here
+    five days of a thirty-day request - and calls the shallow result it can
+    see a maximum. A basket is hours long, so its bars come back whole; the
+    window is therefore measured one basket at a time.
+    """
+    from . import basket_dd
+
+    positions, closes = _positions_of(closed_rows, magics, 0)
+    with _ipc_lock:
+        mt5 = _connect()
+        if mt5 is None:
+            return {"ok": False, "reason": "terminal not reachable"}
+        positions += open_positions_of(mt5, magics)
+        try:
+            return basket_dd.worst_over_cycles(mt5, positions, closes, hours)
+        except Exception as exc:                               # noqa: BLE001
+            return {"ok": False, "reason": f"could not rebuild: {exc}"}
+
+
 def last_basket(closed_rows: list, magics) -> dict:
     """The most recent stretch where this EA held anything: its cost and result."""
     from . import basket_dd
@@ -915,6 +937,7 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
           # and closed green, which is exactly the case the others report as zero
           rebuilt = rebuilt_drawdown(closed, magics, dd_hours)
           basket = last_basket(closed, magics)
+          deepest = deepest_over(closed, magics, dd_hours)
           by_name[name] = {"magics": sorted(magics), "trades": whole["trades"],
                            "net": whole["net"], "dd_realised": whole["dd"],
                            "dd_floating": floats.get("dd"),
@@ -938,7 +961,11 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
                          "dd_worst_miss": rebuilt.get("worst_miss"),
                          "dd_partial": bool(rebuilt.get("partial")),
                          "dd_bars_from": rebuilt.get("bars_from"),
-                           "dd_worst": rebuilt.get("worst") if rebuilt.get("ok") else None,
+                           # basket by basket: the only pass whose bars are whole
+                           "dd_worst": deepest.get("worst") if deepest.get("ok")
+                                       else (rebuilt.get("worst") if rebuilt.get("ok") else None),
+                           "dd_worst_when": deepest.get("when"),
+                           "dd_baskets": deepest.get("baskets"),
                            "dd_banked_only": both.get("banked_only", True),
                            # what the last basket cost to hold, whatever the window
                            "last": {k: basket.get(k) for k in
