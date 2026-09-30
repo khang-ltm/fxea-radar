@@ -280,7 +280,8 @@ def _read_state_locked(now: float) -> dict:
 DEAL_ENTRY_OUT = (1, 3)          # OUT and OUT_BY: the leg that realises a result
 
 
-def _add_dd(row: dict, realised: dict, floating: dict, legs: dict) -> dict:
+def _add_dd(row: dict, realised: dict, floating: dict, legs: dict,
+            hours: int = DD_WINDOW_HOURS) -> dict:
     """Both halves on one magic's row, and the single curve they make together."""
     magic = int(row.get("magic") or 0)
     got_r = realised.get(magic)
@@ -292,7 +293,7 @@ def _add_dd(row: dict, realised: dict, floating: dict, legs: dict) -> dict:
     # the same one-curve measure the per-EA figures use: a magic banked down and
     # carrying down at once was down both at once, and the larger of the two
     # halves is not that number
-    both = intraday_drawdown(legs, [magic])
+    both = intraday_drawdown(legs, [magic], hours)
     row["dd"] = both["dd"]
     row["dd_from"] = both.get("from")
     row["dd_banked_only"] = both.get("banked_only", True)
@@ -443,6 +444,65 @@ def combined_floating(magics, hours: int = DD_WINDOW_HOURS) -> dict:
     return {"dd": drawdown_of(points), "samples": len(points),
             "since": int(points[0][0]), "worst": round(min(v for _t, v in points), 2),
             "magics": seen}
+
+
+def _positions_of(closed_rows: list, magics, cutoff: float) -> tuple:
+    """Positions and banked results for these magics, from history and the book."""
+    want = {int(m) for m in magics}
+    positions, closes = [], []
+    for row in closed_rows:
+        try:
+            magic = int(row.get("magic") or 0)
+        except (TypeError, ValueError):
+            continue
+        if magic not in want:
+            continue
+        closed_at = _epoch_of(row.get("closed_at"))
+        opened_at = _epoch_of(row.get("opened_at"))
+        entry = row.get("price_open")
+        if closed_at and closed_at >= cutoff:
+            closes.append((closed_at, float(row.get("profit") or 0)
+                           + float(row.get("swap") or 0)
+                           + float(row.get("commission") or 0)))
+        if entry is None or not opened_at:
+            continue
+        positions.append({"symbol": row.get("symbol"), "volume": row.get("volume") or 0,
+                          "entry": float(entry), "opened_at": opened_at,
+                          "closed_at": closed_at,
+                          "type": 0 if str(row.get("type", "")).lower() == "buy" else 1})
+    return positions, closes
+
+
+def open_positions_of(mt5, magics) -> list:
+    want = {int(m) for m in magics}
+    out = []
+    try:
+        for p in mt5.positions_get() or ():
+            d = _as_dict(p)
+            if int(d.get("magic") or 0) in want:
+                out.append({"symbol": d.get("symbol"), "volume": d.get("volume") or 0,
+                            "entry": float(d.get("price_open") or 0),
+                            "opened_at": int(d.get("time") or 0), "closed_at": None,
+                            "type": int(d.get("type") or 0)})
+    except Exception:                                          # noqa: BLE001
+        pass
+    return out
+
+
+def last_basket(closed_rows: list, magics) -> dict:
+    """The most recent stretch where this EA held anything: its cost and result."""
+    from . import basket_dd
+
+    positions, closes = _positions_of(closed_rows, magics, 0)
+    with _ipc_lock:
+        mt5 = _connect()
+        if mt5 is None:
+            return {"ok": False, "reason": "terminal not reachable"}
+        positions += open_positions_of(mt5, magics)
+        try:
+            return basket_dd.last_cycle(mt5, positions, closes)
+        except Exception as exc:                               # noqa: BLE001
+            return {"ok": False, "reason": f"could not rebuild: {exc}"}
 
 
 def rebuilt_drawdown(closed_rows: list, magics, hours: int = DD_WINDOW_HOURS) -> dict:
@@ -803,8 +863,11 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
         return round(sum(v for k, v in by_day.items()
                          if datetime.fromisoformat(k).date() >= cutoff), 2)
 
-    realised = realised_drawdowns(legs)
-    floating = floating_drawdowns()
+    # The dip is measured over whatever period was asked for, not a fixed day:
+    # a month's drawdown is the question when a month is on screen.
+    window = max(1, int(days)) * 24
+    realised = realised_drawdowns(legs, window)
+    floating = floating_drawdowns(window)
     # and the same question asked of whole EAs rather than single magics: an EA
     # numbering its strategies 111111, 11111122, 11111133 is one thing losing
     # money, not three, and its drawdown is its combined curve's
@@ -815,12 +878,13 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
             groups.setdefault(named, []).append(magic)
     by_name = {}
     for name, magics in groups.items():
-        whole = combined_drawdown(legs, magics)
-        floats = combined_floating(magics)
-        both = intraday_drawdown(legs, magics)
+        whole = combined_drawdown(legs, magics, window)
+        floats = combined_floating(magics, window)
+        both = intraday_drawdown(legs, magics, window)
         # the rebuilt curve is the one that can see a basket that was deep down
         # and closed green, which is exactly the case the others report as zero
-        rebuilt = rebuilt_drawdown(closed, magics)
+        rebuilt = rebuilt_drawdown(closed, magics, window)
+        basket = last_basket(closed, magics)
         by_name[name] = {"magics": sorted(magics), "trades": whole["trades"],
                          "net": whole["net"], "dd_realised": whole["dd"],
                          "dd_floating": floats.get("dd"),
@@ -837,7 +901,12 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
                                       else "closed trades only",
                          "dd_why": rebuilt.get("reason", ""),
                          "dd_worst": rebuilt.get("worst") if rebuilt.get("ok") else None,
-                         "dd_banked_only": both.get("banked_only", True)}
+                         "dd_banked_only": both.get("banked_only", True),
+                         # what the last basket cost to hold, whatever the window
+                         "last": {k: basket.get(k) for k in
+                                  ("dd", "worst", "net", "trades", "started", "ended",
+                                   "open_now", "cycles_seen")} if basket.get("ok")
+                                 else {"why": basket.get("reason")}}
     data = {
         "ok": True,
         "at": datetime.now(timezone.utc).isoformat(),
@@ -852,10 +921,10 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
             "week": window(7),
             "month": window(30),
         },
-        "by_ea": sorted((tag_magic(_name_ea(_add_dd(e, realised, floating, legs), owners))
+        "by_ea": sorted((tag_magic(_name_ea(_add_dd(e, realised, floating, legs, window), owners))
                          for e in by_ea.values()),
                         key=lambda e: e["profit"]),
-        "dd_hours": DD_WINDOW_HOURS,
+        "dd_hours": window,
         "dd_by_ea": by_name,
         "by_day": [{"date": k, "profit": v} for k, v in sorted(by_day.items(), reverse=True)][:60],
         "closed": [tag_magic(c) for c in closed[:2000]],

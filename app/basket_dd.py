@@ -115,12 +115,24 @@ def reconstruct(mt5, positions: list, closes: list, hours: int = 24,
             return {"ok": False, "reason": f"MT5 would not price {p['symbol']}"}
         priced.append({**p, "per_point": value, "step": step})
 
-    minutes = sorted({t for sym in bars for t in bars[sym]})
+    # Only the minutes something was open matter, and over a month that is a
+    # small fraction of them: walking every minute of thirty days for an EA that
+    # held trades for six hours is work nobody needs done.
+    live_minutes = set()
+    for p in priced:
+        first = int(p["opened_at"]) // 60 * 60
+        last = int(p.get("closed_at") or now.timestamp()) // 60 * 60
+        held = bars.get(p["symbol"]) or {}
+        live_minutes |= {t for t in held if first <= t <= last}
+    minutes = sorted(live_minutes)
     if not minutes:
-        return {"ok": False, "reason": "no minutes to walk"}
+        return {"ok": False, "reason": "no minutes where a trade was open"}
 
     banked, at, series = 0.0, 0, []
     ordered = sorted(closes, key=lambda c: c[0])
+    # money banked before the first watched minute is already part of the curve
+    while ordered and minutes and ordered[0][0] < minutes[0]:
+        banked = round(banked + ordered.pop(0)[1], 2)
     for minute in minutes:
         while at < len(ordered) and ordered[at][0] <= minute:
             banked = round(banked + ordered[at][1], 2)
@@ -147,3 +159,59 @@ def reconstruct(mt5, positions: list, closes: list, hours: int = 24,
     return {"ok": True, "dd": dd, "worst": round(min(v for _t, v in series), 2),
             "trough": trough, "minutes": len(series),
             "positions": len(priced), "from": minutes[0]}
+
+
+def cycles(positions: list, now_ts: float) -> list:
+    """Split an EA's positions into the stretches where it held anything.
+
+    A grid's basket and a plain EA's single trade are the same thing measured
+    the same way: from the first position opening to the last one closing, with
+    a gap of flat in between marking the end of one and the start of the next.
+    Nothing here cares which kind of EA it is - holding or not holding is the
+    only distinction that matters, and the positions say it plainly.
+    """
+    spans = sorted(((int(p["opened_at"]), int(p.get("closed_at") or now_ts), p)
+                    for p in positions if p.get("opened_at")),
+                   key=lambda s: s[0])
+    out: list = []
+    for start, end, pos in spans:
+        if out and start <= out[-1]["end"]:
+            out[-1]["end"] = max(out[-1]["end"], end)
+            out[-1]["positions"].append(pos)
+        else:
+            out.append({"start": start, "end": end, "positions": [pos]})
+    return out
+
+
+def last_cycle(mt5, positions: list, closes: list, now=None) -> dict:
+    """What the most recent basket cost to hold, and what it paid.
+
+    This is the honest headline for a grid: not a day's worth of arithmetic, but
+    the last time it opened something, how far underwater that went before it
+    ended, and what came out. For an EA that trades one position at a time it is
+    simply that trade.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = now or datetime.now(timezone.utc)
+    runs = cycles(positions, now.timestamp())
+    if not runs:
+        return {"ok": False, "reason": "no positions to look at"}
+
+    run = runs[-1]
+    start = datetime.fromtimestamp(run["start"], tz=timezone.utc) - timedelta(minutes=1)
+    end = (datetime.fromtimestamp(run["end"], tz=timezone.utc) + timedelta(minutes=1)
+           if run["end"] < now.timestamp() else now)
+    hours = max(1, int((end - start).total_seconds() // 3600) + 1)
+
+    inside = [c for c in closes if run["start"] <= c[0] <= run["end"] + 60]
+    out = reconstruct(mt5, run["positions"], inside, hours=hours, now=end)
+    if not out.get("ok"):
+        return out
+    out.update({"started": run["start"], "ended": None if run["end"] >= now.timestamp()
+                else run["end"],
+                "open_now": run["end"] >= now.timestamp(),
+                "trades": len(run["positions"]),
+                "net": round(sum(c[1] for c in inside), 2),
+                "cycles_seen": len(runs)})
+    return out
