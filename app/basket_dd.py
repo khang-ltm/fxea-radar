@@ -163,12 +163,41 @@ def reconstruct(mt5, positions: list, closes: list, hours: int = 24,
         peak = value if peak is None else max(peak, value)
         if peak - value > dd:
             dd, trough = round(peak - value, 2), value
+    # Can the model reproduce what already happened? Every closed position has
+    # a real result, and pricing it at the minute it closed should land near
+    # that number. Where it does not, the rebuild is describing some other
+    # hour or some other contract - and a drawdown from it is a guess wearing
+    # a decimal point, which must not be shown as a measurement.
+    checked, drift, worst_miss = 0, 0.0, 0.0
+    for p in priced:
+        actual, closed_at = p.get("profit"), p.get("closed_at")
+        if actual is None or not closed_at:
+            continue
+        bar = (bars.get(p["symbol"]) or {}).get(int(closed_at) // 60 * 60)
+        if bar is None:
+            continue
+        high, low = bar
+        predicted = ((high + low) / 2 - p["entry"]) / p["step"] * p["per_point"]
+        miss = abs(predicted - float(actual))
+        checked += 1
+        drift += miss
+        worst_miss = max(worst_miss, round(miss, 2))
+    off_by = round(drift / checked, 2) if checked else None
+
+    earliest_open = min(int(p["opened_at"]) for p in priced)
     return {"ok": True, "dd": dd,
             # the deepest its own open trades stood, banked profit excluded
             "worst": round(min(v for _t, v in floating_only), 2),
             "worst_with_banked": round(min(v for _t, v in series), 2),
             "trough": trough, "minutes": len(series),
-            "positions": len(priced), "from": minutes[0]}
+            "positions": len(priced), "from": minutes[0],
+            # how far back the bars actually reached, and whether that covers
+            # the whole life of these positions
+            "bars_from": minutes[0], "first_trade": earliest_open,
+            "partial": earliest_open < minutes[0] - 60,
+            # and whether the model agrees with trades it can check
+            "checked": checked, "off_by": off_by, "worst_miss": worst_miss,
+            "trusted": bool(checked) and off_by is not None and off_by < 5}
 
 
 def cycles(positions: list, now_ts: float) -> list:

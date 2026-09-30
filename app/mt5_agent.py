@@ -490,7 +490,9 @@ def _positions_of(closed_rows: list, magics, cutoff: float) -> tuple:
             kind = 1 if str(row.get("type", "")).lower() == "buy" else 0
         positions.append({"symbol": row.get("symbol"), "volume": row.get("volume") or 0,
                           "entry": float(entry), "opened_at": opened_at,
-                          "closed_at": closed_at, "type": kind})
+                          "closed_at": closed_at, "type": kind,
+                          # kept so the rebuild can check itself against it
+                          "profit": row.get("profit")})
     return positions, closes
 
 
@@ -928,6 +930,12 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
                                         else "sampled" if not both.get("banked_only")
                                         else "closed trades only",
                            "dd_why": rebuilt.get("reason", ""),
+                         "dd_trusted": rebuilt.get("trusted"),
+                         "dd_off_by": rebuilt.get("off_by"),
+                         "dd_checked": rebuilt.get("checked"),
+                         "dd_worst_miss": rebuilt.get("worst_miss"),
+                         "dd_partial": bool(rebuilt.get("partial")),
+                         "dd_bars_from": rebuilt.get("bars_from"),
                            "dd_worst": rebuilt.get("worst") if rebuilt.get("ok") else None,
                            "dd_banked_only": both.get("banked_only", True),
                            # what the last basket cost to hold, whatever the window
