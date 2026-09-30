@@ -26,11 +26,36 @@ POSITION_BUY = 0
 
 
 def _rate_span(mt5, symbol: str, start: datetime, end: datetime):
+    """Minute bars for a window, asked for three ways.
+
+    copy_rates_range answers nothing for a symbol the terminal has not selected,
+    and nothing again when it holds the bars but not for that exact span - so a
+    plain call returning empty means "ask differently", not "no history". The
+    symbol is selected first, the range is tried, and a count-back from the end
+    is tried after that.
+    """
+    tf = getattr(mt5, "TIMEFRAME_M1", M1)
     try:
-        return mt5.copy_rates_range(symbol, getattr(mt5, "TIMEFRAME_M1", M1),
-                                    start, end) or []
+        mt5.symbol_select(symbol, True)
     except Exception:                                          # noqa: BLE001
-        return []
+        pass
+
+    for attempt in ("range", "from", "pos"):
+        try:
+            if attempt == "range":
+                rows = mt5.copy_rates_range(symbol, tf, start, end)
+            elif attempt == "from":
+                minutes = max(60, int((end - start).total_seconds() // 60) + 5)
+                rows = mt5.copy_rates_from(symbol, tf, end, minutes)
+            else:
+                minutes = max(60, int((end - start).total_seconds() // 60) + 5)
+                rows = mt5.copy_rates_from_pos(symbol, tf, 0, minutes)
+        except Exception:                                      # noqa: BLE001
+            rows = None
+        if rows is not None and len(rows) > 0:
+            start_s, end_s = start.timestamp(), end.timestamp()
+            return [r for r in rows if start_s <= int(r["time"]) <= end_s] or list(rows)
+    return []
 
 
 def _per_point(mt5, symbol: str, is_buy: bool, volume: float, entry: float):
@@ -74,7 +99,12 @@ def reconstruct(mt5, positions: list, closes: list, hours: int = 24,
     for symbol in {p["symbol"] for p in inside}:
         rows = _rate_span(mt5, symbol, start, now + timedelta(minutes=1))
         if len(rows) == 0:
-            return {"ok": False, "reason": f"no M1 history for {symbol}"}
+            why = ""
+            try:
+                why = f" ({mt5.last_error()})"
+            except Exception:                                  # noqa: BLE001
+                pass
+            return {"ok": False, "reason": f"MT5 returned no M1 bars for {symbol}{why}"}
         bars[symbol] = {int(r["time"]): (float(r["high"]), float(r["low"])) for r in rows}
 
     priced = []
