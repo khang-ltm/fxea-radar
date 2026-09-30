@@ -1674,7 +1674,12 @@ def self_check() -> dict:
 
     health = agent_health()
     here, there = health.get("code") or "unknown", health.get("remote") or ""
-    if there and health.get("update"):
+    on_disk = _disk_sha()[:7]
+    if on_disk and here != "unknown" and on_disk != here:
+        row("agent", "bad",
+            f"running {here} but {on_disk} is on disk - a restart did not take",
+            "kill python.exe running app.mt5_agent on the VPS, then start the agent task")
+    elif there and health.get("update"):
         row("agent", "warn", f"running {here}, GitHub has {there}",
             "press the update button next to Connect")
     else:
@@ -1767,7 +1772,7 @@ def agent_health(fresh: bool = False) -> dict:
     import subprocess
 
     here = _current_sha()
-    out = {"ok": True, "code": here[:7] or "unknown"}
+    out = {"ok": True, "code": here[:7] or "unknown", "on_disk": _disk_sha()[:7]}
 
     # the agent polls for its own updates, so the page could only ever say what
     # it was running, never that a fix was already waiting
@@ -3632,12 +3637,26 @@ def _promote_pending() -> str:
     return sha
 
 
-def _current_sha() -> str:
+# The sha this process started with. .agent_version is written when an update
+# is downloaded, so it describes the files on disk - and for an hour it said
+# 54591e1 while the code answering requests was two commits older, because the
+# restart had not actually happened. What is running is a property of this
+# process, so it is read once, here, and never re-read.
+_BOOTED_SHA = ""
+
+
+def _disk_sha() -> str:
+    """What the files on disk say they are."""
     f = config.ROOT / "data" / ".agent_version"
     try:
         return f.read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+
+
+def _current_sha() -> str:
+    """What this process is actually running."""
+    return _BOOTED_SHA or _disk_sha()
 
 
 def _remote_sha() -> str:
@@ -3818,6 +3837,8 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8788)
     args = ap.parse_args()
 
+    global _BOOTED_SHA
+    _BOOTED_SHA = _disk_sha()          # pinned before anything can rewrite the file
     log = _start_logging()
     promoted = _promote_pending()
     if promoted:
