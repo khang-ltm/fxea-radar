@@ -19,10 +19,28 @@ that flatters is worse than useless.
 """
 from __future__ import annotations
 
+import bisect
 from datetime import datetime, timedelta, timezone
 
 M1 = 1
 POSITION_BUY = 0
+
+
+def _bar_at(table, minute):
+    """The bar for this minute, or the last one before it.
+
+    A price from a minute ago beats no price at all: skipping every minute
+    without its own bar left holes exactly where a quiet market sat on an open
+    position, and those are the minutes a drawdown lives in.
+    """
+    if not table:
+        return None, None
+    hit = table["at"].get(minute)
+    if hit:
+        return hit
+    times = table["times"]
+    at = bisect.bisect_right(times, minute) - 1
+    return table["at"][times[at]] if at >= 0 else (None, None)
 
 
 def _rate_span(mt5, symbol: str, start: datetime, end: datetime):
@@ -105,7 +123,14 @@ def reconstruct(mt5, positions: list, closes: list, hours: int = 24,
             except Exception:                                  # noqa: BLE001
                 pass
             return {"ok": False, "reason": f"MT5 returned no M1 bars for {symbol}{why}"}
-        bars[symbol] = {int(r["time"]): (float(r["high"]), float(r["low"])) for r in rows}
+        table = {int(r["time"]): (float(r["high"]), float(r["low"])) for r in rows}
+        # Minute bars are not every minute: a quiet symbol skips them, a weekend
+        # has none, a feed has its own holes. Asking for an exact minute misses
+        # constantly - on this account it found no bar at the close of a single
+        # trade, which is why the model could never be checked against results
+        # it should reproduce. Keep the times sorted so any minute can fall
+        # back to the last bar before it.
+        bars[symbol] = {"at": table, "times": sorted(table)}
 
     priced = []
     for p in inside:
@@ -122,8 +147,9 @@ def reconstruct(mt5, positions: list, closes: list, hours: int = 24,
     for p in priced:
         first = int(p["opened_at"]) // 60 * 60
         last = int(p.get("closed_at") or now.timestamp()) // 60 * 60
-        held = bars.get(p["symbol"]) or {}
-        live_minutes |= {t for t in held if first <= t <= last}
+        held = (bars.get(p["symbol"]) or {}).get("times") or []
+        live_minutes |= set(held[bisect.bisect_left(held, first):bisect.bisect_right(held, last)])
+        live_minutes.add(last)          # the closing minute always counts
     minutes = sorted(live_minutes)
     if not minutes:
         return {"ok": False, "reason": "no minutes where a trade was open"}
@@ -149,7 +175,7 @@ def reconstruct(mt5, positions: list, closes: list, hours: int = 24,
             closed = p.get("closed_at") or float("inf")
             if not (opened <= minute + 59 and closed >= minute):
                 continue
-            high, low = bars[p["symbol"]].get(minute, (None, None))
+            high, low = _bar_at(bars.get(p["symbol"]), minute)
             if high is None:
                 continue
             # the worst this position could have stood inside the minute
@@ -173,10 +199,9 @@ def reconstruct(mt5, positions: list, closes: list, hours: int = 24,
         actual, closed_at = p.get("profit"), p.get("closed_at")
         if actual is None or not closed_at:
             continue
-        bar = (bars.get(p["symbol"]) or {}).get(int(closed_at) // 60 * 60)
-        if bar is None:
+        high, low = _bar_at(bars.get(p["symbol"]), int(closed_at) // 60 * 60)
+        if high is None:
             continue
-        high, low = bar
         predicted = ((high + low) / 2 - p["entry"]) / p["step"] * p["per_point"]
         miss = abs(predicted - float(actual))
         checked += 1
