@@ -326,6 +326,24 @@ FLOAT_SAMPLE_SECONDS = 20
 _float_lock = threading.Lock()
 
 
+def merge_same_instant(rows) -> list:
+    """Sum closes that happened at the same second into one point.
+
+    A grid closes its basket in one go: ten deals, one timestamp, and the order
+    MT5 lists them in is arbitrary. Walking them one at a time invents account
+    states that never existed - Quantum Athena's basket read -20, -36, -18, +47
+    in sequence and was reported as a 57 drawdown, when the account went from
+    +21 to +47 without ever being down at all. Whatever the truth of that
+    basket was, it happened while the trades were open, and closes cannot show
+    it.
+    """
+    at: dict[int, float] = {}
+    for when, net in rows:
+        key = int(when)
+        at[key] = round(at.get(key, 0.0) + net, 2)
+    return sorted(at.items())
+
+
 def drawdown_of(points) -> float:
     """The worst peak-to-trough fall in a series, as a positive number.
 
@@ -355,14 +373,15 @@ def realised_drawdowns(legs: dict, hours: int = DD_WINDOW_HOURS) -> dict:
         # The window opens flat, so the curve starts at nothing. Without that
         # first point an EA whose opening trade of the day lost had no drawdown
         # at all - its own loss counted as the high to measure from.
+        inside = [r for r in rows if r[0] >= cutoff]
         series, total = [(cutoff, 0.0)], 0.0
-        for when, net in sorted(rows, key=lambda r: r[0]):
-            if when < cutoff:
-                continue
+        for when, net in merge_same_instant(inside):
             total = round(total + net, 2)
             series.append((when, total))
         if len(series) > 1:
-            out[magic] = {"dd": drawdown_of(series), "trades": len(series) - 1,
+            # points on the curve are moments, not trades: a basket of ten
+            # closing together is one moment and still ten trades
+            out[magic] = {"dd": drawdown_of(series), "trades": len(inside),
                           "net": series[-1][1]}
     return out
 
@@ -380,13 +399,12 @@ def combined_drawdown(legs_by_magic: dict, magics, hours: int = DD_WINDOW_HOURS)
     for magic in magics:
         merged += legs_by_magic.get(magic, [])
     cutoff = time.time() - hours * 3600
+    inside = [r for r in merged if r[0] >= cutoff]
     series, total = [(cutoff, 0.0)], 0.0
-    for when, net in sorted(merged, key=lambda r: r[0]):
-        if when < cutoff:
-            continue
+    for when, net in merge_same_instant(inside):
         total = round(total + net, 2)
         series.append((when, total))
-    return {"dd": drawdown_of(series), "trades": len(series) - 1,
+    return {"dd": drawdown_of(series), "trades": len(inside),
             "net": series[-1][1]}
 
 
@@ -427,6 +445,73 @@ def combined_floating(magics, hours: int = DD_WINDOW_HOURS) -> dict:
             "magics": seen}
 
 
+def rebuilt_drawdown(closed_rows: list, magics, hours: int = DD_WINDOW_HOURS) -> dict:
+    """What these magics' trades were really worth while they were open.
+
+    The sampled answer only knows what it watched. This one is retroactive: MT5
+    keeps each position's entry, size, direction and both timestamps, and keeps
+    the minute bars, which together say what the basket stood at every minute
+    of the window - including the hours before anybody thought to record it.
+    """
+    from . import basket_dd
+
+    want = {int(m) for m in magics}
+    cutoff = time.time() - hours * 3600
+    positions, closes = [], []
+    for row in closed_rows:
+        try:
+            magic = int(row.get("magic") or 0)
+        except (TypeError, ValueError):
+            continue
+        if magic not in want:
+            continue
+        closed_at = _epoch_of(row.get("closed_at"))
+        opened_at = _epoch_of(row.get("opened_at"))
+        entry = row.get("price_open")
+        if closed_at and closed_at >= cutoff:
+            closes.append((closed_at, float(row.get("profit") or 0)
+                           + float(row.get("swap") or 0)
+                           + float(row.get("commission") or 0)))
+        if entry is None or not opened_at:
+            continue
+        positions.append({"symbol": row.get("symbol"), "volume": row.get("volume") or 0,
+                          "entry": float(entry), "opened_at": opened_at,
+                          "closed_at": closed_at,
+                          "type": 0 if str(row.get("type", "")).lower() == "buy" else 1})
+
+    with _ipc_lock:
+        mt5 = _connect()
+        if mt5 is None:
+            return {"ok": False, "reason": "terminal not reachable"}
+        # positions still open belong in the curve too
+        try:
+            for p in mt5.positions_get() or ():
+                d = _as_dict(p)
+                if int(d.get("magic") or 0) in want:
+                    positions.append({"symbol": d.get("symbol"),
+                                      "volume": d.get("volume") or 0,
+                                      "entry": float(d.get("price_open") or 0),
+                                      "opened_at": int(d.get("time") or 0),
+                                      "closed_at": None,
+                                      "type": int(d.get("type") or 0)})
+        except Exception:                                      # noqa: BLE001
+            pass
+        try:
+            return basket_dd.reconstruct(mt5, positions, closes, hours)
+        except Exception as exc:                               # noqa: BLE001
+            return {"ok": False, "reason": f"could not rebuild: {exc}"}
+
+
+def _epoch_of(value) -> int:
+    """ISO string or number to epoch seconds; 0 when it is neither."""
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(datetime.fromisoformat(str(value)).timestamp())
+    except (TypeError, ValueError):
+        return 0
+
+
 def intraday_drawdown(legs_by_magic: dict, magics, hours: int = DD_WINDOW_HOURS) -> dict:
     """How far down an EA actually was, counting banked and open money together.
 
@@ -449,7 +534,7 @@ def intraday_drawdown(legs_by_magic: dict, magics, hours: int = DD_WINDOW_HOURS)
     closes = []
     for magic in magics:
         closes += [r for r in legs_by_magic.get(magic, []) if r[0] >= cutoff]
-    closes.sort(key=lambda r: r[0])
+    closes = merge_same_instant(closes)
 
     with _float_lock:
         try:
@@ -733,14 +818,25 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
         whole = combined_drawdown(legs, magics)
         floats = combined_floating(magics)
         both = intraday_drawdown(legs, magics)
+        # the rebuilt curve is the one that can see a basket that was deep down
+        # and closed green, which is exactly the case the others report as zero
+        rebuilt = rebuilt_drawdown(closed, magics)
         by_name[name] = {"magics": sorted(magics), "trades": whole["trades"],
                          "net": whole["net"], "dd_realised": whole["dd"],
                          "dd_floating": floats.get("dd"),
                          "dd_since": floats.get("since"),
                          "dd_worst_open": floats.get("worst"),
-                         # the headline is the one curve that counts both halves;
-                         # the two above are what it is made of
-                         "dd": both["dd"], "dd_from": both.get("from"),
+                         # the headline is whichever curve actually saw the
+                         # open trades: rebuilt when MT5 had the bars for it,
+                         # otherwise what was sampled, otherwise closes alone
+                         "dd": rebuilt["dd"] if rebuilt.get("ok") else both["dd"],
+                         "dd_from": rebuilt.get("from") if rebuilt.get("ok")
+                                    else both.get("from"),
+                         "dd_method": "rebuilt" if rebuilt.get("ok")
+                                      else "sampled" if not both.get("banked_only")
+                                      else "closed trades only",
+                         "dd_why": rebuilt.get("reason", ""),
+                         "dd_worst": rebuilt.get("worst") if rebuilt.get("ok") else None,
                          "dd_banked_only": both.get("banked_only", True)}
     data = {
         "ok": True,
