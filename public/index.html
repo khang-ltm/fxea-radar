@@ -1969,7 +1969,6 @@ function renderMt5(d) {
   renderOrderPicks();
 }
 
-let DD_BY_EA = {};          // EA name -> its whole curve's worst dip, from the agent
 let MT5_ORDERS = [];
 let MT5_POSITIONS = [];
 const ORD_PICK = new Set();
@@ -2359,8 +2358,7 @@ async function loadEas(quiet) {
     const k = String(m);
     if (!rows.has(k)) {
       rows.set(k, { magic: m, name: '', ea: '', symbols: [], open: 0, lots: 0,
-                    floating: 0, pending: 0, trades: 0, wins: 0, realised: 0, last: '',
-                    dd: 0, ddRealised: 0, ddFloating: null, ddSince: null });
+                    floating: 0, pending: 0, trades: 0, wins: 0, realised: 0, last: '' });
     }
     return rows.get(k);
   };
@@ -2377,16 +2375,11 @@ async function loadEas(quiet) {
     if (o.comment && !r.name) r.name = o.comment;
     if (o.symbol && !r.symbols.includes(o.symbol)) r.symbols.push(o.symbol);
   }
-  DD_BY_EA = (hist?.ok && hist.dd_by_ea) || {};
   for (const e of (hist?.ok ? hist.by_ea : []) || []) {
     const r = row(e.magic || 0);
     // the agent keeps a ledger of which EA used which magic, so a deal from an
     // EA that has since been removed still says whose it was
     if (e.ea) { r.ea = e.ea; EA_BY_MAGIC[e.magic || 0] = e.ea; }
-    r.dd = Math.max(r.dd, e.dd || 0);
-    r.ddRealised = Math.max(r.ddRealised, e.dd_realised || 0);
-    if (e.dd_floating != null) r.ddFloating = Math.max(r.ddFloating || 0, e.dd_floating);
-    if (e.dd_since) r.ddSince = Math.min(r.ddSince || e.dd_since, e.dd_since);
     r.trades += e.trades || 0; r.wins += e.wins || 0; r.realised += e.profit || 0;
     if (!r.name && (e.comments || [])[0]) r.name = e.comments[0];
     for (const sym of e.symbols || []) if (!r.symbols.includes(sym)) r.symbols.push(sym);
@@ -2503,95 +2496,13 @@ function matchMagic(chart, rows, taken = new Set()) {
    down while its trades were open is only knowable if somebody was watching,
    so the agent samples it every twenty seconds and that part starts the day the
    sampling started, not before. Neither is hidden behind the other. */
-/* The agent measures a whole EA's curve - every magic it numbers for itself,
-   merged into one timeline - which is the only sum that means anything: two
-   dips on different afternoons were never one big loss, and two magics losing
-   at the same instant were. Falls back to this chart's own rows when the agent
-   is older than this. */
-function fromWholeEa(d) {
-  return { dd: d.dd || 0, ddRealised: d.dd_realised || 0,
-           ddFloating: d.dd_floating == null ? null : d.dd_floating,
-           ddSince: d.dd_since || null, whole: true, magics: (d.magics || []).length,
-           magicList: d.magics || [], bankedOnly: !!d.dd_banked_only,
-           from: d.dd_from || null, method: d.dd_method || '', worst: d.dd_worst,
-           why: d.dd_why || '', when: d.dd_worst_when || null,
-           baskets: d.dd_baskets, checked: d.dd_checked, offBy: d.dd_off_by,
-           trusted: d.dd_trusted };
-}
-
-function ddCell(r) {
-  if (!r) return '<span class="shot-none">&mdash;</span>';
-  const deep = r.worst != null ? r.worst : (r.dd ? -r.dd : null);
-  if (deep == null) return '<span class="shot-none">&mdash;</span>';
-
-  /* How the figure was arrived at changes what it is worth, so it leads. The
-     rebuild prices every position minute by minute from MT5's own bars; the
-     sampler only knows what it watched; closed trades alone know nothing about
-     what happened while a position was open. */
-  const HOW = {
-    rebuilt: "how far underwater its open trades went, priced minute by minute from MT5's bars",
-    sampled: 'how far underwater its open trades went, from samples every 20s - only what was watched',
-    'closed trades only': 'measured from closed trades alone - nothing is known about'
-      + ' dips while a position was still open',
-    failed: 'could not be measured',
-  };
-  const bits = [r.whole ? (HOW[r.method] || HOW.rebuilt) : "the worst this chart's magics went"];
-
-  if (r.whole && r.magics > 1) {
-    bits.push(`across all ${r.magics} magics it trades, priced together: ${(r.magicList || []).join(', ')}`);
-  } else if (r.whole && r.magicList?.length === 1) {
-    bits.push(`magic ${r.magicList[0]} only - trades under any other number are not known to be this EA`);
-  }
-  if (r.method === 'sampled' && r.from) {
-    const hours = (Date.now() / 1000 - r.from) / 3600;
-    if (hours < 20) {
-      bits.push(`watched for ${hours < 1 ? Math.round(hours * 60) + ' minutes'
-        : Math.round(hours) + ' hours'} so far - anything deeper before that was never seen`);
-    }
-  }
-  if (r.why) bits.push(`could not rebuild it: ${r.why}`);
-
-  const partial = r.method === 'sampled' && r.from
-    && (Date.now() / 1000 - r.from) < 20 * 3600;
-  // when it happened belongs next to how deep: a number without a date is a
-  // rumour, and the date is usually the first thing you check it against
-  if (r.when) {
-    const day = new Date(r.when * 1000);
-    bits.push(`deepest on ${day.toLocaleString(undefined, { day: 'numeric', month: 'short',
-      hour: '2-digit', minute: '2-digit' })}`);
-  }
-  if (r.baskets) bits.push(`worst of ${r.baskets} basket${r.baskets === 1 ? '' : 's'} in the window`);
-  // the model checks itself against trades whose result MT5 already knows
-  if (r.checked) {
-    bits.push(r.trusted
-      ? `matches ${r.checked} closed trades to within ${mt5Money(r.offBy, '')}`
-      : `does not reproduce closed trades well (off by ${mt5Money(r.offBy, '')}) - treat as rough`);
-  }
-
-  const cls = (deep < 0 ? 'ddbad' : '') + (partial ? ' ddpart' : '')
-    + (r.checked && !r.trusted ? ' ddpart' : '');
-  const when = r.when
-    ? ` <span class="ddwhen">${esc(new Date(r.when * 1000)
-        .toLocaleDateString(undefined, { day: 'numeric', month: 'short' }))}</span>`
-    : '';
-  const text = (deep < 0 ? '-' + mt5Money(Math.abs(deep), '') : mt5Money(0, '')) + when;
-  return `<span class="${cls.trim()}" title="${esc(bits.join(String.fromCharCode(10)))}">${text}</span>`;
-}
-
 /* Several magics per chart is the normal case, so the row shows their sum. */
 function sumRows(list) {
   if (!list.length) return null;
-  const t = { open: 0, floating: 0, trades: 0, wins: 0, realised: 0, last: '',
-              dd: 0, ddRealised: 0, ddFloating: null, ddSince: null };
+  const t = { open: 0, floating: 0, trades: 0, wins: 0, realised: 0, last: '' };
   for (const r of list) {
     t.open += r.open; t.floating += r.floating; t.trades += r.trades;
     t.wins += r.wins; t.realised += r.realised;
-    // Drawdowns are not added up: two magics at their worst on different days
-    // never cost that much together, so the honest summary is the worst one.
-    t.dd = Math.max(t.dd, r.dd || 0);
-    t.ddRealised = Math.max(t.ddRealised, r.ddRealised || 0);
-    if (r.ddFloating != null) t.ddFloating = Math.max(t.ddFloating || 0, r.ddFloating);
-    if (r.ddSince) t.ddSince = Math.min(t.ddSince || r.ddSince, r.ddSince);
     if (r.last && r.last > t.last) t.last = r.last;
   }
   return t;
@@ -3882,7 +3793,7 @@ async function loadCharts(quiet) {
   setHtml('chartstable', charts.length ? `<table class="mt5">
     <thead><tr><th>Expert</th><th>Symbol</th><th class="n">TF</th><th class="n">Open</th><th class="n">Floating</th>
       <th class="n">Trades</th><th class="n">Win%</th><th class="n">Realised 30d</th>
-      <th class="n" title="the furthest underwater this EA's open trades have been over the period below - banked profit excluded, so it does not shrink as the EA earns">Deepest 30d</th>
+
       <th>Last trade<span data-tz></span></th><th style="text-align:center">Inspect</th>
       <th style="text-align:right">Action</th></tr></thead>
     <tbody>${charts.map(c => {
@@ -3925,7 +3836,7 @@ async function loadCharts(quiet) {
       <td class="n">${r && r.trades ? r.trades : '—'}</td>
       <td class="n">${rate == null ? '—' : rate + '%'}</td>
       <td class="n ${r ? mt5Cls(r.realised) : ''}">${r && r.trades ? mt5Money(r.realised, '') : '—'}</td>
-      <td class="n">${ddCell(DD_BY_EA[c.expert] ? fromWholeEa(DD_BY_EA[c.expert]) : r)}</td>
+
       <td class="mono">${r ? esc(mt5Time(r.last)) : '—'}</td>
       <td style="text-align:center">${settings}${logs ? " " + logs : ""}</td>
       <td style="text-align:right">${c.expert

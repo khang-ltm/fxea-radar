@@ -780,7 +780,7 @@ def floating_drawdowns(hours: int = DD_WINDOW_HOURS) -> dict:
     return out
 
 
-def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
+def read_history(days: int = 30, tz_minutes: int = 0, with_dd: bool = False) -> dict:
     """Realised results from closed deals, grouped per EA.
 
     Read-only like everything else: history_deals_get only reports what already
@@ -789,7 +789,7 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
     """
     owners = magic_owners()
     now = time.time()
-    key = (days, tz_minutes)
+    key = (days, tz_minutes, with_dd)
     if (_hist_cache["data"] is not None and _hist_cache["days"] == key
             and now - _hist_cache["at"] < HISTORY_CACHE_SECONDS):
         return _hist_cache["data"]
@@ -914,69 +914,76 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
         return round(sum(v for k, v in by_day.items()
                          if datetime.fromisoformat(k).date() >= cutoff), 2)
 
-    # The dip is measured over whatever period was asked for, not a fixed day:
-    # a month's drawdown is the question when a month is on screen.
-    dd_hours = max(1, int(days)) * 24   # not `window`: that name is a helper below
-    realised = realised_drawdowns(legs, dd_hours)
-    floating = floating_drawdowns(dd_hours)
-    # and the same question asked of whole EAs rather than single magics: an EA
-    # numbering its strategies 111111, 11111122, 11111133 is one thing losing
-    # money, not three, and its drawdown is its combined curve's
-    groups: dict[str, list] = {}
-    for magic in set(list(legs) + [int(k) for k in floating]):
-        named = _name_ea({"magic": magic}, owners).get("ea")
-        if named:
-            groups.setdefault(named, []).append(magic)
-    by_name = {}
-    for name, magics in groups.items():
-      try:
-          whole = combined_drawdown(legs, magics, dd_hours)
-          floats = combined_floating(magics, dd_hours)
-          both = intraday_drawdown(legs, magics, dd_hours)
-          # the rebuilt curve is the one that can see a basket that was deep down
-          # and closed green, which is exactly the case the others report as zero
-          rebuilt = rebuilt_drawdown(closed, magics, dd_hours)
-          basket = last_basket(closed, magics)
-          deepest = deepest_over(closed, magics, dd_hours)
-          by_name[name] = {"magics": sorted(magics), "trades": whole["trades"],
-                           "net": whole["net"], "dd_realised": whole["dd"],
-                           "dd_floating": floats.get("dd"),
-                           "dd_since": floats.get("since"),
-                           "dd_worst_open": floats.get("worst"),
-                           # the headline is whichever curve actually saw the
-                           # open trades: rebuilt when MT5 had the bars for it,
-                           # otherwise what was sampled, otherwise closes alone
-                           "dd": rebuilt["dd"] if rebuilt.get("ok") else both["dd"],
-                           "dd_from": rebuilt.get("from") if rebuilt.get("ok")
-                                      else both.get("from"),
-                           "dd_method": "rebuilt" if rebuilt.get("ok")
-                                        else "sampled" if not both.get("banked_only")
-                                        else "closed trades only",
-                           "dd_why": rebuilt.get("reason", ""),
-                         # the basket-by-basket pass is the one that priced
-                         # complete bars, so its self-check is the one to report
-                         "dd_trusted": deepest.get("trusted", rebuilt.get("trusted")),
-                         "dd_off_by": deepest.get("off_by", rebuilt.get("off_by")),
-                         "dd_checked": deepest.get("checked", rebuilt.get("checked")),
-                         "dd_worst_miss": rebuilt.get("worst_miss"),
-                         "dd_partial": bool(rebuilt.get("partial")),
-                         "dd_bars_from": rebuilt.get("bars_from"),
-                           # basket by basket: the only pass whose bars are whole
-                           "dd_worst": deepest.get("worst") if deepest.get("ok")
-                                       else (rebuilt.get("worst") if rebuilt.get("ok") else None),
-                           "dd_worst_when": deepest.get("when"),
-                           "dd_baskets": deepest.get("baskets"),
-                           "dd_banked_only": both.get("banked_only", True),
-                           # what the last basket cost to hold, whatever the window
-                           "last": {k: basket.get(k) for k in
-                                    ("dd", "worst", "net", "trades", "started", "ended",
-                                     "open_now", "cycles_seen")} if basket.get("ok")
-                                   else {"why": basket.get("reason")}}
-      except Exception as exc:                                 # noqa: BLE001
-        # A drawdown is a nice-to-have on a page whose job is showing trades:
-        # it must never be the reason the history endpoint returns nothing.
-        by_name[name] = {"magics": sorted(magics), "dd": 0.0,
-                         "dd_method": "failed", "dd_why": f"{type(exc).__name__}: {exc}"}
+    # Rebuilding drawdowns means fetching minute bars for every basket, which
+    # is minutes of work on a month of trading - far too much to spend on every
+    # page load for a figure nothing is currently showing. Ask for it with
+    # ?dd=1 when something wants it.
+    dd_hours = max(1, int(days)) * 24
+    # Rebuilding a drawdown means fetching minute bars for every basket an EA
+    # ever held - minutes of work across a month, and pure waste when nothing
+    # on the page is showing the number. Ask for it with ?dd=1.
+    realised, floating, by_name = {}, {}, {}
+    if with_dd:
+        realised = realised_drawdowns(legs, dd_hours)
+        floating = floating_drawdowns(dd_hours)
+        # and the same question asked of whole EAs rather than single magics: an EA
+        # numbering its strategies 111111, 11111122, 11111133 is one thing losing
+        # money, not three, and its drawdown is its combined curve's
+        groups: dict[str, list] = {}
+        for magic in set(list(legs) + [int(k) for k in floating]):
+            named = _name_ea({"magic": magic}, owners).get("ea")
+            if named:
+                groups.setdefault(named, []).append(magic)
+        by_name = {}
+        for name, magics in groups.items():
+          try:
+              whole = combined_drawdown(legs, magics, dd_hours)
+              floats = combined_floating(magics, dd_hours)
+              both = intraday_drawdown(legs, magics, dd_hours)
+              # the rebuilt curve is the one that can see a basket that was deep down
+              # and closed green, which is exactly the case the others report as zero
+              rebuilt = rebuilt_drawdown(closed, magics, dd_hours)
+              basket = last_basket(closed, magics)
+              deepest = deepest_over(closed, magics, dd_hours)
+              by_name[name] = {"magics": sorted(magics), "trades": whole["trades"],
+                               "net": whole["net"], "dd_realised": whole["dd"],
+                               "dd_floating": floats.get("dd"),
+                               "dd_since": floats.get("since"),
+                               "dd_worst_open": floats.get("worst"),
+                               # the headline is whichever curve actually saw the
+                               # open trades: rebuilt when MT5 had the bars for it,
+                               # otherwise what was sampled, otherwise closes alone
+                               "dd": rebuilt["dd"] if rebuilt.get("ok") else both["dd"],
+                               "dd_from": rebuilt.get("from") if rebuilt.get("ok")
+                                          else both.get("from"),
+                               "dd_method": "rebuilt" if rebuilt.get("ok")
+                                            else "sampled" if not both.get("banked_only")
+                                            else "closed trades only",
+                               "dd_why": rebuilt.get("reason", ""),
+                             # the basket-by-basket pass is the one that priced
+                             # complete bars, so its self-check is the one to report
+                             "dd_trusted": deepest.get("trusted", rebuilt.get("trusted")),
+                             "dd_off_by": deepest.get("off_by", rebuilt.get("off_by")),
+                             "dd_checked": deepest.get("checked", rebuilt.get("checked")),
+                             "dd_worst_miss": rebuilt.get("worst_miss"),
+                             "dd_partial": bool(rebuilt.get("partial")),
+                             "dd_bars_from": rebuilt.get("bars_from"),
+                               # basket by basket: the only pass whose bars are whole
+                               "dd_worst": deepest.get("worst") if deepest.get("ok")
+                                           else (rebuilt.get("worst") if rebuilt.get("ok") else None),
+                               "dd_worst_when": deepest.get("when"),
+                               "dd_baskets": deepest.get("baskets"),
+                               "dd_banked_only": both.get("banked_only", True),
+                               # what the last basket cost to hold, whatever the window
+                               "last": {k: basket.get(k) for k in
+                                        ("dd", "worst", "net", "trades", "started", "ended",
+                                         "open_now", "cycles_seen")} if basket.get("ok")
+                                       else {"why": basket.get("reason")}}
+          except Exception as exc:                                 # noqa: BLE001
+            # A drawdown is a nice-to-have on a page whose job is showing trades:
+            # it must never be the reason the history endpoint returns nothing.
+            by_name[name] = {"magics": sorted(magics), "dd": 0.0,
+                             "dd_method": "failed", "dd_why": f"{type(exc).__name__}: {exc}"}
     data = {
         "ok": True,
         "at": datetime.now(timezone.utc).isoformat(),
@@ -3317,7 +3324,8 @@ class Handler(BaseHTTPRequestHandler):
                 tzmin = max(-840, min(840, int(qs.get("tz", ["0"])[0])))
             except ValueError:
                 tzmin = 0
-            self._json(read_history(days, tzmin))
+            want_dd = parse_qs(urlparse(self.path).query).get("dd", ["0"])[0] == "1"
+            self._json(read_history(days, tzmin, want_dd))
             return
         if path in ("/api/mt5", "/api/state"):
             if not self._authorized():
