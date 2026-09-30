@@ -468,21 +468,30 @@ def intraday_drawdown(legs_by_magic: dict, magics, hours: int = DD_WINDOW_HOURS)
     if not closes and not floats:
         return {"dd": 0.0, "from": None, "banked_only": True}
 
-    # the curve starts where the watching starts: flat if the window opened
-    # before any sample, otherwise at whatever the first sample found
+    # The curve is only read at the samples, and that is not a detail. A close
+    # updates the banked half instantly while the carried half is still the last
+    # sample - which, for a grid closing a basket, means the profit is added
+    # while the same positions are still counted as open. Twenty seconds of a
+    # loss the size of the whole basket, that never happened. At a sample both
+    # halves are true at the same instant, so that is where the curve is read;
+    # a close between samples simply shows up in the next one.
     start = min([c[0] for c in closes] + list(floats)) if (closes or floats) else cutoff
-    events = sorted([(when, "close", net) for when, net in closes]
-                    + [(when, "float", value) for when, value in floats.items()])
-
-    banked, carrying, series = 0.0, 0.0, []
-    for when, kind, value in events:
-        if kind == "close":
-            banked = round(banked + value, 2)
-        else:
-            carrying = value
-        series.append((when, round(banked + carrying, 2)))
-    if closes and not floats:
-        series.insert(0, (cutoff, 0.0))        # closed trades alone start flat
+    series = []
+    if floats:
+        banked, at = 0.0, 0
+        closes_sorted = sorted(closes, key=lambda r: r[0])
+        for when in sorted(floats):
+            while at < len(closes_sorted) and closes_sorted[at][0] <= when:
+                banked = round(banked + closes_sorted[at][1], 2)
+                at += 1
+            series.append((when, round(banked + floats[when], 2)))
+    else:
+        # nothing was watched, so the closed trades are the whole story and the
+        # window opens flat
+        banked, series = 0.0, [(cutoff, 0.0)]
+        for when, net in sorted(closes, key=lambda r: r[0]):
+            banked = round(banked + net, 2)
+            series.append((when, banked))
 
     return {"dd": drawdown_of(series), "from": int(start),
             "points": len(series), "banked_only": not floats,
