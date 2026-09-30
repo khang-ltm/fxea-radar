@@ -1967,6 +1967,7 @@ function renderMt5(d) {
   renderOrderPicks();
 }
 
+let DD_BY_EA = {};          // EA name -> its whole curve's worst dip, from the agent
 let MT5_ORDERS = [];
 let MT5_POSITIONS = [];
 const ORD_PICK = new Set();
@@ -2374,6 +2375,7 @@ async function loadEas(quiet) {
     if (o.comment && !r.name) r.name = o.comment;
     if (o.symbol && !r.symbols.includes(o.symbol)) r.symbols.push(o.symbol);
   }
+  DD_BY_EA = (hist?.ok && hist.dd_by_ea) || {};
   for (const e of (hist?.ok ? hist.by_ea : []) || []) {
     const r = row(e.magic || 0);
     // the agent keeps a ledger of which EA used which magic, so a deal from an
@@ -2499,9 +2501,23 @@ function matchMagic(chart, rows, taken = new Set()) {
    down while its trades were open is only knowable if somebody was watching,
    so the agent samples it every twenty seconds and that part starts the day the
    sampling started, not before. Neither is hidden behind the other. */
+/* The agent measures a whole EA's curve - every magic it numbers for itself,
+   merged into one timeline - which is the only sum that means anything: two
+   dips on different afternoons were never one big loss, and two magics losing
+   at the same instant were. Falls back to this chart's own rows when the agent
+   is older than this. */
+function fromWholeEa(d) {
+  return { dd: d.dd || 0, ddRealised: d.dd_realised || 0,
+           ddFloating: d.dd_floating == null ? null : d.dd_floating,
+           ddSince: d.dd_since || null, whole: true, magics: (d.magics || []).length };
+}
+
 function ddCell(r) {
   if (!r || (!r.dd && r.ddFloating == null)) return '<span class="shot-none">—</span>';
   const bits = [`realised ${mt5Money(r.ddRealised, '')} - from trades it closed`];
+  if (r.whole && r.magics > 1) {
+    bits.push(`measured across all ${r.magics} magics this EA trades, as one curve`);
+  }
   bits.push(r.ddFloating == null
     ? 'open trades: not sampled yet, so nothing is known about dips while a trade was running'
     : `open trades ${mt5Money(r.ddFloating, '')} - watched since ${mt5Time(new Date(r.ddSince * 1000).toISOString())}`);
@@ -3857,7 +3873,7 @@ async function loadCharts(quiet) {
       <td class="n">${r && r.trades ? r.trades : '—'}</td>
       <td class="n">${rate == null ? '—' : rate + '%'}</td>
       <td class="n ${r ? mt5Cls(r.realised) : ''}">${r && r.trades ? mt5Money(r.realised, '') : '—'}</td>
-      <td class="n">${ddCell(r)}</td>
+      <td class="n">${ddCell(DD_BY_EA[c.expert] ? fromWholeEa(DD_BY_EA[c.expert]) : r)}</td>
       <td class="mono">${r ? esc(mt5Time(r.last)) : '—'}</td>
       <td style="text-align:center">${settings}${logs ? " " + logs : ""}</td>
       <td style="text-align:right">${c.expert

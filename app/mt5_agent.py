@@ -346,16 +346,79 @@ def realised_drawdowns(legs: dict, hours: int = DD_WINDOW_HOURS) -> dict:
     cutoff = time.time() - hours * 3600
     out = {}
     for magic, rows in legs.items():
-        series, total = [], 0.0
+        # The window opens flat, so the curve starts at nothing. Without that
+        # first point an EA whose opening trade of the day lost had no drawdown
+        # at all - its own loss counted as the high to measure from.
+        series, total = [(cutoff, 0.0)], 0.0
         for when, net in sorted(rows, key=lambda r: r[0]):
             if when < cutoff:
                 continue
             total = round(total + net, 2)
             series.append((when, total))
-        if series:
-            out[magic] = {"dd": drawdown_of(series), "trades": len(series),
+        if len(series) > 1:
+            out[magic] = {"dd": drawdown_of(series), "trades": len(series) - 1,
                           "net": series[-1][1]}
     return out
+
+
+def combined_drawdown(legs_by_magic: dict, magics, hours: int = DD_WINDOW_HOURS) -> dict:
+    """The realised drawdown of several magics taken as one EA.
+
+    Two dips cannot be added - an EA down 120 on one magic in the morning and
+    200 on another at night was never down 320. What can be added is the money
+    itself: merge every close from every magic into one timeline, run the total,
+    and measure how far that total fell below its own high. That is the number
+    somebody watching the account would have seen.
+    """
+    merged = []
+    for magic in magics:
+        merged += legs_by_magic.get(magic, [])
+    cutoff = time.time() - hours * 3600
+    series, total = [(cutoff, 0.0)], 0.0
+    for when, net in sorted(merged, key=lambda r: r[0]):
+        if when < cutoff:
+            continue
+        total = round(total + net, 2)
+        series.append((when, total))
+    return {"dd": drawdown_of(series), "trades": len(series) - 1,
+            "net": series[-1][1]}
+
+
+def combined_floating(magics, hours: int = DD_WINDOW_HOURS) -> dict:
+    """The same, for what those magics were carrying open at each moment.
+
+    Every magic is sampled in the same pass, so their samples share timestamps
+    and add honestly: at each instant the EA was down what all of its positions
+    were down together, and the worst of that is the dip.
+    """
+    with _float_lock:
+        try:
+            kept = json.loads(FLOAT_SAMPLE_FILE.read_text(encoding="utf-8")) \
+                if FLOAT_SAMPLE_FILE.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            return {"dd": None}
+    if not isinstance(kept, dict):
+        return {"dd": None}
+
+    cutoff = time.time() - hours * 3600
+    at: dict[int, float] = {}
+    seen = 0
+    for magic in magics:
+        rows = kept.get(str(magic)) or []
+        if rows:
+            seen += 1
+        for row in rows:
+            if isinstance(row, list) and len(row) == 2 and row[0] >= cutoff:
+                at[row[0]] = round(at.get(row[0], 0.0) + float(row[1]), 2)
+    if not at:
+        return {"dd": None}
+    # No zero is prepended here: an EA already deep in a trade when sampling
+    # began did not fall from zero during this window, and saying it did would
+    # invent a loss nobody watched happen.
+    points = sorted(at.items())
+    return {"dd": drawdown_of(points), "samples": len(points),
+            "since": int(points[0][0]), "worst": round(min(v for _t, v in points), 2),
+            "magics": seen}
 
 
 def sample_floating() -> None:
@@ -580,6 +643,24 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
 
     realised = realised_drawdowns(legs)
     floating = floating_drawdowns()
+    # and the same question asked of whole EAs rather than single magics: an EA
+    # numbering its strategies 111111, 11111122, 11111133 is one thing losing
+    # money, not three, and its drawdown is its combined curve's
+    groups: dict[str, list] = {}
+    for magic in set(list(legs) + [int(k) for k in floating]):
+        named = _name_ea({"magic": magic}, owners).get("ea")
+        if named:
+            groups.setdefault(named, []).append(magic)
+    by_name = {}
+    for name, magics in groups.items():
+        whole = combined_drawdown(legs, magics)
+        floats = combined_floating(magics)
+        by_name[name] = {"magics": sorted(magics), "trades": whole["trades"],
+                         "net": whole["net"], "dd_realised": whole["dd"],
+                         "dd_floating": floats.get("dd"),
+                         "dd_since": floats.get("since"),
+                         "dd_worst_open": floats.get("worst"),
+                         "dd": round(max(whole["dd"], floats.get("dd") or 0.0), 2)}
     data = {
         "ok": True,
         "at": datetime.now(timezone.utc).isoformat(),
@@ -598,6 +679,7 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
                          for e in by_ea.values()),
                         key=lambda e: e["profit"]),
         "dd_hours": DD_WINDOW_HOURS,
+        "dd_by_ea": by_name,
         "by_day": [{"date": k, "profit": v} for k, v in sorted(by_day.items(), reverse=True)][:60],
         "closed": [tag_magic(c) for c in closed[:2000]],
     }
