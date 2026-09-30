@@ -2512,16 +2512,25 @@ function fromWholeEa(d) {
            ddFloating: d.dd_floating == null ? null : d.dd_floating,
            ddSince: d.dd_since || null, whole: true, magics: (d.magics || []).length,
            magicList: d.magics || [], bankedOnly: !!d.dd_banked_only,
-           from: d.dd_from || null };
+           from: d.dd_from || null, method: d.dd_method || '', worst: d.dd_worst,
+           why: d.dd_why || '' };
 }
 
 function ddCell(r) {
   if (!r || (!r.dd && r.ddFloating == null)) return '<span class="shot-none">—</span>';
   // the headline is one curve - banked plus carried - and the two figures under
   // it are what that curve is made of, not alternatives to it
+  // Three different answers to the same question, and which one this is
+  // changes what it means - so it is the first thing the tooltip says.
+  const HOW = {
+    rebuilt: 'rebuilt from the minute bars: what its trades were really worth while open',
+    sampled: 'from samples taken every 20s - only covers what was watched',
+    'closed trades only': 'from closed trades alone - nothing is known about dips while a trade was open',
+  };
   const bits = [r.whole
-    ? `worst it stood, counting closed trades and open ones together`
+    ? (HOW[r.method] || 'worst it stood, closed and open together')
     : `worst dip on this chart's magics`];
+  if (r.worst != null) bits.push(`deepest it stood: ${mt5Money(r.worst, '')}`);
   bits.push(`  from trades it closed: ${mt5Money(r.ddRealised, '')}`);
   if (r.whole && r.magics > 1) {
     bits.push(`measured across ${r.magics} magics as one curve: ${(r.magicList || []).join(', ')}`);
@@ -2534,19 +2543,20 @@ function ddCell(r) {
       + ' nothing about dips before it started'
     : `  from open trades: ${mt5Money(r.ddFloating, '')}, watched since `
       + mt5Time(new Date(r.ddSince * 1000).toISOString()));
-  if (r.whole && r.bankedOnly) {
-    bits.push('no samples in this window, so only closed trades are counted');
-  }
+  if (r.why) bits.push(`could not rebuild it: ${r.why}`);
   // A number from twenty minutes of watching is not a number about the day, and
   // a grid that spent the morning deep down would be invisible in it.
-  const watched = r.from ? (Date.now() / 1000 - r.from) / 3600 : null;
+  // only the sampled answer has a short-window problem; a rebuild covers the
+  // whole window whether anyone was watching or not
+  const watched = (r.from && r.method === 'sampled') ? (Date.now() / 1000 - r.from) / 3600 : null;
   if (watched != null && watched < 20) {
     bits.push(`open trades have only been watched for ${watched < 1
       ? Math.round(watched * 60) + ' minutes' : Math.round(watched) + ' hours'}`
       + ' of the last 24 - anything deeper before that was never seen');
   }
   const big = r.dd > 0;
-  const partial = r.from && (Date.now() / 1000 - r.from) < 20 * 3600;
+  const partial = r.method === 'sampled' && r.from
+    && (Date.now() / 1000 - r.from) < 20 * 3600;
   return `<span class="${big ? 'ddbad' : ''}${partial ? ' ddpart' : ''}" title="${esc(bits.join(String.fromCharCode(10)))}">`
     + `${big ? '-' + mt5Money(r.dd, '') : mt5Money(0, '')}</span>`;
 }
