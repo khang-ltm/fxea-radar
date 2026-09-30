@@ -369,6 +369,7 @@ def run_once(run_no: int, port: int) -> None:
               "scroll lock is released on close and on Esc")
         check_page_script(html)
         check_agent_names()
+        check_agent_imports()
         check_trade_path()
         check_no_control_chars()
 
@@ -434,6 +435,30 @@ def check_agent_names() -> None:
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     unknown = sorted(n for n in called - known if not hasattr(builtins, n))
     check(not unknown, f"agent calls only functions that exist{'' if not unknown else ': missing ' + ', '.join(unknown)}")
+
+
+def check_agent_imports() -> None:
+    """The agent module has to import. That is not a given.
+
+    A default argument is evaluated when the def is read, so a constant defined
+    below a function that defaults to it raises NameError at import - and an
+    agent that cannot import cannot self-update, which makes it the one failure
+    the watchdog cannot restart its way out of. Someone has to go to the VPS.
+    Importing here costs a second and catches every shape of it.
+    """
+    import importlib
+    import types
+
+    sys.modules.setdefault("MetaTrader5", types.ModuleType("MetaTrader5"))
+    broken = ""
+    for name in ("app.mt5_agent", "app.basket_dd", "app.buzz", "app.mq5_inputs",
+                 "app.installer", "app.grouping", "app.export_static"):
+        try:
+            importlib.import_module(name)
+        except Exception as exc:                               # noqa: BLE001
+            broken = f"{name}: {type(exc).__name__}: {exc}"
+            break
+    check(not broken, "every agent module imports" + (f" - {broken}" if broken else ""))
 
 
 def check_trade_path() -> None:

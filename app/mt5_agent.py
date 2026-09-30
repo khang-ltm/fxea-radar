@@ -45,6 +45,15 @@ STREAM_HEARTBEAT_SECONDS = 20   # keeps proxies from dropping an idle connection
 STREAM_MAX_SECONDS = 3600       # close after an hour; the browser reconnects
 _cache: dict = {"at": 0.0, "data": None}
 HISTORY_CACHE_SECONDS = 30      # closed trades change rarely; keep the IPC lock free
+
+# Up here with the other settings because a function below takes
+# DD_WINDOW_HOURS as a default argument, and a default is evaluated when the
+# def runs - not when it is called. Defined later, it crashed the agent at
+# import, which is the one failure the watchdog cannot restart its way out of.
+DD_WINDOW_HOURS = 24
+FLOAT_SAMPLE_FILE = config.DATA_DIR / "floating_samples.json"
+FLOAT_SAMPLE_SECONDS = 20
+_float_lock = threading.Lock()
 _hist_cache: dict = {"at": 0.0, "days": 0, "data": None}
 _mt5 = None
 _init_error: str | None = None
@@ -320,11 +329,6 @@ def _name_ea(row: dict, owners: dict) -> dict:
         row["ea_symbol"] = owner.get("symbol")
     return row
 
-
-DD_WINDOW_HOURS = 24
-FLOAT_SAMPLE_FILE = config.DATA_DIR / "floating_samples.json"
-FLOAT_SAMPLE_SECONDS = 20
-_float_lock = threading.Lock()
 
 
 def merge_same_instant(rows) -> list:
