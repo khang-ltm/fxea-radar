@@ -2366,6 +2366,16 @@ def update_now() -> dict:
     manager = sync_manager_ea()
 
     def restart() -> None:
+        """Replace this process with one running the code just downloaded.
+
+        os.execv was doing neither on this machine - it neither replaced the
+        process nor raised anywhere anybody could see, so every update reported
+        success, wrote the new version to disk, and left the old code serving.
+        Hours of fixes appeared to deploy and changed nothing.
+
+        So: try to exec, and if that returns at all - it must not - start a
+        fresh detached process and leave. Either way the log says which.
+        """
         import subprocess
         import sys
 
@@ -2373,7 +2383,28 @@ def update_now() -> dict:
         print(f"[update] restarting into {remote[:7]}", flush=True)
         if _mt5 is not None:
             _mt5.shutdown()
-        os.execv(sys.executable, [sys.executable, "-m", "app.mt5_agent", *sys.argv[1:]])
+
+        argv = [sys.executable, "-m", "app.mt5_agent", *sys.argv[1:]]
+        try:
+            os.execv(sys.executable, argv)
+            print("[update] execv returned without replacing the process", flush=True)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[update] execv failed: {type(exc).__name__}: {exc}", flush=True)
+
+        try:
+            flags = 0
+            if os.name == "nt":
+                flags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) \
+                    | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            subprocess.Popen(argv, cwd=str(config.ROOT), close_fds=True,
+                             creationflags=flags)
+            print("[update] started a replacement process; this one is leaving",
+                  flush=True)
+        except Exception as exc:                               # noqa: BLE001
+            print(f"[update] could not start a replacement: {exc}", flush=True)
+            return                                             # keep serving old code
+        time.sleep(0.5)
+        os._exit(0)                                            # release the port
 
     threading.Thread(target=restart, daemon=True).start()
     out = {"ok": True, "message": f"updating to {remote[:7]} - back in a few seconds",
@@ -3915,7 +3946,21 @@ def main() -> None:
     try:
         # Threading matters: one SSE connection would otherwise block every other
         # request on a single-threaded server.
-        server = ThreadingHTTPServer((host, args.port), Handler)
+        # A process that has just replaced another may find the port still held
+        # for a second or two. Waiting beats exiting: an agent that gives up
+        # here is an agent nobody can reach until somebody logs into the VPS.
+        server = None
+        for attempt in range(20):
+            try:
+                server = ThreadingHTTPServer((host, args.port), Handler)
+                break
+            except OSError as exc:
+                if attempt == 0:
+                    print(f"  port {args.port} busy ({exc}); waiting for it", flush=True)
+                time.sleep(1.0)
+        if server is None:
+            print(f"  port {args.port} never freed - is another agent running?", flush=True)
+            raise SystemExit(1)
     except OSError as exc:
         # Stopping the scheduled task kills the launcher, not this process, so a
         # restart can leave the old agent holding the port while the new one dies
