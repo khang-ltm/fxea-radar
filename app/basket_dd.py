@@ -128,6 +128,12 @@ def reconstruct(mt5, positions: list, closes: list, hours: int = 24,
     if not minutes:
         return {"ok": False, "reason": "no minutes where a trade was open"}
 
+    # Two series, because they answer different questions. The combined one
+    # says what the account was carrying overall; the open-only one says how
+    # far underwater this EA's positions themselves went, which is the number
+    # that does not quietly improve just because the EA banked profit earlier
+    # in the window.
+    floating_only = []
     banked, at, series = 0.0, 0, []
     ordered = sorted(closes, key=lambda c: c[0])
     # money banked before the first watched minute is already part of the curve
@@ -150,13 +156,17 @@ def reconstruct(mt5, positions: list, closes: list, hours: int = 24,
             worst = low if p["type"] == POSITION_BUY else high
             floating += (worst - p["entry"]) / p["step"] * p["per_point"]
         series.append((minute, round(banked + floating, 2)))
+        floating_only.append((minute, round(floating, 2)))
 
     peak, dd, trough = None, 0.0, None
     for _when, value in series:
         peak = value if peak is None else max(peak, value)
         if peak - value > dd:
             dd, trough = round(peak - value, 2), value
-    return {"ok": True, "dd": dd, "worst": round(min(v for _t, v in series), 2),
+    return {"ok": True, "dd": dd,
+            # the deepest its own open trades stood, banked profit excluded
+            "worst": round(min(v for _t, v in floating_only), 2),
+            "worst_with_banked": round(min(v for _t, v in series), 2),
             "trough": trough, "minutes": len(series),
             "positions": len(priced), "from": minutes[0]}
 
