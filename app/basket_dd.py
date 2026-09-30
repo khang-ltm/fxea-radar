@@ -213,6 +213,9 @@ def reconstruct(mt5, positions: list, closes: list, hours: int = 24,
     return {"ok": True, "dd": dd,
             # the deepest its own open trades stood, banked profit excluded
             "worst": round(min(v for _t, v in floating_only), 2),
+            # the minute it happened, because "how deep" and "when" are one
+            # question when you are deciding whether you were awake for it
+            "worst_at": min(floating_only, key=lambda p: p[1])[0],
             "worst_with_banked": round(min(v for _t, v in series), 2),
             "trough": trough, "minutes": len(series),
             "positions": len(priced), "from": minutes[0],
@@ -312,7 +315,7 @@ def worst_over_cycles(mt5, positions: list, closes: list, hours: int = 24,
         if not out.get("ok"):
             continue
         if out["worst"] < deepest:
-            deepest, at = out["worst"], run["start"]
+            deepest, at = out["worst"], out.get("worst_at") or run["start"]
         checked += out.get("checked") or 0
         drift += (out.get("off_by") or 0) * (out.get("checked") or 0)
         partials += 1 if out.get("partial") else 0

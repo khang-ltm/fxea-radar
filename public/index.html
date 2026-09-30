@@ -204,6 +204,7 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
 .pickbar__sp { flex: 1; }
 .ddbad { color: #FCA5A5; }
 .ddpart { border-bottom: 1px dashed var(--color-muted-fg); }
+.ddwhen { color: var(--color-muted-fg); font-size: 11px; margin-left: 4px; }
 .settings { display: grid; gap: 0; }
 .settings h3 { grid-column: 1 / -1; margin: var(--space-4) 0 var(--space-1); font-size: 11px;
    letter-spacing: .06em; text-transform: uppercase; color: var(--color-muted-fg);
@@ -2513,7 +2514,9 @@ function fromWholeEa(d) {
            ddSince: d.dd_since || null, whole: true, magics: (d.magics || []).length,
            magicList: d.magics || [], bankedOnly: !!d.dd_banked_only,
            from: d.dd_from || null, method: d.dd_method || '', worst: d.dd_worst,
-           why: d.dd_why || '' };
+           why: d.dd_why || '', when: d.dd_worst_when || null,
+           baskets: d.dd_baskets, checked: d.dd_checked, offBy: d.dd_off_by,
+           trusted: d.dd_trusted };
 }
 
 function ddCell(r) {
@@ -2550,8 +2553,28 @@ function ddCell(r) {
 
   const partial = r.method === 'sampled' && r.from
     && (Date.now() / 1000 - r.from) < 20 * 3600;
-  const cls = (deep < 0 ? 'ddbad' : '') + (partial ? ' ddpart' : '');
-  const text = deep < 0 ? '-' + mt5Money(Math.abs(deep), '') : mt5Money(0, '');
+  // when it happened belongs next to how deep: a number without a date is a
+  // rumour, and the date is usually the first thing you check it against
+  if (r.when) {
+    const day = new Date(r.when * 1000);
+    bits.push(`deepest on ${day.toLocaleString(undefined, { day: 'numeric', month: 'short',
+      hour: '2-digit', minute: '2-digit' })}`);
+  }
+  if (r.baskets) bits.push(`worst of ${r.baskets} basket${r.baskets === 1 ? '' : 's'} in the window`);
+  // the model checks itself against trades whose result MT5 already knows
+  if (r.checked) {
+    bits.push(r.trusted
+      ? `matches ${r.checked} closed trades to within ${mt5Money(r.offBy, '')}`
+      : `does not reproduce closed trades well (off by ${mt5Money(r.offBy, '')}) - treat as rough`);
+  }
+
+  const cls = (deep < 0 ? 'ddbad' : '') + (partial ? ' ddpart' : '')
+    + (r.checked && !r.trusted ? ' ddpart' : '');
+  const when = r.when
+    ? ` <span class="ddwhen">${esc(new Date(r.when * 1000)
+        .toLocaleDateString(undefined, { day: 'numeric', month: 'short' }))}</span>`
+    : '';
+  const text = (deep < 0 ? '-' + mt5Money(Math.abs(deep), '') : mt5Money(0, '')) + when;
   return `<span class="${cls.trim()}" title="${esc(bits.join(String.fromCharCode(10)))}">${text}</span>`;
 }
 
