@@ -2530,7 +2530,10 @@ function ddCell(r) {
   const bits = [r.whole
     ? (HOW[r.method] || 'worst it stood, closed and open together')
     : `worst dip on this chart's magics`];
-  if (r.worst != null) bits.push(`deepest it stood: ${mt5Money(r.worst, '')}`);
+  // The fall from its own high is a different question from how far underwater
+  // it went, and it is the second one that decides whether an account survives:
+  // giving back unrealised profit costs nothing a margin call cares about.
+  if (r.dd) bits.push(`fell ${mt5Money(r.dd, '')} from its own high along the way`);
   bits.push(`  from trades it closed: ${mt5Money(r.ddRealised, '')}`);
   if (r.whole && r.magics > 1) {
     bits.push(`measured across ${r.magics} magics as one curve: ${(r.magicList || []).join(', ')}`);
@@ -2554,11 +2557,13 @@ function ddCell(r) {
       ? Math.round(watched * 60) + ' minutes' : Math.round(watched) + ' hours'}`
       + ' of the last 24 - anything deeper before that was never seen');
   }
-  const big = r.dd > 0;
+  const under = r.worst != null && r.worst < 0;
+  const shown = r.worst != null ? Math.abs(r.worst) : r.dd;
+  const big = shown > 0;
   const partial = r.method === 'sampled' && r.from
     && (Date.now() / 1000 - r.from) < 20 * 3600;
   return `<span class="${big ? 'ddbad' : ''}${partial ? ' ddpart' : ''}" title="${esc(bits.join(String.fromCharCode(10)))}">`
-    + `${big ? '-' + mt5Money(r.dd, '') : mt5Money(0, '')}</span>`;
+    + `${big ? (under || r.worst == null ? '-' : '') + mt5Money(shown, '') : mt5Money(0, '')}</span>`;
 }
 
 /* Several magics per chart is the normal case, so the row shows their sum. */
@@ -3865,7 +3870,7 @@ async function loadCharts(quiet) {
   setHtml('chartstable', charts.length ? `<table class="mt5">
     <thead><tr><th>Expert</th><th>Symbol</th><th class="n">TF</th><th class="n">Open</th><th class="n">Floating</th>
       <th class="n">Trades</th><th class="n">Win%</th><th class="n">Realised 30d</th>
-      <th class="n" title="the worst this EA was ever down in the last 24 hours">Worst 24h</th>
+      <th class="n" title="the furthest underwater this EA has been - everything it held, priced together">Deepest</th>
       <th>Last trade<span data-tz></span></th><th style="text-align:center">Inspect</th>
       <th style="text-align:right">Action</th></tr></thead>
     <tbody>${charts.map(c => {
