@@ -370,6 +370,7 @@ def run_once(run_no: int, port: int) -> None:
         check_page_script(html)
         check_agent_names()
         check_agent_imports()
+        check_no_shadowed_locals()
         check_trade_path()
         check_no_control_chars()
 
@@ -459,6 +460,37 @@ def check_agent_imports() -> None:
             broken = f"{name}: {type(exc).__name__}: {exc}"
             break
     check(not broken, "every agent module imports" + (f" - {broken}" if broken else ""))
+
+
+def check_no_shadowed_locals() -> None:
+    """No function may reuse a name it already bound to something callable.
+
+    read_history defines a helper called window(), and a later edit added a
+    variable called window - so "week": window(7) became 'int' object is not
+    callable and the whole history endpoint returned 502. Nothing in the syntax
+    check, the import check or the AST name check can see it, because every name
+    does exist; the bug is that one of them ate the other.
+    """
+    import ast
+
+    src = (ROOT / "app" / "mt5_agent.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    clashes = []
+    for fn in [n for n in ast.walk(tree)
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+        defined = {inner.name: inner.lineno for inner in fn.body
+                   if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        if not defined:
+            continue
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in defined:
+                    clashes.append(f"{fn.name}(): {target.id} reassigned at line {node.lineno}"
+                                   f", shadowing the helper defined at {defined[target.id]}")
+    check(not clashes, "no local helper is shadowed by a later assignment"
+          + ("" if not clashes else " - " + "; ".join(clashes)))
 
 
 def check_trade_path() -> None:

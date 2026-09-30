@@ -869,9 +869,9 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
 
     # The dip is measured over whatever period was asked for, not a fixed day:
     # a month's drawdown is the question when a month is on screen.
-    window = max(1, int(days)) * 24
-    realised = realised_drawdowns(legs, window)
-    floating = floating_drawdowns(window)
+    dd_hours = max(1, int(days)) * 24   # not `window`: that name is a helper below
+    realised = realised_drawdowns(legs, dd_hours)
+    floating = floating_drawdowns(dd_hours)
     # and the same question asked of whole EAs rather than single magics: an EA
     # numbering its strategies 111111, 11111122, 11111133 is one thing losing
     # money, not three, and its drawdown is its combined curve's
@@ -883,12 +883,12 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
     by_name = {}
     for name, magics in groups.items():
       try:
-          whole = combined_drawdown(legs, magics, window)
-          floats = combined_floating(magics, window)
-          both = intraday_drawdown(legs, magics, window)
+          whole = combined_drawdown(legs, magics, dd_hours)
+          floats = combined_floating(magics, dd_hours)
+          both = intraday_drawdown(legs, magics, dd_hours)
           # the rebuilt curve is the one that can see a basket that was deep down
           # and closed green, which is exactly the case the others report as zero
-          rebuilt = rebuilt_drawdown(closed, magics, window)
+          rebuilt = rebuilt_drawdown(closed, magics, dd_hours)
           basket = last_basket(closed, magics)
           by_name[name] = {"magics": sorted(magics), "trades": whole["trades"],
                            "net": whole["net"], "dd_realised": whole["dd"],
@@ -931,10 +931,10 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
             "week": window(7),
             "month": window(30),
         },
-        "by_ea": sorted((tag_magic(_name_ea(_add_dd(e, realised, floating, legs, window), owners))
+        "by_ea": sorted((tag_magic(_name_ea(_add_dd(e, realised, floating, legs, dd_hours), owners))
                          for e in by_ea.values()),
                         key=lambda e: e["profit"]),
-        "dd_hours": window,
+        "dd_hours": dd_hours,
         "dd_by_ea": by_name,
         "by_day": [{"date": k, "profit": v} for k, v in sorted(by_day.items(), reverse=True)][:60],
         "closed": [tag_magic(c) for c in closed[:2000]],
@@ -2322,7 +2322,7 @@ def update_now() -> dict:
         return {"ok": False, "error": f"cannot reach GitHub: {exc}"}
     if not remote:
         return {"ok": False, "error": "GitHub returned no commit"}
-    if remote == _current_sha():
+    if remote == _disk_sha():
         return {"ok": True, "message": f"already on {remote[:7]}", "restarting": False}
 
     try:
@@ -3717,7 +3717,10 @@ def _self_update_loop() -> None:
         first = False
         try:
             remote = _remote_sha()
-            if not remote or remote == _current_sha():
+            # the disk, not the pinned boot value: after an update writes the
+            # new sha the process still reports the old one until it restarts,
+            # and comparing against that downloads the same commit forever
+            if not remote or remote == _disk_sha():
                 continue
             print(f"[self-update] new version {remote[:7]} - updating", flush=True)
             _apply_update(remote)
