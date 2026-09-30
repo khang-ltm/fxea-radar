@@ -882,35 +882,41 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
             groups.setdefault(named, []).append(magic)
     by_name = {}
     for name, magics in groups.items():
-        whole = combined_drawdown(legs, magics, window)
-        floats = combined_floating(magics, window)
-        both = intraday_drawdown(legs, magics, window)
-        # the rebuilt curve is the one that can see a basket that was deep down
-        # and closed green, which is exactly the case the others report as zero
-        rebuilt = rebuilt_drawdown(closed, magics, window)
-        basket = last_basket(closed, magics)
-        by_name[name] = {"magics": sorted(magics), "trades": whole["trades"],
-                         "net": whole["net"], "dd_realised": whole["dd"],
-                         "dd_floating": floats.get("dd"),
-                         "dd_since": floats.get("since"),
-                         "dd_worst_open": floats.get("worst"),
-                         # the headline is whichever curve actually saw the
-                         # open trades: rebuilt when MT5 had the bars for it,
-                         # otherwise what was sampled, otherwise closes alone
-                         "dd": rebuilt["dd"] if rebuilt.get("ok") else both["dd"],
-                         "dd_from": rebuilt.get("from") if rebuilt.get("ok")
-                                    else both.get("from"),
-                         "dd_method": "rebuilt" if rebuilt.get("ok")
-                                      else "sampled" if not both.get("banked_only")
-                                      else "closed trades only",
-                         "dd_why": rebuilt.get("reason", ""),
-                         "dd_worst": rebuilt.get("worst") if rebuilt.get("ok") else None,
-                         "dd_banked_only": both.get("banked_only", True),
-                         # what the last basket cost to hold, whatever the window
-                         "last": {k: basket.get(k) for k in
-                                  ("dd", "worst", "net", "trades", "started", "ended",
-                                   "open_now", "cycles_seen")} if basket.get("ok")
-                                 else {"why": basket.get("reason")}}
+      try:
+          whole = combined_drawdown(legs, magics, window)
+          floats = combined_floating(magics, window)
+          both = intraday_drawdown(legs, magics, window)
+          # the rebuilt curve is the one that can see a basket that was deep down
+          # and closed green, which is exactly the case the others report as zero
+          rebuilt = rebuilt_drawdown(closed, magics, window)
+          basket = last_basket(closed, magics)
+          by_name[name] = {"magics": sorted(magics), "trades": whole["trades"],
+                           "net": whole["net"], "dd_realised": whole["dd"],
+                           "dd_floating": floats.get("dd"),
+                           "dd_since": floats.get("since"),
+                           "dd_worst_open": floats.get("worst"),
+                           # the headline is whichever curve actually saw the
+                           # open trades: rebuilt when MT5 had the bars for it,
+                           # otherwise what was sampled, otherwise closes alone
+                           "dd": rebuilt["dd"] if rebuilt.get("ok") else both["dd"],
+                           "dd_from": rebuilt.get("from") if rebuilt.get("ok")
+                                      else both.get("from"),
+                           "dd_method": "rebuilt" if rebuilt.get("ok")
+                                        else "sampled" if not both.get("banked_only")
+                                        else "closed trades only",
+                           "dd_why": rebuilt.get("reason", ""),
+                           "dd_worst": rebuilt.get("worst") if rebuilt.get("ok") else None,
+                           "dd_banked_only": both.get("banked_only", True),
+                           # what the last basket cost to hold, whatever the window
+                           "last": {k: basket.get(k) for k in
+                                    ("dd", "worst", "net", "trades", "started", "ended",
+                                     "open_now", "cycles_seen")} if basket.get("ok")
+                                   else {"why": basket.get("reason")}}
+      except Exception as exc:                                 # noqa: BLE001
+        # A drawdown is a nice-to-have on a page whose job is showing trades:
+        # it must never be the reason the history endpoint returns nothing.
+        by_name[name] = {"magics": sorted(magics), "dd": 0.0,
+                         "dd_method": "failed", "dd_why": f"{type(exc).__name__}: {exc}"}
     data = {
         "ok": True,
         "at": datetime.now(timezone.utc).isoformat(),
