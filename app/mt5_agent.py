@@ -3207,6 +3207,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(read_symbols(q))
             return
         if path == "/api/history":
+            # this one does real work on every call, so its failures are the
+            # ones worth reporting rather than dropping the connection
             if not self._authorized():
                 self._json({"ok": False, "error": "unauthorized"}, 401)
                 return
@@ -3292,6 +3294,26 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 want = parse_qs(urlparse(self.path).query).get("name", [""])[0]
                 self._json(read_preset(want))
+            return
+        if path == "/api/agentlog":
+            # The agent writes its own stdout and tracebacks to data/agent.log,
+            # and the only way to read it was to be standing at the VPS. An
+            # endpoint that answers 502 tells you nothing about why; this does.
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                want = max(1, min(400, int(qs.get("lines", ["80"])[0])))
+            except ValueError:
+                want = 80
+            log = config.DATA_DIR / "agent.log"
+            try:
+                rows = log.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError as exc:
+                self._json({"ok": False, "error": f"cannot read {log.name}: {exc}"})
+                return
+            self._json({"ok": True, "file": str(log), "lines": rows[-want:]})
             return
         if path == "/api/selfcheck":
             if not self._authorized():
