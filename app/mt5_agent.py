@@ -930,9 +930,11 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
                                         else "sampled" if not both.get("banked_only")
                                         else "closed trades only",
                            "dd_why": rebuilt.get("reason", ""),
-                         "dd_trusted": rebuilt.get("trusted"),
-                         "dd_off_by": rebuilt.get("off_by"),
-                         "dd_checked": rebuilt.get("checked"),
+                         # the basket-by-basket pass is the one that priced
+                         # complete bars, so its self-check is the one to report
+                         "dd_trusted": deepest.get("trusted", rebuilt.get("trusted")),
+                         "dd_off_by": deepest.get("off_by", rebuilt.get("off_by")),
+                         "dd_checked": deepest.get("checked", rebuilt.get("checked")),
                          "dd_worst_miss": rebuilt.get("worst_miss"),
                          "dd_partial": bool(rebuilt.get("partial")),
                          "dd_bars_from": rebuilt.get("bars_from"),

@@ -279,3 +279,47 @@ def last_cycle(mt5, positions: list, closes: list, now=None) -> dict:
                 "net": round(sum(c[1] for c in inside), 2),
                 "cycles_seen": len(runs)})
     return out
+
+
+def worst_over_cycles(mt5, positions: list, closes: list, hours: int = 24,
+                      now=None, cap: int = 80) -> dict:
+    """The deepest any single basket went, over a whole window.
+
+    Asking for thirty days of minute bars in one go does not get thirty days:
+    the terminal returns what it has loaded, which on this account was the last
+    five days - so a month-long rebuild priced a fraction of the month and
+    called the shallow result a maximum. A basket, though, is hours long, and
+    its bars come back complete.
+
+    So the window is measured the way it is actually lived: one basket at a
+    time, each priced in its own narrow range, and the answer is the worst of
+    them. Slower by a few fetches, and right.
+    """
+    now = now or datetime.now(timezone.utc)
+    floor = now.timestamp() - hours * 3600
+    runs = [r for r in cycles(positions, now.timestamp()) if r["end"] >= floor]
+    if not runs:
+        return {"ok": False, "reason": "no baskets in the window"}
+
+    deepest, at, checked, drift, partials = 0.0, None, 0, 0.0, 0
+    for run in runs[-cap:]:
+        start = datetime.fromtimestamp(run["start"], tz=timezone.utc) - timedelta(minutes=2)
+        end = (datetime.fromtimestamp(run["end"], tz=timezone.utc) + timedelta(minutes=2)
+               if run["end"] < now.timestamp() else now)
+        span = max(1, int((end - start).total_seconds() // 3600) + 1)
+        inside = [c for c in closes if run["start"] <= c[0] <= run["end"] + 60]
+        out = reconstruct(mt5, run["positions"], inside, hours=span, now=end)
+        if not out.get("ok"):
+            continue
+        if out["worst"] < deepest:
+            deepest, at = out["worst"], run["start"]
+        checked += out.get("checked") or 0
+        drift += (out.get("off_by") or 0) * (out.get("checked") or 0)
+        partials += 1 if out.get("partial") else 0
+
+    return {"ok": True, "worst": round(deepest, 2), "when": at,
+            "baskets": len(runs), "measured": min(len(runs), cap),
+            "checked": checked,
+            "off_by": round(drift / checked, 2) if checked else None,
+            "trusted": bool(checked) and drift / checked < 5 if checked else False,
+            "partial_baskets": partials}
