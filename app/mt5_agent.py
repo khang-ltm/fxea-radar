@@ -2266,11 +2266,8 @@ def _order_is_ours(order: dict, target: dict) -> bool:
     if order["magic"] == target["base"]:
         return True
     # Some EAs number their strategies by appending to the base rather than
-    # counting up from it: a chart set to 111111 trades 11111122. Six or more
-    # leading digits matching, with at most three appended, is not a coincidence
-    # anyone has to worry about - and the hundred block below cannot see it.
-    base, magic = str(target["base"]), str(order["magic"])
-    if len(base) >= 5 and len(magic) > len(base) and len(magic) - len(base) <= 3             and magic.startswith(base):
+    # counting up from it: 111111 trades 11111122, 5442 trades 544201.
+    if magic_in_family(target["base"], order["magic"], target.get("other_bases") or ()):
         return True
     return (order["magic"] in target["magics"]
             and _sym_key(order["symbol"]) == _sym_key(target["symbol"]))
@@ -2317,6 +2314,35 @@ def pending_orders_for(target: dict) -> dict:
     guess = [r for r in rows
              if r["magic"] and r["symbol"] == symbol and r["magic"] not in others]
     return {"orders": guess, "certain": False}
+
+
+def magic_in_family(base, magic, other_bases=()) -> bool:
+    """Whether `magic` is this base's own, by the append-a-strategy convention.
+
+    An EA set to 111111 trades 11111122; one set to 5442 trades 544201. Same
+    habit, but a short base is a weaker claim - 5442 prefixes far more numbers
+    than 111111 does - so a four-digit base may claim at most two appended
+    digits, and only when no other base in play prefixes the same number. Three
+    digits or fewer claim nothing this way: that would be guessing with money.
+    """
+    try:
+        base_s, magic_s = str(int(base)), str(int(magic))
+    except (TypeError, ValueError):
+        return False
+    if len(base_s) < 4 or len(magic_s) <= len(base_s) or not magic_s.startswith(base_s):
+        return False
+    if len(magic_s) - len(base_s) > (3 if len(base_s) >= 5 else 2):
+        return False
+    # an ambiguous number belongs to nobody: with 5442 and 54420 both in use,
+    # 544201 is not safely either one's
+    for other in other_bases:
+        try:
+            other_s = str(int(other))
+        except (TypeError, ValueError):
+            continue
+        if other_s != base_s and magic_s.startswith(other_s):
+            return False
+    return True
 
 
 def _sym_key(symbol) -> str:
