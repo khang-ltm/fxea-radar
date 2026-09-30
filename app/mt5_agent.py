@@ -421,6 +421,68 @@ def combined_floating(magics, hours: int = DD_WINDOW_HOURS) -> dict:
             "magics": seen}
 
 
+def intraday_drawdown(legs_by_magic: dict, magics, hours: int = DD_WINDOW_HOURS) -> dict:
+    """How far down an EA actually was, counting banked and open money together.
+
+    Reporting the worse of two separate dips understates it, and by exactly the
+    amount that matters: an EA already a hundred down on closed trades, then a
+    hundred and fifty down on an open one, was two hundred and fifty down - not
+    a hundred and fifty. There is one curve, and this is it: at every moment,
+    what it had taken plus what it was carrying.
+
+    Both halves are known at different times - a close is an instant, a sample
+    is every twenty seconds - so the two are merged into one timeline and each
+    event carries the latest value of the other half.
+
+    It can only be this honest from when sampling began. Before that the open
+    half is unknown, so the curve is measured from the first sample onwards and
+    says so; with no samples at all it falls back to the closed trades alone,
+    which is exact for what it covers and blind to the rest.
+    """
+    cutoff = time.time() - hours * 3600
+    closes = []
+    for magic in magics:
+        closes += [r for r in legs_by_magic.get(magic, []) if r[0] >= cutoff]
+    closes.sort(key=lambda r: r[0])
+
+    with _float_lock:
+        try:
+            kept = json.loads(FLOAT_SAMPLE_FILE.read_text(encoding="utf-8")) \
+                if FLOAT_SAMPLE_FILE.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            kept = {}
+    if not isinstance(kept, dict):
+        kept = {}
+    floats: dict[int, float] = {}
+    for magic in magics:
+        for row in kept.get(str(magic)) or []:
+            if isinstance(row, list) and len(row) == 2 and row[0] >= cutoff:
+                floats[int(row[0])] = round(floats.get(int(row[0]), 0.0) + float(row[1]), 2)
+
+    if not closes and not floats:
+        return {"dd": 0.0, "from": None, "banked_only": True}
+
+    # the curve starts where the watching starts: flat if the window opened
+    # before any sample, otherwise at whatever the first sample found
+    start = min([c[0] for c in closes] + list(floats)) if (closes or floats) else cutoff
+    events = sorted([(when, "close", net) for when, net in closes]
+                    + [(when, "float", value) for when, value in floats.items()])
+
+    banked, carrying, series = 0.0, 0.0, []
+    for when, kind, value in events:
+        if kind == "close":
+            banked = round(banked + value, 2)
+        else:
+            carrying = value
+        series.append((when, round(banked + carrying, 2)))
+    if closes and not floats:
+        series.insert(0, (cutoff, 0.0))        # closed trades alone start flat
+
+    return {"dd": drawdown_of(series), "from": int(start),
+            "points": len(series), "banked_only": not floats,
+            "worst": round(min(v for _t, v in series), 2) if series else 0.0}
+
+
 def sample_floating() -> None:
     """Write down what every EA is currently down or up on open trades.
 
@@ -655,12 +717,16 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
     for name, magics in groups.items():
         whole = combined_drawdown(legs, magics)
         floats = combined_floating(magics)
+        both = intraday_drawdown(legs, magics)
         by_name[name] = {"magics": sorted(magics), "trades": whole["trades"],
                          "net": whole["net"], "dd_realised": whole["dd"],
                          "dd_floating": floats.get("dd"),
                          "dd_since": floats.get("since"),
                          "dd_worst_open": floats.get("worst"),
-                         "dd": round(max(whole["dd"], floats.get("dd") or 0.0), 2)}
+                         # the headline is the one curve that counts both halves;
+                         # the two above are what it is made of
+                         "dd": both["dd"], "dd_from": both.get("from"),
+                         "dd_banked_only": both.get("banked_only", True)}
     data = {
         "ok": True,
         "at": datetime.now(timezone.utc).isoformat(),

@@ -2509,18 +2509,29 @@ function matchMagic(chart, rows, taken = new Set()) {
 function fromWholeEa(d) {
   return { dd: d.dd || 0, ddRealised: d.dd_realised || 0,
            ddFloating: d.dd_floating == null ? null : d.dd_floating,
-           ddSince: d.dd_since || null, whole: true, magics: (d.magics || []).length };
+           ddSince: d.dd_since || null, whole: true, magics: (d.magics || []).length,
+           bankedOnly: !!d.dd_banked_only, from: d.dd_from || null };
 }
 
 function ddCell(r) {
   if (!r || (!r.dd && r.ddFloating == null)) return '<span class="shot-none">—</span>';
-  const bits = [`realised ${mt5Money(r.ddRealised, '')} - from trades it closed`];
+  // the headline is one curve - banked plus carried - and the two figures under
+  // it are what that curve is made of, not alternatives to it
+  const bits = [r.whole
+    ? `worst it stood, counting closed trades and open ones together`
+    : `worst dip on this chart's magics`];
+  bits.push(`  from trades it closed: ${mt5Money(r.ddRealised, '')}`);
   if (r.whole && r.magics > 1) {
     bits.push(`measured across all ${r.magics} magics this EA trades, as one curve`);
   }
   bits.push(r.ddFloating == null
-    ? 'open trades: not sampled yet, so nothing is known about dips while a trade was running'
-    : `open trades ${mt5Money(r.ddFloating, '')} - watched since ${mt5Time(new Date(r.ddSince * 1000).toISOString())}`);
+    ? '  from open trades: not watched yet - the agent samples every 20s and knows'
+      + ' nothing about dips before it started'
+    : `  from open trades: ${mt5Money(r.ddFloating, '')}, watched since `
+      + mt5Time(new Date(r.ddSince * 1000).toISOString()));
+  if (r.whole && r.bankedOnly) {
+    bits.push('no samples in this window, so only closed trades are counted');
+  }
   const big = r.dd > 0;
   return `<span class="${big ? 'ddbad' : ''}" title="${esc(bits.join(String.fromCharCode(10)))}">`
     + `${big ? '-' + mt5Money(r.dd, '') : mt5Money(0, '')}</span>`;
