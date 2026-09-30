@@ -2555,7 +2555,7 @@ function ddCell(r) {
   if (watched != null && watched < 20) {
     bits.push(`open trades have only been watched for ${watched < 1
       ? Math.round(watched * 60) + ' minutes' : Math.round(watched) + ' hours'}`
-      + ' of the last 24 - anything deeper before that was never seen');
+      + ' - anything deeper before that was never seen');
   }
   const under = r.worst != null && r.worst < 0;
   const shown = r.worst != null ? Math.abs(r.worst) : r.dd;
@@ -3870,7 +3870,7 @@ async function loadCharts(quiet) {
   setHtml('chartstable', charts.length ? `<table class="mt5">
     <thead><tr><th>Expert</th><th>Symbol</th><th class="n">TF</th><th class="n">Open</th><th class="n">Floating</th>
       <th class="n">Trades</th><th class="n">Win%</th><th class="n">Realised 30d</th>
-      <th class="n" title="the furthest underwater this EA has been - everything it held, priced together">Deepest</th>
+      <th class="n" title="the furthest underwater this EA's open trades have been over the period below - banked profit excluded, so it does not shrink as the EA earns">Deepest 30d</th>
       <th>Last trade<span data-tz></span></th><th style="text-align:center">Inspect</th>
       <th style="text-align:right">Action</th></tr></thead>
     <tbody>${charts.map(c => {
