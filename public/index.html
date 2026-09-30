@@ -202,6 +202,7 @@ select { padding: 8px 10px; background: var(--color-surface); color: var(--color
   background: color-mix(in srgb, var(--color-accent) 9%, var(--color-surface));
   border: 1px solid color-mix(in srgb, var(--color-accent) 32%, transparent); }
 .pickbar__sp { flex: 1; }
+.ddbad { color: #FCA5A5; }
 .settings { display: grid; gap: 0; }
 .settings h3 { grid-column: 1 / -1; margin: var(--space-4) 0 var(--space-1); font-size: 11px;
    letter-spacing: .06em; text-transform: uppercase; color: var(--color-muted-fg);
@@ -2355,7 +2356,8 @@ async function loadEas(quiet) {
     const k = String(m);
     if (!rows.has(k)) {
       rows.set(k, { magic: m, name: '', ea: '', symbols: [], open: 0, lots: 0,
-                    floating: 0, pending: 0, trades: 0, wins: 0, realised: 0, last: '' });
+                    floating: 0, pending: 0, trades: 0, wins: 0, realised: 0, last: '',
+                    dd: 0, ddRealised: 0, ddFloating: null, ddSince: null });
     }
     return rows.get(k);
   };
@@ -2377,6 +2379,10 @@ async function loadEas(quiet) {
     // the agent keeps a ledger of which EA used which magic, so a deal from an
     // EA that has since been removed still says whose it was
     if (e.ea) { r.ea = e.ea; EA_BY_MAGIC[e.magic || 0] = e.ea; }
+    r.dd = Math.max(r.dd, e.dd || 0);
+    r.ddRealised = Math.max(r.ddRealised, e.dd_realised || 0);
+    if (e.dd_floating != null) r.ddFloating = Math.max(r.ddFloating || 0, e.dd_floating);
+    if (e.dd_since) r.ddSince = Math.min(r.ddSince || e.dd_since, e.dd_since);
     r.trades += e.trades || 0; r.wins += e.wins || 0; r.realised += e.profit || 0;
     if (!r.name && (e.comments || [])[0]) r.name = e.comments[0];
     for (const sym of e.symbols || []) if (!r.symbols.includes(sym)) r.symbols.push(sym);
@@ -2487,13 +2493,37 @@ function matchMagic(chart, rows, taken = new Set()) {
   return { rows: hits, how: hits.length ? 'auto' : 'none' };
 }
 
+/* How far down an EA went is the number that says whether you could have sat
+   through it - and it is two different measurements. What it has actually lost
+   and taken back is exact, because MT5 keeps every closed deal. What it was
+   down while its trades were open is only knowable if somebody was watching,
+   so the agent samples it every twenty seconds and that part starts the day the
+   sampling started, not before. Neither is hidden behind the other. */
+function ddCell(r) {
+  if (!r || (!r.dd && r.ddFloating == null)) return '<span class="shot-none">—</span>';
+  const bits = [`realised ${mt5Money(r.ddRealised, '')} - from trades it closed`];
+  bits.push(r.ddFloating == null
+    ? 'open trades: not sampled yet, so nothing is known about dips while a trade was running'
+    : `open trades ${mt5Money(r.ddFloating, '')} - watched since ${mt5Time(new Date(r.ddSince * 1000).toISOString())}`);
+  const big = r.dd > 0;
+  return `<span class="${big ? 'ddbad' : ''}" title="${esc(bits.join(String.fromCharCode(10)))}">`
+    + `${big ? '-' + mt5Money(r.dd, '') : mt5Money(0, '')}</span>`;
+}
+
 /* Several magics per chart is the normal case, so the row shows their sum. */
 function sumRows(list) {
   if (!list.length) return null;
-  const t = { open: 0, floating: 0, trades: 0, wins: 0, realised: 0, last: '' };
+  const t = { open: 0, floating: 0, trades: 0, wins: 0, realised: 0, last: '',
+              dd: 0, ddRealised: 0, ddFloating: null, ddSince: null };
   for (const r of list) {
     t.open += r.open; t.floating += r.floating; t.trades += r.trades;
     t.wins += r.wins; t.realised += r.realised;
+    // Drawdowns are not added up: two magics at their worst on different days
+    // never cost that much together, so the honest summary is the worst one.
+    t.dd = Math.max(t.dd, r.dd || 0);
+    t.ddRealised = Math.max(t.ddRealised, r.ddRealised || 0);
+    if (r.ddFloating != null) t.ddFloating = Math.max(t.ddFloating || 0, r.ddFloating);
+    if (r.ddSince) t.ddSince = Math.min(t.ddSince || r.ddSince, r.ddSince);
     if (r.last && r.last > t.last) t.last = r.last;
   }
   return t;
@@ -3784,6 +3814,7 @@ async function loadCharts(quiet) {
   setHtml('chartstable', charts.length ? `<table class="mt5">
     <thead><tr><th>Expert</th><th>Symbol</th><th class="n">TF</th><th class="n">Open</th><th class="n">Floating</th>
       <th class="n">Trades</th><th class="n">Win%</th><th class="n">Realised 30d</th>
+      <th class="n" title="the worst this EA was ever down in the last 24 hours">Worst 24h</th>
       <th>Last trade<span data-tz></span></th><th style="text-align:center">Inspect</th>
       <th style="text-align:right">Action</th></tr></thead>
     <tbody>${charts.map(c => {
@@ -3826,6 +3857,7 @@ async function loadCharts(quiet) {
       <td class="n">${r && r.trades ? r.trades : '—'}</td>
       <td class="n">${rate == null ? '—' : rate + '%'}</td>
       <td class="n ${r ? mt5Cls(r.realised) : ''}">${r && r.trades ? mt5Money(r.realised, '') : '—'}</td>
+      <td class="n">${ddCell(r)}</td>
       <td class="mono">${r ? esc(mt5Time(r.last)) : '—'}</td>
       <td style="text-align:center">${settings}${logs ? " " + logs : ""}</td>
       <td style="text-align:right">${c.expert

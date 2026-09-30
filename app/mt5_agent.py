@@ -280,6 +280,19 @@ def _read_state_locked(now: float) -> dict:
 DEAL_ENTRY_OUT = (1, 3)          # OUT and OUT_BY: the leg that realises a result
 
 
+def _add_dd(row: dict, realised: dict, floating: dict) -> dict:
+    """Both drawdowns on one EA row, each saying what it is and is not."""
+    magic = int(row.get("magic") or 0)
+    got_r = realised.get(magic)
+    got_f = floating.get(magic)
+    row["dd_realised"] = got_r["dd"] if got_r else 0.0
+    row["dd_floating"] = got_f["dd"] if got_f else None      # None = never watched
+    row["dd_worst_open"] = got_f["worst"] if got_f else None
+    row["dd_since"] = got_f["since"] if got_f else None
+    row["dd"] = round(max(row["dd_realised"], row["dd_floating"] or 0.0), 2)
+    return row
+
+
 def _name_ea(row: dict, owners: dict) -> dict:
     """Put the EA's name on a history row when the ledger knows it.
 
@@ -299,6 +312,142 @@ def _name_ea(row: dict, owners: dict) -> dict:
         row["ea"] = owner.get("ea")
         row["ea_symbol"] = owner.get("symbol")
     return row
+
+
+DD_WINDOW_HOURS = 24
+FLOAT_SAMPLE_FILE = config.DATA_DIR / "floating_samples.json"
+FLOAT_SAMPLE_SECONDS = 20
+_float_lock = threading.Lock()
+
+
+def drawdown_of(points) -> float:
+    """The worst peak-to-trough fall in a series, as a positive number.
+
+    Points are (time, running value). The measure is the plain one: how far
+    below its own best this ever got. A series that only ever rose has no
+    drawdown, which is worth reporting as zero rather than as nothing.
+    """
+    peak, worst = None, 0.0
+    for _when, value in sorted(points, key=lambda p: p[0]):
+        peak = value if peak is None else max(peak, value)
+        worst = max(worst, peak - value)
+    return round(worst, 2)
+
+
+def realised_drawdowns(legs: dict, hours: int = DD_WINDOW_HOURS) -> dict:
+    """Per magic, the worst dip in its closed results over the window.
+
+    Each EA's trades are walked in the order they closed, adding up as they go,
+    and the answer is how far the running total ever fell from its own high.
+    This is exact and needs nothing recorded in advance - the deals are already
+    in MT5 - but it only knows about money that has actually been taken: a
+    position still open and deeply down is not in here at all.
+    """
+    cutoff = time.time() - hours * 3600
+    out = {}
+    for magic, rows in legs.items():
+        series, total = [], 0.0
+        for when, net in sorted(rows, key=lambda r: r[0]):
+            if when < cutoff:
+                continue
+            total = round(total + net, 2)
+            series.append((when, total))
+        if series:
+            out[magic] = {"dd": drawdown_of(series), "trades": len(series),
+                          "net": series[-1][1]}
+    return out
+
+
+def sample_floating() -> None:
+    """Write down what every EA is currently down or up on open trades.
+
+    MT5 keeps no equity curve per EA - it knows the account's, and it knows each
+    position, but nothing joins them over time. So the only way to answer "how
+    far down did that EA go today" while its trades were open is to have been
+    watching. This is that watching: one line every twenty seconds, magic to
+    floating result, a day and a half kept.
+
+    It samples, so it sees what it sees: a spike between two samples is missed,
+    and nothing before it started exists at all.
+    """
+    with _ipc_lock:
+        mt5 = _connect()
+        if mt5 is None:
+            return
+        try:
+            positions = mt5.positions_get() or ()
+        except Exception:                                      # noqa: BLE001
+            return
+    now = int(time.time())
+    per: dict[str, float] = {}
+    for pos in positions:
+        d = _as_dict(pos)
+        try:
+            magic = int(d.get("magic") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not magic:
+            continue
+        per[str(magic)] = round(per.get(str(magic), 0.0)
+                                + float(d.get("profit") or 0)
+                                + float(d.get("swap") or 0), 2)
+
+    with _float_lock:
+        try:
+            kept = json.loads(FLOAT_SAMPLE_FILE.read_text(encoding="utf-8")) \
+                if FLOAT_SAMPLE_FILE.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            kept = {}
+        if not isinstance(kept, dict):
+            kept = {}
+
+        floor = now - int(DD_WINDOW_HOURS * 1.5) * 3600
+        for magic, value in per.items():
+            rows = [r for r in kept.get(magic, []) if isinstance(r, list) and r[0] >= floor]
+            rows.append([now, value])
+            kept[magic] = rows[-8000:]
+        # an EA that closed everything is flat now, and saying so is what makes
+        # the recovery visible rather than the series simply stopping
+        for magic in list(kept):
+            if magic not in per:
+                rows = [r for r in kept[magic] if isinstance(r, list) and r[0] >= floor]
+                if rows and rows[-1][1] != 0:
+                    rows.append([now, 0.0])
+                if rows:
+                    kept[magic] = rows
+                else:
+                    kept.pop(magic)
+        try:
+            FLOAT_SAMPLE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            FLOAT_SAMPLE_FILE.write_text(json.dumps(kept, separators=(",", ":")),
+                                         encoding="utf-8")
+        except OSError:
+            pass
+
+
+def floating_drawdowns(hours: int = DD_WINDOW_HOURS) -> dict:
+    """Per magic, the worst its open trades ever stood over the window."""
+    with _float_lock:
+        try:
+            kept = json.loads(FLOAT_SAMPLE_FILE.read_text(encoding="utf-8")) \
+                if FLOAT_SAMPLE_FILE.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+    cutoff = time.time() - hours * 3600
+    out = {}
+    for magic, rows in (kept.items() if isinstance(kept, dict) else []):
+        points = [(r[0], r[1]) for r in rows
+                  if isinstance(r, list) and len(r) == 2 and r[0] >= cutoff]
+        if not points:
+            continue
+        try:
+            key = int(magic)
+        except (TypeError, ValueError):
+            continue
+        out[key] = {"dd": drawdown_of(points), "samples": len(points),
+                    "since": int(min(p[0] for p in points)),
+                    "worst": round(min(p[1] for p in points), 2)}
+    return out
 
 
 def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
@@ -335,6 +484,7 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
     local = timezone(timedelta(minutes=tz_minutes))
     today = datetime.now(local).date()
     seen_positions: dict[int, dict] = {}
+    legs: dict[int, list] = {}          # magic -> [(closed at, result)] for drawdown
 
     # An EA stamps its magic on the deal that OPENS a position; the closing deal
     # frequently carries 0, which made real EA trades look manual. Build the
@@ -396,6 +546,7 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
         if cm and cm not in e["comments"]:
             e["comments"].append(cm)
 
+        legs.setdefault(magic, []).append((when.timestamp(), net))
         day = when.astimezone(local).date().isoformat()
         by_day[day] = round(by_day.get(day, 0.0) + net, 2)
         entry_price, opened_at = open_of_position.get(pid, (None, ""))
@@ -427,6 +578,8 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
         return round(sum(v for k, v in by_day.items()
                          if datetime.fromisoformat(k).date() >= cutoff), 2)
 
+    realised = realised_drawdowns(legs)
+    floating = floating_drawdowns()
     data = {
         "ok": True,
         "at": datetime.now(timezone.utc).isoformat(),
@@ -441,8 +594,10 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
             "week": window(7),
             "month": window(30),
         },
-        "by_ea": sorted((tag_magic(_name_ea(e, owners)) for e in by_ea.values()),
+        "by_ea": sorted((tag_magic(_name_ea(_add_dd(e, realised, floating), owners))
+                         for e in by_ea.values()),
                         key=lambda e: e["profit"]),
+        "dd_hours": DD_WINDOW_HOURS,
         "by_day": [{"date": k, "profit": v} for k, v in sorted(by_day.items(), reverse=True)][:60],
         "closed": [tag_magic(c) for c in closed[:2000]],
     }
@@ -3173,6 +3328,24 @@ def _self_update_loop() -> None:
 WATCHDOG_TASK = "fxea-mt5-updater"
 
 
+def _start_sampler() -> None:
+    """Take a floating-result sample every twenty seconds, forever.
+
+    Cheap - one positions_get, no terminal work - and it is the only way the
+    question "how far down did that EA go today" can ever be answered, because
+    nothing records it for us.
+    """
+    def loop() -> None:
+        while True:
+            try:
+                sample_floating()
+            except Exception:                                  # noqa: BLE001
+                pass
+            time.sleep(FLOAT_SAMPLE_SECONDS)
+
+    threading.Thread(target=loop, daemon=True, name="floating-sampler").start()
+
+
 def _ensure_watchdog() -> str:
     """Register the restart task if it is missing, so a crash cannot go unnoticed.
 
@@ -3290,6 +3463,9 @@ def main() -> None:
     print(f"  self-update: every {UPDATE_EVERY_MINUTES} min from GitHub"
           if UPDATE_EVERY_MINUTES > 0 else "  self-update: off")
     print(f"  watchdog: {_ensure_watchdog()}")
+    _start_sampler()
+    print(f"  drawdown: sampling open results every {FLOAT_SAMPLE_SECONDS}s"
+          f" (worst dip over {DD_WINDOW_HOURS}h)")
     print(f"  manager EA: {sync_manager_ea()}")
 
     print(f"  pid: {os.getpid()}")
