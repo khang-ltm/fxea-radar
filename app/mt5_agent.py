@@ -280,8 +280,8 @@ def _read_state_locked(now: float) -> dict:
 DEAL_ENTRY_OUT = (1, 3)          # OUT and OUT_BY: the leg that realises a result
 
 
-def _add_dd(row: dict, realised: dict, floating: dict) -> dict:
-    """Both drawdowns on one EA row, each saying what it is and is not."""
+def _add_dd(row: dict, realised: dict, floating: dict, legs: dict) -> dict:
+    """Both halves on one magic's row, and the single curve they make together."""
     magic = int(row.get("magic") or 0)
     got_r = realised.get(magic)
     got_f = floating.get(magic)
@@ -289,7 +289,13 @@ def _add_dd(row: dict, realised: dict, floating: dict) -> dict:
     row["dd_floating"] = got_f["dd"] if got_f else None      # None = never watched
     row["dd_worst_open"] = got_f["worst"] if got_f else None
     row["dd_since"] = got_f["since"] if got_f else None
-    row["dd"] = round(max(row["dd_realised"], row["dd_floating"] or 0.0), 2)
+    # the same one-curve measure the per-EA figures use: a magic banked down and
+    # carrying down at once was down both at once, and the larger of the two
+    # halves is not that number
+    both = intraday_drawdown(legs, [magic])
+    row["dd"] = both["dd"]
+    row["dd_from"] = both.get("from")
+    row["dd_banked_only"] = both.get("banked_only", True)
     return row
 
 
@@ -741,7 +747,7 @@ def read_history(days: int = 30, tz_minutes: int = 0) -> dict:
             "week": window(7),
             "month": window(30),
         },
-        "by_ea": sorted((tag_magic(_name_ea(_add_dd(e, realised, floating), owners))
+        "by_ea": sorted((tag_magic(_name_ea(_add_dd(e, realised, floating, legs), owners))
                          for e in by_ea.values()),
                         key=lambda e: e["profit"]),
         "dd_hours": DD_WINDOW_HOURS,
