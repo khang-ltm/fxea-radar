@@ -4276,12 +4276,13 @@ function marketCard(e) {
     <div class="pick__head">
       <a class="row__open" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer"
          title="Open on mql5.com">${esc(e.name)}</a>
+      ${e.version ? `<span class="badge badge--ver" title="version on sale now">v${esc(e.version)}</span>` : ''}
       ${e.proven ? '' : '<span class="badge badge--none">unproven</span>'}
       ${s && s.topped_up ? '<span class="badge badge--risk">topped up</span>' : ''}
       ${stars}
       <span class="pick__score ${e.score >= 0 ? 'pro' : 'con'}">${e.score > 0 ? '+' : ''}${e.score}</span>
     </div>
-    <div class="mmeta">${esc(e.author || '')}${price ? ' \u00b7 ' + esc(price) : ''}${e.updated ? ' \u00b7 updated ' + esc(e.updated) : ''}</div>
+    <div class="mmeta">${esc(e.author || '')}${price ? ' \u00b7 ' + esc(price) : ''}${e.updated ? ' \u00b7 updated ' + esc(e.updated) : ''}${!e.version && !e.updated ? ' \u00b7 not read yet' : ''}</div>
     ${marketStats(s)}
     <ul class="pick__why">${why}</ul>
     ${s && s.url ? `<div class="pick__act"><a class="btn" href="${esc(s.url)}"
@@ -4298,7 +4299,7 @@ function renderMarket() {
   let rows = all.filter(e => {
     if (onlyProven && !e.proven) return false;
     if (clean && (!e.signal || e.signal.topped_up || (e.signal.weeks != null && e.signal.weeks < 12))) return false;
-    if (q && !`${e.name} ${e.author}`.toLowerCase().includes(q)) return false;
+    if (q && !`${e.name} ${e.author} ${e.version || ''}`.toLowerCase().includes(q)) return false;
     return true;
   });
   // proven first, then by score: an unproven EA is not a bad EA, it is an

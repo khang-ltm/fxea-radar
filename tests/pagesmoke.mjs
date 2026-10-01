@@ -128,7 +128,7 @@ if (unknown.length) {
 if (probe) {
   const fixture = [
     { id: '1', name: 'Proven EA', url: 'https://mql5.test/1', author: 'A Seller',
-      price: 499, rating: 4.5, reviews: 80, score: 9, proven: true,
+      price: 499, rating: 4.5, reviews: 80, score: 9, proven: true, version: '4.91',
       // deliberately free of numbers: an assertion that the growth figure
       // reached the card must not be satisfied by the reason text quoting it
       why: ['+5 grew well against its drawdown', '-1 something'],
@@ -149,6 +149,11 @@ if (probe) {
       [html.includes('<b>357%</b>'), 'the growth figure reaches the card'],
       [html.includes('<b>101</b>'), 'the age reaches the card'],
       [html.includes('<b>2.53</b>'), 'the profit factor reaches the card'],
+      [html.includes('v4.91'), 'the version is shown next to the name'],
+      [(html.match(/v4\.91/g) || []).length === 1, 'the version is shown once, not per field'],
+      [!html.includes('vundefined') && !html.includes('v</span>'),
+       'an EA with no version renders no version badge'],
+      [html.includes('not read yet'), 'a half-crawled entry says so rather than looking blank'],
       [html.includes('https://mql5.test/s/1'), 'the card links the live signal'],
       [!html.includes('undefined') && !html.includes('NaN'),
        'no field renders as undefined or NaN'],

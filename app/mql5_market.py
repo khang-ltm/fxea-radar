@@ -547,6 +547,7 @@ def public_view(data: dict, limit: int = 80) -> dict:
             "blurb": (e.get("blurb") or "")[:260],
             "score": e.get("score", 0), "why": e.get("why") or [],
             "proven": bool(e.get("proven")),
+            "version": prod.get("version") or "",
             "updated": prod.get("updated") or "", "published": prod.get("published") or "",
             "signal": {k: sig.get(k) for k in (
                 "url", "growth_pct", "dd_pct", "monthly_pct", "trades", "win_pct",
