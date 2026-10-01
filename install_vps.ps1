@@ -50,7 +50,12 @@ function Get-Code($dir, $url) {
     $root = (Get-ChildItem $tmpDir -Directory | Select-Object -First 1).FullName
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     # copy code only - never clobber .env.mt5, .venv or data/
-    foreach ($item in 'app', 'public', 'requirements.txt', 'install_vps.ps1', 'README.md') {
+    # The repair scripts have to travel with the code. restart_agent.ps1 was
+    # shipped to fix a stuck agent and then could not be run, because nothing
+    # ever copied it onto the VPS - a fix that cannot reach the broken machine
+    # is not a fix.
+    foreach ($item in 'app', 'public', 'requirements.txt', 'install_vps.ps1',
+                      'restart_agent.ps1', 'fix_watchdog.ps1', 'fix_mt5.ps1', 'README.md') {
         $src = Join-Path $root $item
         if (Test-Path $src) { Copy-Item $src -Destination $dir -Recurse -Force }
     }
