@@ -432,7 +432,7 @@ def score(entry: dict) -> tuple[int, list[str]]:
 
 def crawl(limit: int = 60, budget: int = 160, delay: float = 2.5,
           previous: dict | None = None, max_age_hours: int = 72,
-          log=print) -> dict:
+          deadline: float = 300.0, log=print) -> dict:
     """Listing -> product pages -> signal pages, inside a request budget.
 
     Each hop costs one request through a free, rate-limited reader, so anything
@@ -442,6 +442,12 @@ def crawl(limit: int = 60, budget: int = 160, delay: float = 2.5,
     """
     previous = previous or {}
     cache = {e["id"]: e for e in (previous.get("eas") or []) if e.get("id")}
+    # A crawl sits on the critical path of publishing the site, and a cold cache
+    # at three seconds a request is ten minutes of a deploy spent waiting on
+    # someone else's rate limit. Stop at the deadline and keep what was read:
+    # the next run continues from here, because anything fetched stays fresh for
+    # max_age_hours.
+    started = time.monotonic()
     now = datetime.now(timezone.utc)
     spent = 0
 
@@ -480,9 +486,9 @@ def crawl(limit: int = 60, budget: int = 160, delay: float = 2.5,
                       "product": old.get("product"), "checked_at": old.get("checked_at")}
             out.append(merged)
             continue
-        if spent >= budget:
-            # Out of requests: carry whatever is known so the entry still shows
-            # up, just without fresh numbers.
+        if spent >= budget or time.monotonic() - started > deadline:
+            # Out of requests or out of time: carry whatever is known so the
+            # entry still shows up, just without fresh numbers.
             out.append({**old, **entry} if old else entry)
             continue
 
@@ -516,7 +522,10 @@ def crawl(limit: int = 60, budget: int = 160, delay: float = 2.5,
         entry["proven"] = bool((entry.get("signal") or {}).get("trades"))
 
     out.sort(key=lambda e: (e.get("proven", False), e.get("score", 0)), reverse=True)
+    took = round(time.monotonic() - started)
+    fetched = sum(1 for e in out if e.get("checked_at") == now.isoformat())
     return {"eas": out, "crawled_at": now.isoformat(), "requests": spent,
+            "took_seconds": took, "refreshed": fetched,
             "proven": sum(1 for e in out if e.get("proven")), "stale": False}
 
 
@@ -560,18 +569,21 @@ def main() -> None:
     ap.add_argument("--budget", type=int, default=160, help="max requests through the reader")
     ap.add_argument("--delay", type=float, default=2.5, help="seconds between requests")
     ap.add_argument("--max-age", type=int, default=72, help="hours before an entry is re-fetched")
+    ap.add_argument("--deadline", type=float, default=300.0,
+                    help="seconds to spend crawling before keeping what was read")
     ap.add_argument("--dry-run", action="store_true", help="print, do not write the store")
     args = ap.parse_args()
 
     data = crawl(limit=args.limit, budget=args.budget, delay=args.delay,
-                 previous=load_market(), max_age_hours=args.max_age)
+                 previous=load_market(), max_age_hours=args.max_age,
+                 deadline=args.deadline)
     if args.dry_run:
         print(json.dumps(data, indent=2)[:4000])
         return
     save_market(data)
     print(f"[market] {len(data.get('eas') or [])} experts, "
           f"{data.get('proven', 0)} with a live signal, "
-          f"{data.get('requests', 0)} requests")
+          f"{data.get('requests', 0)} requests in {data.get('took_seconds', 0)}s")
 
 
 if __name__ == "__main__":

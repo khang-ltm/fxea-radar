@@ -80,7 +80,8 @@ jobs:
       # anything checked in the last 3 days is reused, so a twice-daily schedule
       # re-reads each EA about every third run instead of every time.
       - name: Crawl the MQL5 Market
-        run: python -m app.mql5_market --limit 60 --budget 90 --delay 3 --max-age 72
+        run: python -m app.mql5_market --limit 60 --budget 90 --delay 2 --max-age 72 --deadline 240
+        timeout-minutes: 6        # the deadline should stop it first; this is the backstop
         continue-on-error: true   # the reader rate-limits; a miss keeps yesterday's
 
       - name: Build static site
