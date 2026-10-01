@@ -574,6 +574,7 @@ def check_no_control_chars() -> None:
     for rel in ("public/index.html", "app/mt5_agent.py", "app/installer.py",
                 "app/buzz.py", "app/mq5_inputs.py", "app/basket_dd.py",
                 "app/mql5_market.py", "install_vps.ps1",
+                "restart_agent.ps1", "fix_watchdog.ps1",
                 "mql5/FxeaManager.mq5"):
         f = ROOT / rel
         if not f.exists():

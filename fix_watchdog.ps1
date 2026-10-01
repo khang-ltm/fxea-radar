@@ -54,8 +54,27 @@ if ($running -eq 0) {
     Start-Sleep -Seconds 12
 }
 
-# --- verify -----------------------------------------------------------------
+# --- did the update actually take? ------------------------------------------
+# The check above only asks whether SOME agent is running. A stale process makes
+# that true while the new code sits unused on disk, which is how an update can
+# report success twice a day and change nothing. Compare what the process says
+# it is against what is on disk, and force a real restart when they differ.
 $token = ((Get-Content (Join-Path $InstallDir '.env.mt5') | Select-String '^MT5_TOKEN=').Line -split '=', 2)[1]
+
+try {
+    $h = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/health" `
+        -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 15
+    if ($h -and $h.code -and $h.on_disk -and $h.code -ne $h.on_disk) {
+        Say ("running {0} but {1} is on disk - forcing a restart" -f $h.code, $h.on_disk) 'Yellow'
+        & powershell -ExecutionPolicy Bypass -File (Join-Path $InstallDir 'restart_agent.ps1')
+    } elseif ($h -and $h.code) {
+        Say ("running {0}, matching disk" -f $h.code) 'Green'
+    }
+} catch {
+    Say "could not read /api/health: $_" 'Yellow'
+}
+
+# --- verify -----------------------------------------------------------------
 try {
     $r = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/charts" `
         -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 15

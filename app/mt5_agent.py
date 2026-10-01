@@ -1781,7 +1781,8 @@ def self_check() -> dict:
     if on_disk and here != "unknown" and on_disk != here:
         row("agent", "bad",
             f"running {here} but {on_disk} is on disk - a restart did not take",
-            "kill python.exe running app.mt5_agent on the VPS, then start the agent task")
+            "run restart_agent.ps1 on the VPS - stopping the task is not enough, "
+            "it kills the PowerShell wrapper and leaves python.exe serving old code")
     elif there and health.get("update"):
         row("agent", "warn", f"running {here}, GitHub has {there}",
             "press the update button next to Connect")
