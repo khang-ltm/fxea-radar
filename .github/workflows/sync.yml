@@ -54,6 +54,7 @@ jobs:
             data/posts.json.gz
             data/shots.json.gz
             data/state.json.gz
+            data/market.json.gz
           key: fxea-store-${{ github.run_id }}
           restore-keys: |
             fxea-store-
@@ -74,6 +75,14 @@ jobs:
         run: python -m app.sync_shots --since all
         continue-on-error: true   # a verdict hiccup must not block publishing
 
+      # mql5.com answers 403 to a runner, so this goes through r.jina.ai, which
+      # is free and rate-limited. The budget caps a run at ~90 requests and
+      # anything checked in the last 3 days is reused, so a twice-daily schedule
+      # re-reads each EA about every third run instead of every time.
+      - name: Crawl the MQL5 Market
+        run: python -m app.mql5_market --limit 60 --budget 90 --delay 3 --max-age 72
+        continue-on-error: true   # the reader rate-limits; a miss keeps yesterday's
+
       - name: Build static site
         env:
           # set repo variable PAGES_DOMAIN (e.g. fxea-radar.linkpc.net) AFTER the
@@ -90,6 +99,7 @@ jobs:
             data/posts.json.gz
             data/shots.json.gz
             data/state.json.gz
+            data/market.json.gz
           key: fxea-store-${{ github.run_id }}
 
       # GitHub disables scheduled workflows after 60 days of repository inactivity.

@@ -21,7 +21,8 @@ from . import config
 from .buzz import attach_buzz
 from .grouping import group_products
 from .shots import attach_shots
-from .store import load_posts, load_state
+from .mql5_market import public_view as market_view
+from .store import load_market, load_posts, load_state
 
 _sync_lock = threading.Lock()
 _sync_status = {
@@ -303,6 +304,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "tag": tag,
                     "summary": summary,
                     "state": load_state(),
+                    "market": market_view(load_market()),
                     "sync": _sync_status,
                 }
             )

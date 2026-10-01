@@ -338,6 +338,17 @@ main { max-width: 1600px; margin: 0 auto; padding: var(--space-4); }
 .badge--run  { border-color: var(--color-warn); color: #FDE68A; }
 
 .shot-none { color: var(--color-border); font-size: 12px; }
+
+.mktbar { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0 14px; }
+.mktbar .chk { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--color-muted-fg); cursor: pointer; }
+.mktsearch { flex: 1 1 200px; min-width: 160px; }
+.mmeta { font-size: 12px; color: var(--color-muted-fg); margin: 2px 0 8px; }
+.mchips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.mchip { font-size: 12px; padding: 2px 8px; border: 1px solid var(--color-border); border-radius: 999px; color: var(--color-muted-fg); }
+.mchip b { color: var(--color-fg); font-family: var(--font-head); }
+.mchip.good b { color: #86EFAC; }
+.mchip.bad b { color: #FCA5A5; }
+.mstar { font-size: 12px; color: var(--color-muted-fg); }
 .tlinks { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .tlink { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; min-height: 26px;
   border: 1px solid var(--color-border); border-radius: var(--radius-sm);
@@ -566,6 +577,7 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <div class="segmented" role="tablist" aria-label="View">
       <button class="btn" id="tab-eas" role="tab" aria-selected="true">EA catalog</button>
       <button class="btn" id="tab-picks" role="tab" aria-selected="false">Shortlist</button>
+      <button class="btn" id="tab-market" role="tab" aria-selected="false">MQL5 Market</button>
       <button class="btn" id="tab-mt5" role="tab" aria-selected="false">My MT5</button>
       <button class="btn" id="tab-myea" role="tab" aria-selected="false">My EA</button>
     </div>
@@ -690,6 +702,25 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
     <section class="mt5sect">
       <h2>Best avoided <span class="num" id="avoidcount"></span></h2>
       <div id="avoidlist"></div>
+    </section>
+  </div>
+
+  <div id="view-market" hidden style="min-width: 0">
+    <section class="mt5sect">
+      <h2>Paid EAs, ranked by their live account <span class="num" id="mktcount"></span></h2>
+      <p class="hint">The MQL5 Market's own star ratings are not evidence - they are
+      bought, and <em>5 (4)</em> means four people clicked. The one thing on that site
+      nobody can type in by hand is the <strong>live signal</strong>: a real account the
+      terminal updates. So each EA here is ranked on its signal, not its shop page, and
+      an EA without one is marked unproven rather than scored badly.</p>
+      <p class="hint" id="mktwhen"></p>
+      <div class="mktbar">
+        <label class="chk"><input type="checkbox" id="mkt-proven"> Only ones with a live signal</label>
+        <label class="chk"><input type="checkbox" id="mkt-clean"> Hide topped-up and brand-new accounts</label>
+        <label class="search mktsearch"><span class="sr-only">Search the Market</span>
+          <input id="mkt-q" type="search" placeholder="Search name or author…" autocomplete="off"></label>
+      </div>
+      <div id="mktlist"></div>
     </section>
   </div>
 
@@ -995,6 +1026,7 @@ const HIDDEN_TAGS = new Set(['has-archive', 'has-ea-file', 'has-set-file', 'temp
 const visibleTags = p => (p.tags || []).filter(t => !HIDDEN_TAGS.has(t));
 
 const chr10 = () => String.fromCharCode(10);
+let MARKET = { eas: [] };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtSize = b => !b ? '' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
 const when = ts => {
@@ -1010,6 +1042,7 @@ async function load() {
   POSTS = d.posts || [];
   SUMMARY = d.summary || {};
   STATE = d.state || {};
+  MARKET = d.market || { eas: [] };
   SYNC = d.sync || {};
   LOADED = { matched: d.matched ?? POSTS.length, truncated: !!d.truncated, collapsed: d.collapsed || 0 };
   fillSelect('pair', SUMMARY.pairs || []);
@@ -4335,12 +4368,98 @@ function renderPicks() {
   if (MT5?.url && !EA_ROWS.length) loadEas(true).then(() => renderPicks()).catch(() => {});
 }
 
+/* ── MQL5 Market ──────────────────────────────────────────────── */
+
+const money = n => n == null ? '' : '$' + Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
+const pct = n => n == null ? null : Number(n).toFixed(Number(n) % 1 ? 1 : 0) + '%';
+
+/* The numbers a buyer would check first, in the order they would check them.
+   Each one is omitted rather than shown blank: a dash in a results table reads
+   as a measurement of zero, which is how a missing field becomes a lie. */
+function marketStats(s) {
+  if (!s) return '';
+  const chips = [];
+  const push = (label, value, tone) => {
+    if (value == null || value === '') return;
+    chips.push(`<span class="mchip ${tone || ''}"><b>${esc(value)}</b> ${esc(label)}</span>`);
+  };
+  push('growth', pct(s.growth_pct), s.growth_pct > 0 ? 'good' : s.growth_pct < 0 ? 'bad' : '');
+  push('worst drawdown', pct(s.dd_pct), s.dd_pct >= 30 ? 'bad' : '');
+  push('trades', s.trades == null ? null : Math.round(s.trades));
+  push('won', pct(s.win_pct));
+  push('profit factor', s.profit_factor == null ? null : s.profit_factor.toFixed(2));
+  if (s.weeks != null) {
+    push(s.weeks_estimated ? 'weeks live (approx)' : 'weeks live',
+         Math.round(s.weeks), s.weeks < 12 ? 'bad' : '');
+  }
+  push('max deposit load', pct(s.deposit_load), s.deposit_load >= 50 ? 'bad' : '');
+  return `<div class="mchips">${chips.join('')}</div>`;
+}
+
+function marketCard(e) {
+  const s = e.signal;
+  const why = (e.why || []).map(w => {
+    const tone = w.startsWith('+') ? 'pro' : w.startsWith('-') ? 'con' : '';
+    return `<li class="${tone}">${esc(w)}</li>`;
+  }).join('');
+  const price = e.free ? 'Free' : money(e.price);
+  const stars = e.rating == null ? '' :
+    `<span class="mstar" title="MQL5 star rating - sellers can buy these">${e.rating} \u2605 (${e.reviews || 0})</span>`;
+  return `<div class="pick">
+    <div class="pick__head">
+      <a class="row__open" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer"
+         title="Open on mql5.com">${esc(e.name)}</a>
+      ${e.proven ? '' : '<span class="badge badge--none">unproven</span>'}
+      ${s && s.topped_up ? '<span class="badge badge--risk">topped up</span>' : ''}
+      ${stars}
+      <span class="pick__score ${e.score >= 0 ? 'pro' : 'con'}">${e.score > 0 ? '+' : ''}${e.score}</span>
+    </div>
+    <div class="mmeta">${esc(e.author || '')}${price ? ' \u00b7 ' + esc(price) : ''}${e.updated ? ' \u00b7 updated ' + esc(e.updated) : ''}</div>
+    ${marketStats(s)}
+    <ul class="pick__why">${why}</ul>
+    ${s && s.url ? `<div class="pick__act"><a class="btn" href="${esc(s.url)}"
+       target="_blank" rel="noopener noreferrer">Open the live signal</a></div>` : ''}
+  </div>`;
+}
+
+function renderMarket() {
+  const all = MARKET.eas || [];
+  const onlyProven = document.getElementById('mkt-proven').checked;
+  const clean = document.getElementById('mkt-clean').checked;
+  const q = (document.getElementById('mkt-q').value || '').trim().toLowerCase();
+
+  let rows = all.filter(e => {
+    if (onlyProven && !e.proven) return false;
+    if (clean && (!e.signal || e.signal.topped_up || (e.signal.weeks != null && e.signal.weeks < 12))) return false;
+    if (q && !`${e.name} ${e.author}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  // proven first, then by score: an unproven EA is not a bad EA, it is an
+  // unknown one, and sorting it in among measured results implies otherwise
+  rows = rows.slice().sort((a, b) => (b.proven - a.proven) || (b.score - a.score));
+
+  document.getElementById('mktcount').textContent = rows.length ? `(${rows.length})` : '';
+  document.getElementById('mktwhen').textContent = MARKET.crawled_at
+    ? `${all.length} experts crawled ${ago(MARKET.crawled_at)}, ${MARKET.proven || 0} of them with a live signal.`
+      + (MARKET.stale ? ' The last crawl could not reach mql5.com, so these are the previous numbers.' : '')
+    : '';
+
+  setHtml('mktlist', rows.length
+    ? rows.map(marketCard).join('')
+    : `<div class="empty">Nothing crawled yet. The Market is read on a schedule -
+       run <code>python -m app.mql5_market</code> to fill it now.</div>`);
+}
+
+for (const id of ['mkt-proven', 'mkt-clean']) {
+  document.getElementById(id).onchange = renderMarket;
+}
+document.getElementById('mkt-q').oninput = renderMarket;
+
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 const TAB_KEY = 'fxea_tab';
-let TAB = oneOf(urlParams.get('tab'), ['eas', 'picks', 'mt5', 'myea'],
-                localStorage.getItem(TAB_KEY) || 'eas');
-
-const TABS = ['eas', 'picks', 'mt5', 'myea'];   // catalog | shortlist | account | control
+const TABS = ['eas', 'picks', 'market', 'mt5', 'myea'];
+//             catalog | shortlist | mql5 market | account | control
+let TAB = oneOf(urlParams.get('tab'), TABS, localStorage.getItem(TAB_KEY) || 'eas');
 
 function showTab(name) {
   TAB = TABS.includes(name) ? name : 'eas';
@@ -4360,6 +4479,7 @@ function showTab(name) {
   if (!isEas) document.getElementById('stale').hidden = true;
 
   if (TAB === 'picks') renderPicks();
+  if (TAB === 'market') renderMarket();
   if (TAB === 'mt5') { showSub(SUBTAB); loadMt5(); loadSelfCheck(); }
   if (TAB === 'myea') { showEaSub(EASUB); loadEas().then(loadCharts); }
 }

@@ -18,7 +18,8 @@ from .buzz import attach_buzz
 from .grouping import group_products
 from .server import summarize
 from .shots import attach_shots
-from .store import load_posts, load_state
+from .mql5_market import public_view as market_view
+from .store import load_market, load_posts, load_state
 
 SITE_DIR = config.ROOT / "site"
 
@@ -57,6 +58,7 @@ def build_payload(limit: int = 3000) -> dict:
         "tag": "",
         "summary": summary,
         "state": state,
+        "market": market_view(load_market()),
         "sync": {
             "running": False,
             "static": True,

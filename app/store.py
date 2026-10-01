@@ -65,6 +65,16 @@ def save_state(state: dict) -> None:
     _write(config.STATE_FILE, state)
 
 
+def load_market() -> dict:
+    """The last MQL5 Market crawl. Missing is normal - the tab says so."""
+    data = _read(config.MARKET_FILE, {})
+    return data if isinstance(data, dict) else {}
+
+
+def save_market(data: dict) -> None:
+    _write(config.MARKET_FILE, data)
+
+
 def merge_posts(existing: list[dict], incoming: list[dict]) -> tuple[list[dict], int, int]:
     """Key on channel+message id. Edited posts get refreshed but keep their first_seen."""
     by_key = {p["key"]: p for p in existing}

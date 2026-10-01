@@ -81,11 +81,44 @@ app/parse.py    message -> structured EA fields (all the regex work)
 app/sync.py     fetch messages + attachments, merge into the store
 app/store.py    JSON store (data/posts.json, data/state.json)
 app/server.py   stdlib HTTP server + JSON API
+app/mql5_market.py  MQL5 Market crawler (ranks paid EAs by their live signal)
 public/index.html   single-page dashboard
 data/           posts.json, state.json, tg.session, files/   (all gitignored)
 ```
 
 API: `GET /api/posts`, `GET /api/state`, `POST /api/sync`, `GET /files/<path>`.
+
+## The MQL5 Market tab
+
+Ranks paid MT5 Experts on mql5.com by the one thing on that site that is
+measured rather than claimed: the **live signal** an author links from the
+product page - a real account the terminal updates, with growth, drawdown,
+trade count and profit factor. Star ratings are ignored as evidence; they are
+bought, and `5 (4)` means four people clicked five stars.
+
+    python -m app.mql5_market --limit 60 --budget 90
+
+mql5.com answers **403** to every request that is not a browser on a home
+connection - the Market, product pages, the Signals section and even the RSS
+feeds, whatever user-agent is sent. That is Cloudflare, so there is no header
+to fix. Pages are therefore read through `r.jina.ai`, which renders them and
+returns Markdown. Only public mql5.com URLs are ever sent there: no account
+data, no agent token.
+
+Scoring refuses to believe a growth figure until three things check out:
+
+- **Top-ups.** A percentage is growth measured against a deposit, so an account
+  that keeps being paid into has no meaningful percentage. One crawled signal
+  advertised 233%/month having started at $287 with $7,834 paid in; its actual
+  growth was 0.65%.
+- **Age.** Four weeks of profit is a sample, not a record.
+- **Drawdown.** Growth over how deep the account went to get it is the only
+  form of the number worth ranking on.
+
+An EA with no signal is marked **unproven** rather than scored badly - that is
+an unknown, not a verdict. The crawl runs in the twice-daily Actions job,
+caches for 72 hours per EA, and keeps the previous result if the reader
+rate-limits.
 
 ## Parsing accuracy
 

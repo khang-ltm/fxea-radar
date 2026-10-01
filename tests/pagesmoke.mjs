@@ -17,6 +17,13 @@ const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/scrip
 
 const ids = new Set([...html.matchAll(/id="([^"]+)"/g)].map(m => m[1]));
 
+// Appended to the page's last script block so the test can call into it.
+const PROBE = `
+;globalThis.__probe = {
+  renderMarket,
+  setMarket(d) { MARKET = d; },
+};`;
+
 const node = (id = '') => {
   const el = {
     id,
@@ -26,6 +33,7 @@ const node = (id = '') => {
     children: [],
     selectedOptions: [],
     value: '',
+    checked: false,
     textContent: '',
     innerHTML: '',
     hidden: false,
@@ -49,12 +57,17 @@ globalThis.setTimeout = (fn) => 0;          // no timers: this is a load-time ch
 globalThis.setInterval = () => 0;
 globalThis.clearTimeout = () => {};
 globalThis.clearInterval = () => {};
+// One node per id, kept: a browser hands back the same element every time, and
+// without that a render writes its HTML into a throwaway object and nothing can
+// be asserted about what it produced.
+const nodes = new Map();
 globalThis.document = {
   documentElement: node('html'),
   body: node('body'),
   getElementById(id) {
     if (!ids.has(id)) missing.push(id);
-    return node(id);
+    if (!nodes.has(id)) nodes.set(id, node(id));
+    return nodes.get(id);
   },
   querySelector: () => node(),
   querySelectorAll: () => [],
@@ -77,15 +90,20 @@ globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
 globalThis.requestAnimationFrame = fn => fn();
 
 let failed = false;
+let probe = null;
 try {
   for (const [i, block] of blocks.entries()) {
     try {
-      new Function(block)();
+      // The page's functions live inside the block's own scope, so a test can
+      // only reach them by asking the block to hand them out on its way past.
+      const last = i === blocks.length - 1;
+      new Function(block + (last ? PROBE : ''))();
     } catch (err) {
       throw new Error(`block ${i + 1}/${blocks.length}: ${err.message}`);
     }
   }
   console.log(`  PASS  all ${blocks.length} script block(s) run without throwing`);
+  probe = globalThis.__probe || null;
 } catch (err) {
   failed = true;
   console.log(`  FAIL  the page script threw at load: ${err.message}`);
@@ -101,6 +119,51 @@ if (unknown.length) {
   console.log(`  FAIL  script asked for ids the page does not have: ${unknown.join(', ')}`);
 } else {
   console.log('  PASS  every element the script looks up exists in the page');
+}
+
+// -- the MQL5 Market tab renders ------------------------------------------
+// An EA is ranked on its live signal, so the card has to survive both shapes it
+// arrives in: one with a signal, and one without. The unproven case shipped as
+// a crash once already, reading .dd_pct off a null signal.
+if (probe) {
+  const fixture = [
+    { id: '1', name: 'Proven EA', url: 'https://mql5.test/1', author: 'A Seller',
+      price: 499, rating: 4.5, reviews: 80, score: 9, proven: true,
+      // deliberately free of numbers: an assertion that the growth figure
+      // reached the card must not be satisfied by the reason text quoting it
+      why: ['+5 grew well against its drawdown', '-1 something'],
+      signal: { url: 'https://mql5.test/s/1', growth_pct: 357, dd_pct: 16, trades: 880,
+                win_pct: 61.2, profit_factor: 2.53, weeks: 101, deposit_load: 4.8 } },
+    { id: '2', name: 'Unproven EA', url: 'https://mql5.test/2', author: 'B Seller',
+      free: true, rating: null, reviews: 0, score: 0, proven: false,
+      why: ['no live signal - nothing here is measured'], signal: null },
+  ];
+  try {
+    probe.setMarket({ eas: fixture, crawled_at: new Date().toISOString(), proven: 1 });
+    probe.renderMarket();
+    const html = document.getElementById('mktlist').innerHTML || '';
+    const checks = [
+      [html.includes('Proven EA'), 'the proven EA is listed'],
+      [html.includes('Unproven EA'), 'the unproven EA is listed'],
+      [html.includes('unproven'), 'the unproven EA is labelled, not scored badly'],
+      [html.includes('<b>357%</b>'), 'the growth figure reaches the card'],
+      [html.includes('<b>101</b>'), 'the age reaches the card'],
+      [html.includes('<b>2.53</b>'), 'the profit factor reaches the card'],
+      [html.includes('https://mql5.test/s/1'), 'the card links the live signal'],
+      [!html.includes('undefined') && !html.includes('NaN'),
+       'no field renders as undefined or NaN'],
+    ];
+    for (const [ok, what] of checks) {
+      if (ok) { console.log(`  PASS  ${what}`); }
+      else { failed = true; console.log(`  FAIL  ${what}`); }
+    }
+  } catch (err) {
+    failed = true;
+    console.log(`  FAIL  the Market tab threw while rendering: ${err.message}`);
+  }
+} else {
+  failed = true;
+  console.log('  FAIL  the page no longer exposes renderMarket to the smoke test');
 }
 
 process.exit(failed ? 1 : 0);
