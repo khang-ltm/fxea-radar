@@ -1721,6 +1721,42 @@ def _remote_sha_cached(fresh: bool = False, max_age: float = 600.0) -> str:
     return sha
 
 
+def cpu_name() -> str:
+    """What processor this machine actually has.
+
+    MT5 refuses to load an EA compiled for AVX2 on a CPU without it, and says
+    so in the Journal - but the Journal does not say what the CPU is, and that
+    is the thing you quote to a VPS provider when asking them to fix it.
+    """
+    if os.name != "nt":
+        import platform
+        return platform.processor() or ""
+    try:
+        import winreg
+
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                             r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        with key:
+            return str(winreg.QueryValueEx(key, "ProcessorNameString")[0]).strip()
+    except Exception:                                          # noqa: BLE001
+        import platform
+        return platform.processor() or ""
+
+
+def cpu_refusals(days: int = 7) -> list:
+    """EAs this machine's CPU has refused to run, from MT5's own Journal."""
+    log = read_terminal_log(2000, "CPU architecture", "journal", days)
+    names = []
+    for line in (log.get("lines") or []) if log.get("ok") else []:
+        start = line.find("the file '")
+        if start < 0:
+            continue
+        name = line[start + 10:].split("'", 1)[0]
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
 def self_check() -> dict:
     """Every part of this setup, in one answer, each saying ok or why not.
 
@@ -1773,6 +1809,14 @@ def self_check() -> dict:
         row("terminal", "warn" if _terminal_running() else "bad",
             "running, but not answering the API" if _terminal_running() else "not running",
             "start MetaTrader 5 on the VPS")
+
+    refused = cpu_refusals()
+    row("CPU", "warn" if refused else "ok",
+        (cpu_name() or "unknown")
+        + (f" - no AVX2, so {len(refused)} EA(s) will not load: " + ", ".join(refused[:3])
+           if refused else ""),
+        "ask the VPS provider for a host-passthrough CPU, or run those EAs elsewhere"
+        if refused else "")
 
     algo = working_expertmode()
     row("algo trading", "ok" if algo else "warn",
@@ -1839,7 +1883,8 @@ def agent_health(fresh: bool = False) -> dict:
     import subprocess
 
     here = _current_sha()
-    out = {"ok": True, "code": here[:7] or "unknown", "on_disk": _disk_sha()[:7]}
+    out = {"ok": True, "code": here[:7] or "unknown", "on_disk": _disk_sha()[:7],
+           "cpu": cpu_name()}
 
     # the agent polls for its own updates, so the page could only ever say what
     # it was running, never that a fix was already waiting
@@ -3017,8 +3062,14 @@ def _attach_and_verify(body: dict) -> dict:
     # the manager could not read the chart's inputs. Silence used to be reported
     # as failure, which sent people to refresh a Navigator that was already fine
     # while their EA sat on the chart trading.
+    # MT5 says exactly why it would not load something, and it is worth
+    # repeating word for word rather than guessing. "AVX2 required, you have
+    # X64 only" is a fact about the machine that no amount of refreshing the
+    # Navigator will change, and it was being reported as a failed attach with
+    # advice to refresh the Navigator.
     trouble = ("cannot open", "not found", "failed to load", "no such file",
-               "cannot load", "access denied")
+               "cannot load", "access denied", "cpu architecture", "avx",
+               "loading of", "failed [")
     loaded, refused, waited = None, "", 0.0
     while waited < 15:
         time.sleep(1.5)
@@ -3057,7 +3108,7 @@ def _attach_and_verify(body: dict) -> dict:
 
     if loaded is False:
         answer["ok"] = False
-        answer["error"] = (f"MT5 refused to load {expert}: {refused}"
+        answer["error"] = (f"MT5 refused to load {expert} - {refused}"
                            if refused else
                            f"MT5 could not load {expert} - in MT5 right-click Navigator"
                            " > Expert Advisors > Refresh, then attach again")
