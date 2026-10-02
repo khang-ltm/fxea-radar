@@ -357,4 +357,32 @@ if (probe) {
   else console.log(`  PASS  all ${pairs.length} names key to their own Market product`);
 }
 
+// -- every real input on the account reads as words -------------------------
+// tests/fixtures/live_inputs.json holds the input NAMES of the EAs running on
+// the owner's account (values reduced to their kind, except text the EA's
+// author wrote). Every one must come out as a heading, help text, or a label
+// that is not still the variable name.
+if (probe) {
+  const fx = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'tests', 'fixtures', 'live_inputs.json'), 'utf8'));
+  const raw = [];
+  let total = 0;
+  for (const ea of fx.eas) {
+    const inputs = ea.inputs.map(r => ({ k: r.k, v: r.v !== undefined ? r.v : (r.kind === 'bool' ? 'true' : r.kind === 'int' ? '1' : r.kind === 'float' ? '1.0' : r.kind === 'url' ? 'https://x.test/' : 'x') }));
+    const secs = probe.derivedSections(inputs);
+    for (const i of inputs) {
+      total++;
+      if (probe.isHeading(i)) continue;
+      const v = probe.vendorLabel(i.k);
+      const sec = secs && secs.has(probe.sectionOf(i.k)) ? probe.sectionOf(i.k) : '';
+      const label = probe.trimSection(v ? v.label : probe.commonLabel(i.k) || probe.prettyKey(i.k), sec);
+      // still raw: an underscore, a camelCase join, or one token so long it can only be
+      // words run together ("secondadditionaltrade"). "automatically" is a word.
+      if (!label || /undefined|NaN/.test(label) || /_/.test(label) || /[a-z][A-Z]/.test(label)
+          || label.split(/\s+/).some(w => w.length >= 16)) raw.push(`${ea.ea}: ${i.k} -> "${label}"`);
+    }
+  }
+  if (raw.length) { failed = true; console.log(`  FAIL  ${raw.length} of ${total} live inputs still read raw:`); raw.slice(0, 10).forEach(r => console.log('        ' + r)); }
+  else console.log(`  PASS  all ${total} live inputs read as words`);
+}
+
 process.exit(failed ? 1 : 0);

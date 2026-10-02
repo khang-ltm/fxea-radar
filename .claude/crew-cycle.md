@@ -69,6 +69,23 @@ agent who did something, plus a "waiting on you" line listing the PR and any
 gated items. This text is the day's meeting; it is copied onto the Radar Crew
 board.
 
+## Real data in the repo
+
+Two public fixtures exist so a cycle has something real to check against:
+
+- `tests/fixtures/live_inputs.json` - the input names of the EAs running on the
+  owner's account, values reduced to their kind except text the EA's author
+  wrote. `node tests/pagesmoke.mjs` renders all of them and fails on any that
+  still read as a variable name.
+- `tests/fixtures/market_sample.json` - crawled MQL5 Market listings and their
+  sellers' public signals, the same shape the Market tab renders.
+
+Never add private data to them: no trade history, balances, lot sizes, magic
+numbers or settings values. The repo is public.
+
+Setup note: telethon's `pyaes` dependency does not build in the cloud sandbox
+without `pip install setuptools wheel` first.
+
 ## Known gaps
 
 Small, checkable, not behind a gate. Remove an item when its PR merges.
@@ -81,4 +98,7 @@ Small, checkable, not behind a gate. Remove an item when its PR merges.
 - The MQL5 Market crawl reaches only the first ~70 listings: later pages
   lazy-load through XHR.
 - Settings that differ from the author's shipped `.set` are not marked yet.
-  Display only - never a reset button.
+  Display only - never a reset button. Blocked in the cloud: no `.set` files are tracked.
+- Market cards: check every listing in `tests/fixtures/market_sample.json`
+  renders without a blank or misleading field (a missing number must read as
+  missing, never as 0).

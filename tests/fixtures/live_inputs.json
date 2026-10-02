@@ -1,0 +1,1101 @@
+{
+ "_about": "Input names from the EAs running on the owner's account, 2026-10-02. Values are reduced to their kind; only text the EA's author wrote (headings, help, manual links) is kept. No magic numbers, lot sizes or other settings.",
+ "eas": [
+  {
+   "ea": "Wave Rider EA MT5",
+   "inputs": [
+    {
+     "k": "Inp_EnableUI",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_TradeMode",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_TradeDirection",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_EnableSingleStrategyOnly",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_EnableMultiCurrency",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_MaxSpreadPoints",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_CommentName",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_CommentAppendStrategy",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_RiskProfile_Info",
+     "kind": "text",
+     "v": "Cautious filters more setups; Balanced is the default; Aggressive accepts more setups without changing lot size."
+    },
+    {
+     "k": "Inp_RiskProfile",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_PositionSizeMethod",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_FixedLotSize",
+     "kind": "float"
+    },
+    {
+     "k": "Inp_AutoRiskLevel",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_ScaleByBalance",
+     "kind": "float"
+    },
+    {
+     "k": "Inp_BaseLotSize",
+     "kind": "float"
+    },
+    {
+     "k": "Inp_SupportResistanceStrategy_Enabled",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_SupportResistanceStrategy_TradeMagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_PullbackStrategy_Enabled",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_PullbackStrategy_TradeMagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_TrendBreakoutStrategy_Enabled",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_TrendBreakoutStrategy_TradeMagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_M5Strategy_Enabled",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_M5Strategy_TradeMagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_VolumeStrategy_Enabled",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_VolumeStrategy_TradeMagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_MomentumStrategy_Enabled",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_MomentumStrategy_TradeMagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_ImpulseRiderStrategy_Enabled",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_ImpulseRiderStrategy_TradeMagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_Grid_Info_WideModes",
+     "kind": "text",
+     "v": "Slow is the balanced default; Fast starts recovery sooner with higher activity and drawdown."
+    },
+    {
+     "k": "Inp_Grid_Info_StaticHybrid",
+     "kind": "text",
+     "v": "Static uses fixed spacing; Hybrid keeps fixed minimums but widens gaps when volatility rises."
+    },
+    {
+     "k": "Inp_Grid_RecoverySpacing",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_Grid_MaxOrders",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_Grid_WideDeepTPEnabled",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_Grid_ShowTPLine",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_Grid_ShowNextGridLine",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_Single_SL_Pips",
+     "kind": "float"
+    },
+    {
+     "k": "Inp_Single_TP_Pips",
+     "kind": "float"
+    },
+    {
+     "k": "Inp_Single_UseTrailingSL",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_Single_TrailingStartPips",
+     "kind": "float"
+    },
+    {
+     "k": "Inp_Single_TrailingStepPips",
+     "kind": "float"
+    },
+    {
+     "k": "Inp_BaseGMTOffset",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_EnableWeeklyFilter",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_MondayToThursdayFrom",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_MondayToThursdayTo",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_FridayTrading_Enabled",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_FridayTrading_From",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_FridayTrading_To",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_EnableHolidayFilter",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_EnableDrawdownProtection",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_DrawdownMode",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_DrawdownThreshold",
+     "kind": "float"
+    },
+    {
+     "k": "Inp_IncludeBrokerCreditInProtection",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_PreventTradingCloseToATH",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_ATH_Timeframe",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_ATH_LookbackPeriods",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_ATH_PercentageThreshold",
+     "kind": "float"
+    },
+    {
+     "k": "Inp_DynamicExit_Enabled",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_DynamicExit_PctThreshold",
+     "kind": "float"
+    },
+    {
+     "k": "Inp_DynamicExit_WindowSec",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_NewsFilter_Enabled",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_NewsFilter_FilterHigh",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_NewsFilter_FilterMedium",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_NewsFilter_EntryPauseBeforeMin",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_NewsFilter_EntryPauseAfterMin",
+     "kind": "int"
+    },
+    {
+     "k": "Inp_NewsFilter_AdditionalCurrencies",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_NewsFilter_OtherMediumKeywords",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "Inp_NewsFilter_OtherFullDayKeywords",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "Inp_NewsFilter_BlockEventNextDay",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_NewsFilter_BlockUSDBankHolidays",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_SupportResistanceStrategy_EntryWindowFrom",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_SupportResistanceStrategy_EntryWindowTo",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_SupportResistanceStrategy_Enable15MinTF",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_SupportResistanceStrategy_Enable30MinTF",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_SupportResistanceStrategy_UseBreakoutRetest",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_PullbackStrategy_EntryWindowFrom",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_PullbackStrategy_EntryWindowTo",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_TrendBreakoutStrategy_EntryWindowFrom",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_TrendBreakoutStrategy_EntryWindowTo",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_M5Strategy_EntryWindowFrom",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_M5Strategy_EntryWindowTo",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_M5Strategy_RequireBounceCandle",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_M5Strategy_StrictSellEntries",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_M5Strategy_EnableM10Signal",
+     "kind": "bool"
+    },
+    {
+     "k": "Inp_VolumeStrategy_EntryWindowFrom",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_VolumeStrategy_EntryWindowTo",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_UI_ScaleOverride",
+     "kind": "float"
+    },
+    {
+     "k": "Inp_UI_FontName",
+     "kind": "text"
+    },
+    {
+     "k": "Inp_UI_BaseFontSize",
+     "kind": "int"
+    }
+   ]
+  },
+  {
+   "ea": "Quantum Bitcoin EA_3.2_fix",
+   "inputs": [
+    {
+     "k": "InpVersion",
+     "kind": "text",
+     "v": "Quantum Bitcoin EA v3.2 (16/02/2026)"
+    },
+    {
+     "k": "InpAuto",
+     "kind": "bool"
+    },
+    {
+     "k": "InpRiskLevels",
+     "kind": "int"
+    },
+    {
+     "k": "InpInitialLots",
+     "kind": "float"
+    },
+    {
+     "k": "InpLotsMultiplier",
+     "kind": "float"
+    },
+    {
+     "k": "InpLotsMax",
+     "kind": "float"
+    },
+    {
+     "k": "InpStartTime",
+     "kind": "text"
+    },
+    {
+     "k": "InpEndTime",
+     "kind": "text"
+    },
+    {
+     "k": "InpTakeProfit",
+     "kind": "float"
+    },
+    {
+     "k": "InpGridDistPct",
+     "kind": "float"
+    },
+    {
+     "k": "InpGridDistMultip",
+     "kind": "float"
+    },
+    {
+     "k": "InpGridMaxTrades",
+     "kind": "int"
+    },
+    {
+     "k": "InpMinOrdersRealBE",
+     "kind": "int"
+    },
+    {
+     "k": "InpTradingFriday",
+     "kind": "bool"
+    },
+    {
+     "k": "InpTradingNFP",
+     "kind": "bool"
+    },
+    {
+     "k": "InpTradingHolidays",
+     "kind": "bool"
+    },
+    {
+     "k": "InpMinuteBetweenTrades",
+     "kind": "int"
+    },
+    {
+     "k": "InpSlippage",
+     "kind": "int"
+    },
+    {
+     "k": "InpMagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "InpComment",
+     "kind": "text"
+    },
+    {
+     "k": "InpPanel",
+     "kind": "bool"
+    },
+    {
+     "k": "InpBELine",
+     "kind": "bool"
+    },
+    {
+     "k": "InpBEColor",
+     "kind": "int"
+    },
+    {
+     "k": "InpBEWidth",
+     "kind": "int"
+    }
+   ]
+  },
+  {
+   "ea": "BTC X EA MT5",
+   "inputs": [
+    {
+     "k": "MagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "UseSidewayFilter",
+     "kind": "bool"
+    },
+    {
+     "k": "ADXThreshold",
+     "kind": "float"
+    },
+    {
+     "k": "ATRThreshold",
+     "kind": "float"
+    },
+    {
+     "k": "TakeProfit",
+     "kind": "int"
+    },
+    {
+     "k": "StopLoss",
+     "kind": "int"
+    },
+    {
+     "k": "Slippage",
+     "kind": "int"
+    },
+    {
+     "k": "inpEnableAlert",
+     "kind": "bool"
+    },
+    {
+     "k": "UseOCO",
+     "kind": "bool"
+    },
+    {
+     "k": "MinPendingDistance",
+     "kind": "int"
+    },
+    {
+     "k": "UseFixedLot",
+     "kind": "bool"
+    },
+    {
+     "k": "FixedLotSize",
+     "kind": "float"
+    },
+    {
+     "k": "LotPer100Balance",
+     "kind": "float"
+    },
+    {
+     "k": "MaxLotLimit",
+     "kind": "float"
+    },
+    {
+     "k": "MarginPercentage",
+     "kind": "float"
+    },
+    {
+     "k": "MaxOpenPositions",
+     "kind": "int"
+    },
+    {
+     "k": "ForceMinVolume",
+     "kind": "bool"
+    },
+    {
+     "k": "MinCandleGap",
+     "kind": "int"
+    },
+    {
+     "k": "MinBalanceThreshold",
+     "kind": "float"
+    },
+    {
+     "k": "DisableWeekendTrade",
+     "kind": "bool"
+    },
+    {
+     "k": "GMTOffset",
+     "kind": "int"
+    },
+    {
+     "k": "UseTrailingStop",
+     "kind": "bool"
+    }
+   ]
+  },
+  {
+   "ea": "Quantum Emperor MT5_7.5_fix",
+   "inputs": [
+    {
+     "k": "InpVersion",
+     "kind": "text",
+     "v": "Quantum Emperor MT5 v7.5 (07 October 2025)"
+    },
+    {
+     "k": "InpDescription",
+     "kind": "text",
+     "v": "Expert Advisor for GBPUSD."
+    },
+    {
+     "k": "InpManual",
+     "kind": "url",
+     "v": "https://www.incredible-traders.com/quantum-emperor-ea-comprehensive-manual/"
+    },
+    {
+     "k": "Auto",
+     "kind": "bool"
+    },
+    {
+     "k": "InpRiskLevel",
+     "kind": "int"
+    },
+    {
+     "k": "Lot",
+     "kind": "float"
+    },
+    {
+     "k": "InpMagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "EAComment",
+     "kind": "text"
+    },
+    {
+     "k": "Box_Start",
+     "kind": "text"
+    },
+    {
+     "k": "Ex_Pend",
+     "kind": "text"
+    },
+    {
+     "k": "SmartRecovery",
+     "kind": "bool"
+    },
+    {
+     "k": "SmartRecoveryMultiplier",
+     "kind": "float"
+    },
+    {
+     "k": "SmartRecoveryMultiplierTimes",
+     "kind": "int"
+    },
+    {
+     "k": "additionaltrade",
+     "kind": "bool"
+    },
+    {
+     "k": "secondadditionaltrade",
+     "kind": "bool"
+    },
+    {
+     "k": "CloseTradesInProfit",
+     "kind": "bool"
+    },
+    {
+     "k": "TimeToCloseProfit",
+     "kind": "text"
+    },
+    {
+     "k": "EnableFirstAdditionalTP",
+     "kind": "bool"
+    },
+    {
+     "k": "FirstAdditionalTP",
+     "kind": "float"
+    },
+    {
+     "k": "EnableSecondAdditionalTP",
+     "kind": "bool"
+    },
+    {
+     "k": "SecondAdditionalTP",
+     "kind": "float"
+    },
+    {
+     "k": "tradeFriday",
+     "kind": "int"
+    },
+    {
+     "k": "DisableNFP",
+     "kind": "bool"
+    },
+    {
+     "k": "PauseUSHoliday",
+     "kind": "bool"
+    },
+    {
+     "k": "DisableTradeHoliday",
+     "kind": "bool"
+    },
+    {
+     "k": "Slippage",
+     "kind": "int"
+    },
+    {
+     "k": "EnableDST",
+     "kind": "bool"
+    },
+    {
+     "k": "AbPinp",
+     "kind": "float"
+    },
+    {
+     "k": "BePinp",
+     "kind": "float"
+    },
+    {
+     "k": "StopLoss",
+     "kind": "float"
+    },
+    {
+     "k": "Amount",
+     "kind": "int"
+    },
+    {
+     "k": "CancelTime",
+     "kind": "int"
+    }
+   ]
+  },
+  {
+   "ea": "Quantum Titan V2.2",
+   "inputs": [
+    {
+     "k": ">>>> General settings",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "TradeComment",
+     "kind": "text"
+    },
+    {
+     "k": "MagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "LongOnly",
+     "kind": "bool"
+    },
+    {
+     "k": "UseShortsBearishFilter",
+     "kind": "bool"
+    },
+    {
+     "k": "RiskModeSetting",
+     "kind": "int"
+    },
+    {
+     "k": ">>>> Monetary Management",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "InpAutoLotsValue",
+     "kind": "int"
+    },
+    {
+     "k": "RiskPercent",
+     "kind": "float"
+    },
+    {
+     "k": "FixedLot",
+     "kind": "float"
+    },
+    {
+     "k": "LotsPer1000",
+     "kind": "float"
+    },
+    {
+     "k": "BalanceStep",
+     "kind": "float"
+    },
+    {
+     "k": ">>>> Recovery Mode",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "UseRecoveryMode",
+     "kind": "bool"
+    },
+    {
+     "k": "RecoveryMultiplier",
+     "kind": "float"
+    },
+    {
+     "k": "UseSecondChance",
+     "kind": "bool"
+    },
+    {
+     "k": ">>>> Trading days",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "TradeMonday",
+     "kind": "bool"
+    },
+    {
+     "k": "TradeTuesday",
+     "kind": "bool"
+    },
+    {
+     "k": "TradeWednesday",
+     "kind": "bool"
+    },
+    {
+     "k": "TradeThursday",
+     "kind": "bool"
+    },
+    {
+     "k": "TradeFriday",
+     "kind": "bool"
+    },
+    {
+     "k": ">>>> Strategy settings",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "Set",
+     "kind": "int"
+    },
+    {
+     "k": "MaxDrawdownPercent",
+     "kind": "float"
+    },
+    {
+     "k": "ShowSimplePanel",
+     "kind": "bool"
+    }
+   ]
+  },
+  {
+   "ea": "Quantum Athena_1.1_fix",
+   "inputs": [
+    {
+     "k": "InpNoteName",
+     "kind": "text",
+     "v": "Quantum Athena v1.1 (15/04/2026)"
+    },
+    {
+     "k": "InpNoteOverview",
+     "kind": "text",
+     "v": "XAUUSD. Chart timeframe doesn't matter; the EA manages it internally."
+    },
+    {
+     "k": "input group #1",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "InpPause",
+     "kind": "int"
+    },
+    {
+     "k": "InpLotsCalc",
+     "kind": "int"
+    },
+    {
+     "k": "InpAutoLotsValue",
+     "kind": "int"
+    },
+    {
+     "k": "InpLotsFixed",
+     "kind": "float"
+    },
+    {
+     "k": "InpLotsFixedBalance",
+     "kind": "float"
+    },
+    {
+     "k": "InpDDMode",
+     "kind": "int"
+    },
+    {
+     "k": "InpDDValue",
+     "kind": "float"
+    },
+    {
+     "k": "InpMQID",
+     "kind": "int"
+    },
+    {
+     "k": "InpMagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "InpSpread",
+     "kind": "int"
+    },
+    {
+     "k": "InpSlippage",
+     "kind": "int"
+    },
+    {
+     "k": "InpXmas",
+     "kind": "int"
+    },
+    {
+     "k": "input group #2",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "InpPanel",
+     "kind": "int"
+    },
+    {
+     "k": "InpFont",
+     "kind": "text"
+    },
+    {
+     "k": "InpFontSize",
+     "kind": "int"
+    },
+    {
+     "k": "InpComment",
+     "kind": "text"
+    },
+    {
+     "k": "InpLineStyle",
+     "kind": "int"
+    },
+    {
+     "k": "InpLineWidth",
+     "kind": "int"
+    },
+    {
+     "k": "InpTPColor",
+     "kind": "int"
+    },
+    {
+     "k": "InpBEColor",
+     "kind": "int"
+    },
+    {
+     "k": "InpGridColor",
+     "kind": "int"
+    }
+   ]
+  },
+  {
+   "ea": "Quantum Queen MT5 version 3.7",
+   "inputs": [
+    {
+     "k": "InpNoteName",
+     "kind": "text",
+     "v": "Quantum Queen MT5 v3.70 (07/06/2026)"
+    },
+    {
+     "k": "InpNoteOverview",
+     "kind": "text",
+     "v": "XAUUSD. Chart timeframe doesn't matter; the EA manages it internally."
+    },
+    {
+     "k": "InpNoteWebsite",
+     "kind": "url",
+     "v": "https://www.mql5.com/en/market/product/118805"
+    },
+    {
+     "k": ">>>> GENERAL SETTINGS",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "InpPause",
+     "kind": "int"
+    },
+    {
+     "k": "InpLotsCalc",
+     "kind": "int"
+    },
+    {
+     "k": "InpAutoLotsValue",
+     "kind": "int"
+    },
+    {
+     "k": "InpLotsFixed",
+     "kind": "float"
+    },
+    {
+     "k": "InpLotsFixedBalance",
+     "kind": "float"
+    },
+    {
+     "k": "InpDDMode",
+     "kind": "int"
+    },
+    {
+     "k": "InpDDValue",
+     "kind": "float"
+    },
+    {
+     "k": "InpMQID",
+     "kind": "int"
+    },
+    {
+     "k": "InpMagicNumber",
+     "kind": "int"
+    },
+    {
+     "k": "InpSpread",
+     "kind": "int"
+    },
+    {
+     "k": "InpSlippage",
+     "kind": "int"
+    },
+    {
+     "k": "InpTradeCommentRaw",
+     "kind": "text"
+    },
+    {
+     "k": "InpTradingDirectionType",
+     "kind": "int"
+    },
+    {
+     "k": ">>>> SETS & STRATEGIES",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "InpSets",
+     "kind": "int"
+    },
+    {
+     "k": ">>> TRADING DAYS",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "InpUseNfpFridayFilter",
+     "kind": "bool"
+    },
+    {
+     "k": "InpTradingFridayNight",
+     "kind": "bool"
+    },
+    {
+     "k": "InpTradingFridayNightHour",
+     "kind": "int"
+    },
+    {
+     "k": "InpUseYearEndPause",
+     "kind": "bool"
+    },
+    {
+     "k": "InpTradeOnMonday",
+     "kind": "bool"
+    },
+    {
+     "k": "InpTradeOnTuesday",
+     "kind": "bool"
+    },
+    {
+     "k": "InpTradeOnWednesday",
+     "kind": "bool"
+    },
+    {
+     "k": "InpTradeOnThursday",
+     "kind": "bool"
+    },
+    {
+     "k": "InpTradeOnFriday",
+     "kind": "bool"
+    },
+    {
+     "k": "InpTradeOnSaturday",
+     "kind": "bool"
+    },
+    {
+     "k": "InpTradeOnSunday",
+     "kind": "bool"
+    },
+    {
+     "k": ">>>> PANEL & VISUAL SETTINGS",
+     "kind": "empty",
+     "v": ""
+    },
+    {
+     "k": "InpPanel",
+     "kind": "int"
+    },
+    {
+     "k": "InpFont",
+     "kind": "text"
+    },
+    {
+     "k": "InpFontSize",
+     "kind": "int"
+    },
+    {
+     "k": "InpComment",
+     "kind": "text"
+    },
+    {
+     "k": "InpLineStyle",
+     "kind": "int"
+    },
+    {
+     "k": "InpLineWidth",
+     "kind": "int"
+    },
+    {
+     "k": "InpTPColor",
+     "kind": "int"
+    },
+    {
+     "k": "InpBEColor",
+     "kind": "int"
+    },
+    {
+     "k": "InpGridColor",
+     "kind": "int"
+    }
+   ]
+  }
+ ]
+}
