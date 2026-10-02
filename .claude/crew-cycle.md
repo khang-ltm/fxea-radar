@@ -39,8 +39,13 @@ has `title`, `why`, `agent`, `status` (todo, doing, blocked, done, wont),
   Do not move it, edit it or work on it. Those are the owner's.
 - Pick work in this order: the oldest `asked` todo assigned to an agent (or to
   `lead`, which means "LEAD decides"), then `self` todos, then Known gaps below.
-- When you start one, set it to `doing`. When it ships as a PR, set it to `done`
-  and put the PR link in `why`. If you cannot do it, set `blocked` with a
+- When you start one, set it to `doing`. When the PR is open, set it to
+  `review` and put the PR's URL in `pr_url` - **not** `done`: an open PR has
+  shipped nothing and is waiting on the owner.
+- At the start of every cycle, check each `review` task's PR over the REST API
+  (the repo is public: `curl -s https://api.github.com/repos/khang-ltm/fxea-radar/pulls/<n>`).
+  `merged: true` -> `done`. Closed without merging -> back to `todo`, with the
+  reason in `why` if the PR says one. Still open -> leave it in `review`. If you cannot do it, set `blocked` with a
   `blocked_reason` saying exactly what is missing. If it would cross a gate, set
   `wont` with a `wont_reason`. Pin every write with the `if_version` you read.
 - Write the day's stand-up as one document in collection `meetings`, id
