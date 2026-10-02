@@ -3851,6 +3851,17 @@ def _apply_update(sha: str) -> bool:
         for folder in ("app", "public", "mql5"):
             if (src / folder).is_dir():
                 shutil.copytree(src / folder, config.ROOT / folder, dirs_exist_ok=True)
+        # The repair scripts live at the repo root, so an update carrying a fix
+        # for a stuck agent never delivered it - restart_agent.ps1 was written
+        # to rescue exactly this situation and could not be run, because
+        # nothing had ever copied it onto the machine that needed it.
+        for script in ("restart_agent.ps1", "fix_watchdog.ps1", "fix_mt5.ps1",
+                       "install_vps.ps1"):
+            if (src / script).is_file():
+                try:
+                    shutil.copy2(src / script, config.ROOT / script)
+                except OSError:
+                    pass                       # a locked script must not stop the update
         shutil.rmtree(staged, ignore_errors=True)
     # Staged, not promoted: if the restart below fails - a stale process still
     # holding the port, for one - the marker must keep saying the old version, or
