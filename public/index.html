@@ -4538,6 +4538,18 @@ async function loadSelfCheck(force) {
     return;
   }
 
+  /* The VPS hides AVX2, so two EAs compiled for it cannot load there. The owner
+     has decided to live with that rather than ask the provider, so it is a known
+     fact about this machine, not something to keep flagging: the row stays, as
+     information, and stops holding the panel open. An attach that fails for this
+     reason still says so at the moment it fails. */
+  d.rows = (d.rows || []).map(r => (r.name === 'CPU' && /avx2/i.test(r.detail || '') && r.state !== 'bad')
+    ? { ...r, state: 'ok', fix: '',
+        detail: String(r.detail).replace(/ - no AVX2, so .*$/i, '') + ' - no AVX2 (accepted: EAs that need it are not run here)' }
+    : r);
+  const RANK = { ok: 0, unknown: 1, warn: 2, bad: 3 };
+  d.state = d.rows.reduce((s, r) => (RANK[r.state] ?? 1) > (RANK[s] ?? 0) ? r.state : s, 'ok');
+
   const word = { ok: 'all good', warn: 'needs a look', bad: 'something is down' }[d.state] || '';
   const tag = document.getElementById('checkstate');
   const bad = (d.rows || []).filter(r => r.state === 'bad').length;

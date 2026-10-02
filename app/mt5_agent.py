@@ -1822,13 +1822,14 @@ def self_check() -> dict:
             "running, but not answering the API" if _terminal_running() else "not running",
             "start MetaTrader 5 on the VPS")
 
+    # The owner has accepted that this VPS hides AVX2 rather than ask the
+    # provider, so it is reported as a fact about the machine, not a warning to
+    # act on. An attach that fails for this reason still says why when it fails.
     refused = cpu_refusals()
-    row("CPU", "warn" if refused else "ok",
+    row("CPU", "ok",
         (cpu_name() or "unknown")
-        + (f" - no AVX2, so {len(refused)} EA(s) will not load: " + ", ".join(refused[:3])
-           if refused else ""),
-        "ask the VPS provider for a host-passthrough CPU, or run those EAs elsewhere"
-        if refused else "")
+        + (f" - no AVX2 (accepted: {len(refused)} EA(s) that need it are not run here)"
+           if refused else ""))
 
     algo = working_expertmode()
     row("algo trading", "ok" if algo else "warn",
