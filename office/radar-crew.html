@@ -572,10 +572,17 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
     px(110, 40, 100, 1, 'rgba(0,0,0,0.35)'); px(140, 40, 40, 2, '#8a8f9e');
     px(146, 39, 4, 1, '#d94a4a'); px(152, 39, 4, 1, '#4a7ad9'); px(158, 39, 4, 1, '#4f9a5c');
 
-    // the WC, a door in the left wall
-    px(0, 92, 6, 34, '#2c2119'); px(0, 94, 5, 31, '#5e4533'); px(0, 94, 1, 31, '#7d5f47');
-    px(3, 108, 1, 3, '#c9a24a');                                   // handle
-    px(7, 96, 7, 5, '#e8e2cc'); px(8, 97, 2, 3, '#4a7ad9'); px(11, 97, 2, 3, '#d94a8a');   // WC sign
+    // the WC: a proper door in the left wall, with a sign you can read. The
+    // first version was a six-pixel sliver at the edge and nobody could see it.
+    px(0, 86, 15, 42, '#241a13');                                  // frame
+    px(1, 88, 12, 39, '#7a5a40'); px(1, 88, 12, 1, '#94704f');     // door
+    px(2, 104, 10, 1, '#654a35'); px(2, 116, 10, 1, '#654a35');    // panels
+    px(10, 109, 2, 2, '#d8b45a');                                  // handle
+    px(0, 127, 15, 1, 'rgba(255,240,200,0.25)');                   // light under the door
+    // "WC" in white on a blue plate, 3x5 letters
+    px(2, 90, 11, 8, '#2f5fb3'); px(2, 90, 11, 1, '#4a7ad9');
+    const WC = ['100010111', '100010100', '101010100', '101010100', '010100111'];   // W, gap, C
+    WC.forEach((row, y) => [...row].forEach((on, x) => { if (on === '1') px(3 + x, 91 + y, 1, 1, '#f4f0de'); }));
     // the door out, with corridor light under it and an exit sign
     px(213, 6, 28, 40, '#3a2c22'); px(215, 8, 24, 38, '#6b4f3a');
     px(218, 11, 18, 14, '#5e4533'); px(218, 28, 18, 15, '#5e4533');
@@ -756,9 +763,15 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
     px(7, 160, 1, 1, '#4a2a14'); px(10, 160, 1, 1, '#4a2a14');                           // eyes shut
   }
 
+  function drawWcLight() {
+    const busy = crew.some(c => c.gone && c.exitAt === WC_DOOR);
+    px(13, 99, 2, 2, busy ? '#ef5b4b' : '#5bd47a');                  // red when occupied
+  }
+
   function drawRoom(t) {
     if (!BG) BG = bake();
     g.drawImage(BG, 0, 0);
+    drawWcLight();
     // stars twinkle; a few city windows go dark and light again; the tower beacon blinks
     for (const [sx, sy] of STARS) if (reduced || ((t / 700 + sx) | 0) % 5) px(sx, sy, 1, 1, '#c9d2ff');
     if (!reduced) {
