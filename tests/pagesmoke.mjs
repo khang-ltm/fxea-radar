@@ -23,6 +23,7 @@ const PROBE = `
   renderMarket,
   setMarket(d) { MARKET = d; },
   prettyKey, commonLabel, headingLabel, isHeading, vendorLabel,
+  trimSection, derivedSections, sectionOf,
 };`;
 
 const node = (id = '') => {
@@ -198,6 +199,11 @@ if (probe) {
     ['Inp_PreventTradingCloseToATH', 'Prevent trading close to ATH'],
     ['LotPer100Balance', 'Lot per 100 balance'],
     ['InpGridDistMultip', 'Grid distance multiplier'],
+    // "Multi" was expanded to "multiplier" and made this a multiplier currency
+    ['Inp_EnableMultiCurrency', 'Enable multi currency'],
+    // weekday names were sentence-cased into "friday"
+    ['InpTradingFriday', 'Trading Friday'],
+    ['Inp_MondayToThursdayFrom', 'Monday to Thursday from'],
   ];
   const bad = cases.filter(([key, want]) => probe.prettyKey(key) !== want);
   if (bad.length) {
@@ -295,6 +301,38 @@ if (probe) {
      'a documented option list is carried'],
     [!!pause && !pause.opts,
      'no option list is invented where the live values contradict it'],
+  ];
+  for (const [ok, what] of checks) {
+    if (ok) console.log(`  PASS  ${what}`);
+    else { failed = true; console.log(`  FAIL  ${what}`); }
+  }
+}
+
+// -- a section does not repeat itself in every label ----------------------
+// Wave Rider namespaces 89 inputs, so under a derived heading every label used
+// to begin by restating the heading: "Support resistance strategy enabled".
+if (probe) {
+  const rows = [
+    { k: 'Inp_SupportResistanceStrategy_Enabled', v: 'true' },
+    { k: 'Inp_SupportResistanceStrategy_TradeMagicNumber', v: '77701' },
+    { k: 'Inp_PullbackStrategy_Enabled', v: 'true' },
+    { k: 'Inp_PullbackStrategy_TradeMagicNumber', v: '77702' },
+    { k: 'Inp_MomentumStrategy_Enabled', v: 'true' },
+    { k: 'Inp_MomentumStrategy_TradeMagicNumber', v: '77706' },
+  ];
+  const secs = probe.derivedSections(rows);
+  const checks = [
+    [!!secs && secs.has('SupportResistanceStrategy'), 'a namespace becomes a section'],
+    // a pair is a section too: the only pairs on the live account were two
+    // strategies that looked broken left loose beside five larger ones
+    [!!secs && secs.has('MomentumStrategy'), 'a two-input namespace is still a section'],
+    [probe.trimSection('Support resistance strategy enabled',
+                       'SupportResistanceStrategy') === 'Enabled',
+     'the section name is dropped from the label beneath it'],
+    [probe.trimSection('Magic number', 'Grid') === 'Magic number',
+     'a label that does not start with the section is left alone'],
+    [probe.trimSection('Grid', 'Grid') === 'Grid',
+     'a label equal to its section keeps its name rather than going blank'],
   ];
   for (const [ok, what] of checks) {
     if (ok) console.log(`  PASS  ${what}`);

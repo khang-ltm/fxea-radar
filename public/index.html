@@ -3451,7 +3451,7 @@ const ABBREV = {
   sl: 'stop loss', tp: 'take profit', be: 'break even', ts: 'trailing stop',
   tsl: 'trailing stop', dd: 'drawdown', mm: 'money management',
   mgmt: 'management', calc: 'calculation', dist: 'distance', mult: 'multiplier',
-  multi: 'multiplier', coef: 'coefficient', pct: 'percent', perc: 'percent',
+  coef: 'coefficient', pct: 'percent', perc: 'percent',
   percentage: 'percent', lvl: 'level', thr: 'threshold', thresh: 'threshold',
   qty: 'quantity', num: 'number', no: 'number', cnt: 'count', idx: 'index',
   freq: 'frequency', dur: 'duration', acct: 'account', bal: 'balance',
@@ -3464,6 +3464,12 @@ const ABBREV = {
 
 // Words that are already the right word, but whose casing a sentence-case pass
 // would ruin.
+// Names stay capitalised: "Trading friday" and "Monday to thursday" were the
+// giveaway that every word after the first was being lower-cased.
+const PROPER = new Set(['monday', 'tuesday', 'wednesday', 'thursday', 'friday',
+  'saturday', 'sunday', 'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december']);
+
 const KEEP_CASE = new Set(['GMT', 'ATR', 'RSI', 'MACD', 'MT4', 'MT5', 'EA', 'ID',
   // seen on this account reading as "ath", "usd", "adx", "oco", "dst", "ui"
   'ATH', 'USD', 'EUR', 'GBP', 'JPY', 'ADX', 'OCO', 'DST', 'UI', 'US', 'NFP',
@@ -3523,6 +3529,7 @@ const prettyKey = k => {
   const said = out.map((w, n) => {
     if (KEEP_CASE.has(w.toUpperCase()) && w.length <= 4) return w.toUpperCase();
     const lower = w.toLowerCase();
+    if (n !== 0 && PROPER.has(lower)) return lower.charAt(0).toUpperCase() + lower.slice(1);
     return n === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
   }).join(' ');
   // "Magic number number" - expanding `magic` and then meeting `Number` reads
@@ -3602,9 +3609,16 @@ const isHeading = i => headingLabel(i) !== null;
 
    That is the author's grouping, written in the name instead of drawn on the
    screen. So when an EA offers no headings of its own, they are taken from the
-   prefix - but only where a prefix covers three or more inputs and at least two
-   such groups exist, because two stray inputs sharing a word is a coincidence,
-   not a section.
+   prefix - where a prefix covers two or more inputs and at least two such groups
+   exist.
+
+   Two was almost three. The worry was that a pair sharing a word is a
+   coincidence, but across all 259 inputs on this account the only pairs are
+   Inp_MomentumStrategy_* and Inp_ImpulseRiderStrategy_* - two strategies that
+   belong in sections exactly as much as the five larger ones beside them, and
+   that looked broken left loose among them. Nothing groups on a single
+   underscore-free name, which is what keeps Inp_BaseLotSize and
+   Inp_BaseGMTOffset from inventing a "Base" section.
 
    An EA that DOES draw its own separators is left alone. Its author already
    said how the thing is organised and a guess must not argue with that. */
@@ -3620,7 +3634,7 @@ function derivedSections(inputs) {
     const p = sectionOf(i.k);
     if (p) seen[p] = (seen[p] || 0) + 1;
   }
-  const real = new Set(Object.keys(seen).filter(p => seen[p] >= 3));
+  const real = new Set(Object.keys(seen).filter(p => seen[p] >= 2));
   return real.size >= 2 ? real : null;
 }
 
@@ -3687,7 +3701,8 @@ const GLOSSARY = [
   [/^(inp)?(use)?hedge(ing)?$/, 'Hedging'],
   [/^(inp)?(use)?recovery(mode)?$/, 'Recovery mode'],
   [/^(inp)?(use)?(dca|averaging)$/, 'Averaging down'],
-  [/^(inp)?(min|max)?lot(s)?(min|max)?$/, 'Lot size limits'],
+  [/^(inp)?lots?max$/, 'Maximum lot size'],
+  [/^(inp)?lots?min$/, 'Minimum lot size'],
   [/^(inp)?lot(s)?(step|increment)$/, 'Lot step'],
   [/^(inp)?(money|risk)(management|mode)$/, 'Risk mode'],
   [/^(inp)?(balance|equity)(risk|percent)$/, 'Risk per trade'],
@@ -3850,6 +3865,27 @@ for (const day of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
 
 const vendorLabel = key => VENDOR_LABELS[String(key)] || null;
 
+/* Under a derived heading, every label began by repeating the heading:
+
+     Support resistance strategy
+       Support resistance strategy enabled
+       Support resistance strategy trade magic number
+
+   The section already said it. Dropping the repeated words leaves "Enabled"
+   and "Trade magic number", which is what MT5 would have shown had the author
+   written a group instead of a prefix. Only a label that still says something
+   afterwards is trimmed - an input named exactly after its own section keeps
+   its name rather than becoming blank. */
+function trimSection(label, section) {
+  if (!section) return label;
+  const head = prettyKey(section).toLowerCase();
+  const low = String(label).toLowerCase();
+  if (!low.startsWith(head + ' ')) return label;
+  const rest = String(label).slice(head.length + 1).trim();
+  if (!rest) return label;
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
 const glossaryKey = key => String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 function commonLabel(key) {
@@ -3918,6 +3954,7 @@ function renderEaRows() {
   }
   const sections = derivedSections(EA_EDIT.inputs);
   let openSection = null;
+  const sectionFor = k => (sections && sections.has(sectionOf(k))) ? sectionOf(k) : '';
   document.getElementById('ea-inputs').innerHTML = EA_EDIT.inputs.map((i, n) => {
     // a section header the EA implied by naming, rather than drew
     if (sections) {
@@ -3947,7 +3984,8 @@ function renderEaRows() {
     // published manual, then a convention, then the name said out loud
     const vendor = noted?.label ? null : vendorLabel(i.k);
     const common = noted?.label || vendor ? '' : commonLabel(i.k);
-    const shown = noted?.label || vendor?.label || common || prettyKey(i.k);
+    const shown = trimSection(noted?.label || vendor?.label || common || prettyKey(i.k),
+                              sectionFor(i.k));
     return `<div class="setrow${long ? ' text' : ''}" data-row="${n}">
       <label for="ea-in-${n}">
         <span class="${noted?.label ? (noted.origin === 'source' ? 'noted fromsrc' : 'noted')
