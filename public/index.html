@@ -708,6 +708,14 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
       <div class="mktbar">
         <label class="chk"><input type="checkbox" id="mkt-proven"> Only ones with a live signal</label>
         <label class="chk"><input type="checkbox" id="mkt-clean"> Hide topped-up and brand-new accounts</label>
+        <label class="chk">Sort by
+          <select id="mkt-sort">
+            <option value="score">Crawler score (default)</option>
+            <option value="growth">Growth, highest first</option>
+            <option value="dd">Worst drawdown, lowest first</option>
+            <option value="subs">Subscribers, most first</option>
+            <option value="weeks">Weeks live, longest first</option>
+          </select></label>
         <label class="search mktsearch"><span class="sr-only">Search the Market</span>
           <input id="mkt-q" type="search" placeholder="Search name or author…" autocomplete="off"></label>
       </div>
@@ -4756,6 +4764,29 @@ function marketCard(e) {
   </div>`;
 }
 
+/* Order the cards. Proven first, then by score: an unproven EA is not a bad EA,
+   it is an unknown one, and sorting it in among measured results implies
+   otherwise. Sorting by a measured field puts every card that has no reading
+   for it last, whatever the direction - an unknown is never treated as 0. */
+const MARKET_SORTS = {
+  // a topped-up account's growth % is not a track record (the card says so), so it is unknown here
+  growth: { get: e => e.signal && !e.signal.topped_up ? e.signal.growth_pct : null, dir: -1 },
+  dd:     { get: e => e.signal && e.signal.dd_pct, dir: 1 },
+  subs:   { get: e => e.signal && e.signal.subscribers, dir: -1 },
+  weeks:  { get: e => e.signal && e.signal.weeks, dir: -1 },
+};
+function marketOrder(rows, by) {
+  const byScore = (a, b) => (b.proven - a.proven) || (b.score - a.score);
+  const m = MARKET_SORTS[by];
+  if (!m) return rows.slice().sort(byScore);
+  const val = e => { const v = m.get(e); return typeof v === 'number' && isFinite(v) ? v : null; };
+  return rows.slice().sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (x == null || y == null) return (x == null) - (y == null) || byScore(a, b);
+    return (x - y) * m.dir || byScore(a, b);
+  });
+}
+
 function renderMarket() {
   const all = MARKET.eas || [];
   const onlyProven = document.getElementById('mkt-proven').checked;
@@ -4768,9 +4799,7 @@ function renderMarket() {
     if (q && !`${e.name} ${e.author} ${e.version || ''}`.toLowerCase().includes(q)) return false;
     return true;
   });
-  // proven first, then by score: an unproven EA is not a bad EA, it is an
-  // unknown one, and sorting it in among measured results implies otherwise
-  rows = rows.slice().sort((a, b) => (b.proven - a.proven) || (b.score - a.score));
+  rows = marketOrder(rows, document.getElementById('mkt-sort').value);
 
   document.getElementById('mktcount').textContent = rows.length ? `(${rows.length})` : '';
   document.getElementById('mktwhen').textContent = MARKET.crawled_at
@@ -4784,7 +4813,7 @@ function renderMarket() {
        run <code>python -m app.mql5_market</code> to fill it now.</div>`);
 }
 
-for (const id of ['mkt-proven', 'mkt-clean']) {
+for (const id of ['mkt-proven', 'mkt-clean', 'mkt-sort']) {
   document.getElementById(id).onchange = renderMarket;
 }
 document.getElementById('mkt-q').oninput = renderMarket;

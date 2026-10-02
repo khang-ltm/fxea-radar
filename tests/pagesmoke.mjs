@@ -23,7 +23,7 @@ const PROBE = `
   renderMarket,
   setMarket(d) { MARKET = d; },
   prettyKey, commonLabel, headingLabel, isHeading, vendorLabel,
-  trimSection, derivedSections, sectionOf, marketKey,
+  trimSection, derivedSections, sectionOf, marketKey, marketOrder,
 };`;
 
 const node = (id = '') => {
@@ -368,6 +368,39 @@ if (probe) {
   const off = pairs.filter(([n, k]) => probe.marketKey(n) !== k);
   if (off.length) { failed = true; console.log('  FAIL  market key: ' + off.map(([n]) => `${n} -> "${probe.marketKey(n)}"`).join(', ')); }
   else console.log(`  PASS  all ${pairs.length} names key to their own Market product`);
+}
+
+// -- the Market sort puts unknowns last, never as zero ----------------------
+// Run against the real crawled listings: 14 have a signal, 6 have none.
+if (probe) {
+  const mk = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'tests', 'fixtures', 'market_sample.json'), 'utf8')).market.eas;
+  const withSig = mk.filter(e => e.signal && typeof e.signal.growth_pct === 'number').length;
+  const num = (e, k) => e.signal && typeof e.signal[k] === 'number' && !(k === 'growth_pct' && e.signal.topped_up) ? e.signal[k] : null;
+  const ok = (by, k, dir) => {
+    const r = probe.marketOrder(mk, by);
+    const v = r.map(e => num(e, k));
+    const known = v.filter(x => x != null);
+    const sortedKnown = known.every((x, i) => i === 0 || (known[i - 1] - x) * dir <= 0);
+    const unknownLast = v.slice(known.length).every(x => x == null) && v.slice(0, known.length).every(x => x != null);
+    return r.length === mk.length && known.length > 0 && known.length < mk.length && sortedKnown && unknownLast;
+  };
+  const checks = [
+    [withSig > 0 && withSig < mk.length, 'the fixture has both measured and unmeasured listings'],
+    [ok('growth', 'growth_pct', -1), 'sort by growth: highest first, listings without a signal last'],
+    [(() => { const r = probe.marketOrder(mk, 'growth'); const i = r.findIndex(e => e.signal && e.signal.topped_up);
+              const j = r.map(e => !!(e.signal && !e.signal.topped_up)).lastIndexOf(true);
+              return i >= 0 && j >= 0 && j < i; })(),
+     'sort by growth: topped-up accounts, whose growth is not a track record, come after every clean one'],
+    [ok('dd', 'dd_pct', 1), 'sort by drawdown: lowest first, listings without a signal last'],
+    [ok('subs', 'subscribers', -1), 'sort by subscribers: most first, listings without a signal last'],
+    [ok('weeks', 'weeks', -1), 'sort by weeks live: longest first, listings without a signal last'],
+    [probe.marketOrder(mk, 'score').every((e, i, a) => i === 0 || (a[i - 1].proven - e.proven) >= 0),
+     'default order keeps proven listings above unproven ones'],
+  ];
+  for (const [good, what] of checks) {
+    if (good) console.log(`  PASS  ${what}`);
+    else { failed = true; console.log(`  FAIL  ${what}`); }
+  }
 }
 
 // -- every real input on the account reads as words -------------------------
