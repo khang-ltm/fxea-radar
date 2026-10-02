@@ -34,7 +34,7 @@
 // It was written out by hand in two other places, so a build could - and did -
 // run 1.31 while telling everybody it was 1.30. Keep this equal to the
 // #property above; MQL5 will not take a macro there.
-#define MANAGER_VERSION "1.31"
+#define MANAGER_VERSION "1.32"
 
 input int  TimerSeconds    = 1;      // how often to poll for a command
 input int  StatusEverySecs = 5;      // how often to rewrite the status file
@@ -53,6 +53,12 @@ input bool ReportInputs    = true;   // report each EA settings (magic, lots, ..
 // again: long enough not to hammer a chart that will never answer, short enough
 // that an EA caught mid-reload is readable again while you are still looking
 #define PROBE_RETRY_SECONDS 60
+// How long a GOOD reading is trusted. It used to be forever: once a chart had
+// answered, its settings were never read again, so changing an input inside MT5
+// left the page showing what the EA had been running when it was first seen -
+// with no sign anything was stale. Re-reading costs one template write per
+// chart per interval, which is cheap enough to pay for being right.
+#define PROBE_FRESH_SECONDS 120
 #define EDIT_NAME    "fxea_edit"
 #define ATTACH_NAME  "fxea_attach"
 
@@ -267,13 +273,17 @@ void ChartProbe(const long id, const string expert, long &magic, string &inputs,
    // while its EA reloads answers perfectly a minute afterwards, and caching
    // that failure for the life of the EA is what made a freshly edited EA read
    // as one with no magic and no settings at all.
-   if(found >= 0 && (StringLen(g_pm_inputs[found]) > 0
-                     || TimeLocal() - g_pm_when[found] < PROBE_RETRY_SECONDS))
+   if(found >= 0)
      {
-      magic  = g_pm_magic[found];          // recomputed only when the EA changes
-      inputs = g_pm_inputs[found];
-      mode   = g_pm_mode[found];
-      return;
+      bool answered = StringLen(g_pm_inputs[found]) > 0;
+      long age      = (long)(TimeLocal() - g_pm_when[found]);
+      if(age < (answered ? PROBE_FRESH_SECONDS : PROBE_RETRY_SECONDS))
+        {
+         magic  = g_pm_magic[found];
+         inputs = g_pm_inputs[found];
+         mode   = g_pm_mode[found];
+         return;
+        }
      }
 
    // A probe that fails gets cached as a failure too: retrying a template save

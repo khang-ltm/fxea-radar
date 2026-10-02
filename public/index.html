@@ -340,6 +340,8 @@ main { max-width: 1600px; margin: 0 auto; padding: var(--space-4); }
 .shot-none { color: var(--color-border); font-size: 12px; }
 
 .searule { border: 0; border-top: 1px solid var(--color-border); margin: 18px 0 10px; }
+.eahelp { margin: 2px 0 12px; padding: 8px 12px; border-left: 2px solid var(--color-border);
+  color: var(--color-muted-fg); font-size: 13px; line-height: 1.5; }
 .eafield--link { display: inline-block; padding: 4px 10px; border: 1px solid var(--color-border);
   border-radius: 6px; color: var(--color-accent); text-decoration: none; font-size: 13px; }
 
@@ -3563,6 +3565,48 @@ function headingLabel(i) {
 
 const isHeading = i => headingLabel(i) !== null;
 
+/* Not every EA draws separators. Wave Rider has 89 inputs and not one heading -
+   but it namespaces them:
+
+       Inp_Grid_MaxOrders, Inp_Grid_WideDeepTPEnabled
+       Inp_NewsFilter_FilterHigh, Inp_NewsFilter_EntryPauseBeforeMin
+       Inp_M5Strategy_EntryWindowFrom
+
+   That is the author's grouping, written in the name instead of drawn on the
+   screen. So when an EA offers no headings of its own, they are taken from the
+   prefix - but only where a prefix covers three or more inputs and at least two
+   such groups exist, because two stray inputs sharing a word is a coincidence,
+   not a section.
+
+   An EA that DOES draw its own separators is left alone. Its author already
+   said how the thing is organised and a guess must not argue with that. */
+function sectionOf(key) {
+  const parts = String(key).replace(/^(?:inp|input)_?/i, '').split('_');
+  return parts.length > 1 && parts[0] ? parts[0] : '';
+}
+
+function derivedSections(inputs) {
+  if (!inputs || inputs.some(isHeading)) return null;
+  const seen = {};
+  for (const i of inputs) {
+    const p = sectionOf(i.k);
+    if (p) seen[p] = (seen[p] || 0) + 1;
+  }
+  const real = new Set(Object.keys(seen).filter(p => seen[p] >= 3));
+  return real.size >= 2 ? real : null;
+}
+
+/* Several EAs ship their own explanation as an input nobody is meant to edit:
+
+       Inp_RiskProfile_Info   = "Cautious filters more setups; ..."
+       Inp_Grid_Info_WideModes = "Slow is the balanced default; ..."
+
+   It is help text, and it was being rendered as a text box - so the sentence
+   explaining the setting below it looked like a setting itself. */
+const isInfoRow = i => /(^|_)info(_|$)/i.test(String(i.k))
+  && /[a-z]{3,}\s+[a-z]{3,}/i.test(String(i.v ?? ''));
+
+
 /* Drawn as a function rather than inline, because a label arriving from the
    agent a moment after the dialog opens has to be able to redraw the rows. */
 /* MT5 shows a tick box for a bool and a named dropdown for an enum. The names
@@ -3815,7 +3859,25 @@ function renderEaRows() {
   for (const el of document.querySelectorAll('#ea-inputs [data-idx]')) {
     typed[Number(el.dataset.idx)] = el.value;          // never lose a half-typed value
   }
+  const sections = derivedSections(EA_EDIT.inputs);
+  let openSection = null;
   document.getElementById('ea-inputs').innerHTML = EA_EDIT.inputs.map((i, n) => {
+    // a section header the EA implied by naming, rather than drew
+    if (sections) {
+      const here = sections.has(sectionOf(i.k)) ? sectionOf(i.k) : null;
+      if (here !== openSection) {
+        openSection = here;
+        if (here) return `<h3>${esc(prettyKey(here))}</h3>` + eaRow(i, n);
+      }
+    }
+    return eaRow(i, n);
+  }).join('');
+
+  function eaRow(i, n) {
+    if (isInfoRow(i)) {
+      // the author's own words about the settings around it
+      return `<p class="eahelp">${esc(String(i.v))}</p>`;
+    }
     if (isHeading(i)) {
       // the author's own words where there are any, a plain rule where the
       // separator carried none
@@ -3844,7 +3906,7 @@ function renderEaRows() {
         : ''}<small>${esc(i.k)}${noted?.note ? ' · ' + esc(noted.note) : ''}${
           noted?.from ? ' · noted on ' + esc(shortEa(noted.from)) : ''}</small></label>
       ${eaField(i, n, noted, EA_EDIT.open || isMagicKey(i.k))}</div>`;
-  }).join('');
+  }
 
   for (const el of document.querySelectorAll('#ea-inputs [data-idx]')) {
     const mark = () => {
