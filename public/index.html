@@ -339,6 +339,8 @@ main { max-width: 1600px; margin: 0 auto; padding: var(--space-4); }
 
 .shot-none { color: var(--color-border); font-size: 12px; }
 
+.searule { border: 0; border-top: 1px solid var(--color-border); margin: 18px 0 10px; }
+
 .mktbar { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0 14px; }
 .mktbar .chk { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--color-muted-fg); cursor: pointer; }
 .mktsearch { flex: 1 1 200px; min-width: 160px; }
@@ -3496,9 +3498,64 @@ const prettyKey = k => {
   return said.replace(/\b(\w+) \1\b/gi, '$1') || raw;
 };
 
-const isHeading = i => !String(i.v ?? '').trim();
+/* MQL5 gives an author no way to put a heading in the parameter dialog, so
+   they fake one: a dummy input whose VALUE is the title.
+
+       __Risque__  = === Risk Management ===
+       lineRisk    = >>> Risk Management
+       ___1___     = ========== Lot Size ==========
+       setting_1   = --------------------------------
+
+   That is not one author's habit. Twenty-three of them turned up across the
+   twenty-seven .set files sitting in the channel archives, written by different
+   people who had never met, all reaching for the same trick - and MT5 draws
+   every one of them as a separator.
+
+   This page drew them as editable text boxes containing "=== Risk Management
+   ===", which is a large part of why the settings list read as noise: the one
+   thing on the screen that was telling you how the EA is organised was
+   disguised as a setting you might change. */
+
+// the punctuation authors decorate a banner with, leading or trailing
+const HEAD_MARK = /^[\s=\-_>*~#<|.+]+|[\s=\-_>*~#<|.+]+$/g;
+// keys that exist only to carry a banner
+const HEAD_KEY = /^(line|group|grp|sep|hdr|header|title|setting)|^_+\d*_*$|^_{2,}/i;
+// A key that exists only to leave a gap. Deliberately anchored: "line_02" is a
+// spacer, "lineRisk" is a banner with words in its value, and "SwapProtect" is
+// a setting that happens to be blank.
+const SPACER_KEY = /^(line|blank|spacer|sep|separator|group|grp|hdr|header|title|setting)[_-]?\d*$|^[_\-=]+\d*[_\-=]*$/i;
+
 const headingText = k => String(k).replace(/^[>#*=~\s-]+|[:=\s]+$/g, '')
   .replace(/^input group/i, 'Group').trim() || 'Settings';
+
+/* The words of a heading, '' for a bare rule, or null when this is a real
+   setting and not a heading at all. */
+function headingLabel(i) {
+  const v = String(i.v ?? '').trim();
+  if (!v) {
+    // No value is not enough to make something a heading, which is what this
+    // used to assume. InpCalcPair, SwapProtect and RecoveryTPList are real
+    // settings that happen to be empty strings, and treating them as dividers
+    // hid them: they could not be read and could not be edited. An empty entry
+    // is only a banner when its key says so - a punctuation run, or a bare
+    // spacer name like blank_1, line_02, setting_3.
+    const k = String(i.k);
+    if (/[^\w\s]{2,}/.test(k)) return headingText(k);
+    return SPACER_KEY.test(k) ? '' : null;
+  }
+  const lead = (v.match(/^[^\w\s]{2,}/) || [])[0];
+  if (!lead) return null;
+  const bare = v.replace(HEAD_MARK, '').trim();
+  if (!bare) return '';                      // "--------" and nothing else
+  // Closed on both sides is proof enough on its own. Open on one side - the
+  // ">>> Risk Management" style - needs the key to be a banner key too, or a
+  // trade comment reading ">>> my trades" would vanish into a heading.
+  const symmetric = v.endsWith(lead.slice(0, 2));
+  if (symmetric || HEAD_KEY.test(String(i.k))) return bare;
+  return null;
+}
+
+const isHeading = i => headingLabel(i) !== null;
 
 /* Drawn as a function rather than inline, because a label arriving from the
    agent a moment after the dialog opens has to be able to redraw the rows. */
@@ -3641,7 +3698,12 @@ function renderEaRows() {
     typed[Number(el.dataset.idx)] = el.value;          // never lose a half-typed value
   }
   document.getElementById('ea-inputs').innerHTML = EA_EDIT.inputs.map((i, n) => {
-    if (isHeading(i)) return `<h3>${esc(headingText(i.k))}</h3>`;
+    if (isHeading(i)) {
+      // the author's own words where there are any, a plain rule where the
+      // separator carried none
+      const title = headingLabel(i);
+      return title ? `<h3>${esc(title)}</h3>` : '<hr class="searule">';
+    }
     const long = String(i.v).length > 18 || /[a-z]{4,}\s/i.test(String(i.v));
     const noted = eaNoteFor(i.k);
     const common = noted?.label ? '' : commonLabel(i.k);

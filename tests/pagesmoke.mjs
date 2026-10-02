@@ -22,7 +22,7 @@ const PROBE = `
 ;globalThis.__probe = {
   renderMarket,
   setMarket(d) { MARKET = d; },
-  prettyKey, commonLabel,
+  prettyKey, commonLabel, headingLabel, isHeading,
 };`;
 
 const node = (id = '') => {
@@ -221,6 +221,49 @@ if (probe) {
       + mute.map(([k, w]) => `${k} gave "${probe.commonLabel(k)}" not "${w}"`).join(', '));
   } else {
     console.log('  PASS  the glossary still names what the key alone cannot');
+  }
+}
+
+// -- section headers are headers, not text boxes --------------------------
+// MQL5 gives an author no way to put a heading in the parameter dialog, so they
+// fake one with a dummy input whose value is the title. Every case below was
+// taken from a .set file shipped by the channel, written by a different author.
+if (probe) {
+  const banners = [
+    [{ k: '__Risque__', v: '=== Risk Management ===' }, 'Risk Management'],
+    [{ k: 'Group5', v: '=== SYSTEM ===' }, 'SYSTEM'],
+    [{ k: 'lineRisk', v: '>>> Risk Management' }, 'Risk Management'],
+    [{ k: '___1___', v: '========== Lot Size ==========' }, 'Lot Size'],
+    [{ k: 'setting_1', v: '--------------------------------' }, ''],
+    [{ k: 'blank_2', v: '' }, ''],
+    [{ k: 'line_02', v: '' }, ''],
+  ];
+  const wrong = banners.filter(([row, want]) => probe.headingLabel(row) !== want);
+  if (wrong.length) {
+    failed = true;
+    for (const [row, want] of wrong) {
+      console.log(`  FAIL  ${row.k}=${row.v} gave `
+        + `${JSON.stringify(probe.headingLabel(row))}, expected ${JSON.stringify(want)}`);
+    }
+  } else {
+    console.log(`  PASS  all ${banners.length} fake section headers read as headings`);
+  }
+
+  // The old rule was "no value means heading", which hid real settings that
+  // happen to be empty strings - they could neither be read nor edited.
+  const settings = [
+    { k: 'InpCalcPair', v: '' },
+    { k: 'SwapProtect', v: '' },
+    { k: 'RecoveryTPList', v: '' },
+    { k: 'TradeComment', v: '>>> my trades' },   // not a banner: a real string
+  ];
+  const eaten = settings.filter(row => probe.isHeading(row));
+  if (eaten.length) {
+    failed = true;
+    console.log('  FAIL  real settings swallowed as headings: '
+      + eaten.map(r => r.k).join(', '));
+  } else {
+    console.log('  PASS  an empty or decorated setting is still an editable setting');
   }
 }
 
