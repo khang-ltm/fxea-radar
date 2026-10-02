@@ -189,6 +189,15 @@ if (probe) {
     ['inp_RiskPercent', 'Risk percent'],
     ['GridStepPts', 'Grid step points'],
     ['ATRPeriod', 'ATR period'],
+    // straight off the running EAs: "Min" is three different words here
+    ['Inp_NewsFilter_EntryPauseBeforeMin', 'News filter entry pause before minutes'],
+    ['Inp_SupportResistanceStrategy_Enable15MinTF',
+     'Support resistance strategy enable 15 minute timeframe'],
+    ['MinPendingDistance', 'Minimum pending distance'],
+    ['Inp_DynamicExit_WindowSec', 'Dynamic exit window seconds'],
+    ['Inp_PreventTradingCloseToATH', 'Prevent trading close to ATH'],
+    ['LotPer100Balance', 'Lot per 100 balance'],
+    ['InpGridDistMultip', 'Grid distance multiplier'],
   ];
   const bad = cases.filter(([key, want]) => probe.prettyKey(key) !== want);
   if (bad.length) {

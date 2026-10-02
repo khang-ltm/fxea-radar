@@ -3459,11 +3459,33 @@ const ABBREV = {
   dev: 'deviation', slip: 'slippage', hr: 'hour', hrs: 'hours', min: 'minimum',
   mins: 'minutes', max: 'maximum', tf: 'timeframe', ma: 'moving average',
   magic: 'magic number', gmt: 'GMT', atr: 'ATR', rsi: 'RSI', macd: 'MACD',
+  multip: 'multiplier', pend: 'pending', tgt: 'target', avg: 'average',
 };
 
 // Words that are already the right word, but whose casing a sentence-case pass
 // would ruin.
-const KEEP_CASE = new Set(['GMT', 'ATR', 'RSI', 'MACD', 'MT4', 'MT5', 'EA', 'ID']);
+const KEEP_CASE = new Set(['GMT', 'ATR', 'RSI', 'MACD', 'MT4', 'MT5', 'EA', 'ID',
+  // seen on this account reading as "ath", "usd", "adx", "oco", "dst", "ui"
+  'ATH', 'USD', 'EUR', 'GBP', 'JPY', 'ADX', 'OCO', 'DST', 'UI', 'US', 'NFP',
+  'TP', 'SL', 'DD', 'OK']);
+
+/* "Min" is three different words in one account's settings:
+
+     Inp_NewsFilter_EntryPauseBeforeMin   minutes  (it ends the name)
+     Inp_..._Enable15MinTF                minute   (a number comes first)
+     MinPendingDistance                   minimum  (neither)
+
+   Reading it as "minimum" everywhere turned a two-hour news pause into
+   "entry pause before minimum". The same goes for Sec. */
+function unitWord(word, prev, isLast) {
+  const w = word.toLowerCase();
+  if (w === 'min' || w === 'mins') {
+    if (/^\d+$/.test(prev || '')) return 'minute';
+    return isLast ? 'minutes' : 'minimum';
+  }
+  if (w === 'sec' || w === 'secs') return isLast ? 'seconds' : 'second';
+  return null;
+}
 
 const prettyKey = k => {
   const raw = String(k);
@@ -3479,6 +3501,9 @@ const prettyKey = k => {
     // word without this, which is exactly how MaxDDPerc stayed one blob
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    // "enable15MinTF" and "LotPer100Balance" glue a word to a number. Only a
+    // word of three letters or more is split off, so M5 and H1 stay whole.
+    .replace(/([a-z]{3,})(\d)/gi, '$1 $2')
     .replace(/\s+/g, ' ')
     .trim()
     .split(' ')
@@ -3486,7 +3511,10 @@ const prettyKey = k => {
   if (!words.length) return raw;
 
   const out = [];
-  for (const w of words) {
+  for (let n = 0; n < words.length; n++) {
+    const w = words[n];
+    const unit = unitWord(w, words[n - 1], n === words.length - 1);
+    if (unit) { out.push(unit); continue; }
     const expanded = ABBREV[w.toLowerCase()];
     if (expanded) { out.push(...expanded.split(' ')); continue; }
     out.push(w);
@@ -3787,6 +3815,17 @@ Object.assign(VENDOR_LABELS, {
   InpMinuteBetweenTrades: { label: 'Minutes between trades' },
   InpGridMaxTrades:  { label: 'Maximum trades in the grid' },
   DisableNFP:        { label: 'Skip NFP days' },
+  // written as one lowercase word, so nothing can split them mechanically
+  additionaltrade:       { label: 'Open an additional trade' },
+  secondadditionaltrade: { label: 'Open a second additional trade' },
+  tradeFriday:           { label: 'Trade on Friday' },
+  UseSecondChance:       { label: 'Allow a second recovery attempt' },
+  UseShortsBearishFilter:{ label: 'Only sell in a bearish trend' },
+  UseSidewayFilter:      { label: 'Skip sideways markets' },
+  ForceMinVolume:        { label: "Round up to the broker's minimum lot" },
+  UseOCO:                { label: 'One cancels the other' },
+  Inp_CommentAppendStrategy: { label: 'Add the strategy name to the trade comment' },
+  Inp_EnableSingleStrategyOnly: { label: 'Run one strategy at a time' },
   InpTradingNFP:     { label: 'Trade on NFP days' },
 });
 
