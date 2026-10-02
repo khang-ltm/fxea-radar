@@ -237,6 +237,11 @@ if (probe) {
     [{ k: 'setting_1', v: '--------------------------------' }, ''],
     [{ k: 'blank_2', v: '' }, ''],
     [{ k: 'line_02', v: '' }, ''],
+    // straight off the live account: MQL5's own `input group` arrives as a key
+    // with no value and no decoration, and Quantum's banners are in the key
+    [{ k: 'input group #1', v: '' }, 'Group #1'],
+    [{ k: '>>>> GENERAL SETTINGS', v: '' }, 'GENERAL SETTINGS'],
+    [{ k: '>>> TRADING DAYS', v: '' }, 'TRADING DAYS'],
   ];
   const wrong = banners.filter(([row, want]) => probe.headingLabel(row) !== want);
   if (wrong.length) {
@@ -256,6 +261,8 @@ if (probe) {
     { k: 'SwapProtect', v: '' },
     { k: 'RecoveryTPList', v: '' },
     { k: 'TradeComment', v: '>>> my trades' },   // not a banner: a real string
+    { k: 'InpFont', v: 'Trebuchet MS' },         // live: a real string setting
+    { k: 'InpNoteName', v: 'Quantum Athena v1.1' },
   ];
   const eaten = settings.filter(row => probe.isHeading(row));
   if (eaten.length) {

@@ -340,6 +340,8 @@ main { max-width: 1600px; margin: 0 auto; padding: var(--space-4); }
 .shot-none { color: var(--color-border); font-size: 12px; }
 
 .searule { border: 0; border-top: 1px solid var(--color-border); margin: 18px 0 10px; }
+.eafield--link { display: inline-block; padding: 4px 10px; border: 1px solid var(--color-border);
+  border-radius: 6px; color: var(--color-accent); text-decoration: none; font-size: 13px; }
 
 .mktbar { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0 14px; }
 .mktbar .chk { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--color-muted-fg); cursor: pointer; }
@@ -3541,6 +3543,10 @@ function headingLabel(i) {
     // spacer name like blank_1, line_02, setting_3.
     const k = String(i.k);
     if (/[^\w\s]{2,}/.test(k)) return headingText(k);
+    // MQL5's own `input group "..."` arrives as a key with no value and no
+    // decoration - Quantum Athena's reads "input group #1". It is a heading by
+    // definition, and the punctuation test above does not see it.
+    if (/^input group/i.test(k)) return headingText(k);
     return SPACER_KEY.test(k) ? '' : null;
   }
   const lead = (v.match(/^[^\w\s]{2,}/) || [])[0];
@@ -3638,6 +3644,111 @@ const GLOSSARY = [
   [/^(inp)?symbol(s|suffix|prefix)?$/, 'Symbol'],
 ];
 
+
+/* Labels an EA's own published manual gives, for inputs it shares with its
+   siblings.
+
+   Five of the seven EAs running on this account - Queen, Athena, Emperor,
+   Titan and Bitcoin - are by one author and use exactly the same input names:
+   InpLotsCalc, InpDDMode, InpLotsFixedBalance and the rest. Their manual names
+   every one of them, and names the options behind the bare numbers, which is
+   the part nothing else can supply.
+
+   Each entry below was checked against the values those EAs are running right
+   now - "Magic Number (1234)" in the manual against InpMagicNumber=1234 on the
+   chart - so these are tied to real inputs rather than matched by eye.
+
+   Two warnings, because this is a weaker source than it looks. The manuals are
+   written about the product, not generated from it, and they get details wrong:
+   a manual for one of these EAs calls InpSlUSD a stop loss "of 30 points" when
+   the name says plainly that it is 30 dollars. And an option list is only as
+   good as its order. So a published label never overrides the EA's own source
+   or a note written here, it is marked as coming from the manual, and where it
+   argues with the input's own name the name wins. */
+const VENDOR_LABELS = {
+  InpPause:                  { label: 'Start the EA paused', opts: ['no', 'yes'] },
+  InpLotsCalc:               { label: 'Lot calculation method' },
+  InpAutoLotsValue:          { label: 'Risk level for auto lots' },
+  InpLotsFixed:              { label: 'Fixed lot size' },
+  InpLotsFixedBalance:       { label: 'Fixed lot per this much balance' },
+  InpDDMode:                 { label: 'What to do at the drawdown limit',
+                               opts: ['off', 'close all and continue',
+                                      'close all and remove', 'alert only'] },
+  InpDDValue:                { label: 'Drawdown limit (percent or money)' },
+  InpMQID:                   { label: 'MQL5 push notifications' },
+  InpMagicNumber:            { label: 'Magic number' },
+  InpSpread:                 { label: 'Maximum spread (points)' },
+  InpSlippage:               { label: 'Maximum slippage (points)' },
+  InpXmas:                   { label: 'Pause over the year end' },
+  InpSets:                   { label: 'Broker preset' },
+  InpComment:                { label: 'Trade comment' },
+  InpTradeCommentRaw:        { label: 'Trade comment' },
+  InpTradingDirectionType:   { label: 'Allowed trade direction' },
+  InpUseNfpFridayFilter:     { label: 'Skip NFP Fridays' },
+  InpTradingFridayNight:     { label: 'Close before the weekend' },
+  InpTradingFridayNightHour: { label: 'Hour to close on Friday' },
+  InpUseYearEndPause:        { label: 'Pause 15 Dec to 15 Jan' },
+  InpPanel:                  { label: 'Show the on-chart panel' },
+  InpFont:                   { label: 'Panel font' },
+  InpFontSize:               { label: 'Panel font size' },
+  InpLineStyle:              { label: 'Line style' },
+  InpLineWidth:              { label: 'Line width' },
+  InpTPColor:                { label: 'Take profit line colour' },
+  InpBEColor:                { label: 'Break even line colour' },
+  InpGridColor:              { label: 'Grid line colour' },
+  InpNoteName:               { label: 'Which build this is', readonly: true },
+  InpNoteOverview:           { label: 'What the author says it trades', readonly: true },
+  InpNoteWebsite:            { label: 'Where it came from', readonly: true },
+};
+
+// The siblings do not all share one vocabulary. Bitcoin, Emperor and Titan
+// name the same ideas differently, so their inputs are listed too - and where
+// the plain name already reads correctly ("InpLotsMultiplier" -> "Lots
+// multiplier") nothing is added, because a label that repeats the name only
+// claims authority it has not earned.
+Object.assign(VENDOR_LABELS, {
+  InpVersion:        { label: 'Which build this is', readonly: true },
+  InpDescription:    { label: 'What the author says it trades', readonly: true },
+  InpManual:         { label: "The author's manual", readonly: true },
+  InpAuto:           { label: 'Size lots automatically' },
+  Auto:              { label: 'Size lots automatically' },
+  InpRiskLevels:     { label: 'Risk level' },
+  InpRiskLevel:      { label: 'Risk level' },
+  InpInitialLots:    { label: 'Starting lot size' },
+  Lot:               { label: 'Fixed lot size' },
+  FixedLot:          { label: 'Fixed lot size' },
+  LotsPer1000:       { label: 'Lots per 1000 of balance' },
+  BalanceStep:       { label: 'Balance step for lot sizing' },
+  RiskPercent:       { label: 'Risk per trade (percent)' },
+  RiskModeSetting:   { label: 'Risk mode' },
+  MagicNumber:       { label: 'Magic number' },
+  TradeComment:      { label: 'Trade comment' },
+  EAComment:         { label: 'Trade comment' },
+  Slippage:          { label: 'Maximum slippage (points)' },
+  StopLoss:          { label: 'Stop loss' },
+  MaxDrawdownPercent: { label: 'Maximum drawdown (percent)' },
+  Set:               { label: 'Broker preset' },
+  LongOnly:          { label: 'Buy only' },
+  ShowSimplePanel:   { label: 'Show the on-chart panel' },
+  InpPanel:          { label: 'Show the on-chart panel' },
+  UseRecoveryMode:   { label: 'Recover losses by re-entering' },
+  SmartRecovery:     { label: 'Recover losses by re-entering' },
+  InpStartTime:      { label: 'Start trading at' },
+  InpEndTime:        { label: 'Stop trading at' },
+  InpMinuteBetweenTrades: { label: 'Minutes between trades' },
+  InpGridMaxTrades:  { label: 'Maximum trades in the grid' },
+  DisableNFP:        { label: 'Skip NFP days' },
+  InpTradingNFP:     { label: 'Trade on NFP days' },
+});
+
+for (const day of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+                   'Saturday', 'Sunday']) {
+  VENDOR_LABELS['InpTradeOn' + day] = { label: 'Trade on ' + day };
+  VENDOR_LABELS['Trade' + day] = { label: 'Trade on ' + day };
+}
+
+const vendorLabel = key => VENDOR_LABELS[String(key)] || null;
+
 const glossaryKey = key => String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 function commonLabel(key) {
@@ -3686,6 +3797,13 @@ function eaField(i, n, noted, readonly) {
       ${known ? '' : `<option value="${esc(value)}" selected>${esc(value)} - not in your note</option>`}
     </select>`;
   }
+  // Quantum Emperor carries the address of its own manual as an input
+  // (InpManual = https://...). Leaving that in a text box made the one thing
+  // on the screen that explains the rest of the screen look like a setting.
+  if (/^https?:\/\/\S+$/i.test(value.trim())) {
+    return `<a class="eafield eafield--link" href="${esc(value.trim())}" target="_blank"
+      rel="noopener noreferrer" title="${esc(value)}">open ↗</a>`;
+  }
   return `<input ${attrs.replace(' disabled', ' readonly')} value="${esc(value)}" spellcheck="false">`;
 }
 
@@ -3706,15 +3824,20 @@ function renderEaRows() {
     }
     const long = String(i.v).length > 18 || /[a-z]{4,}\s/i.test(String(i.v));
     const noted = eaNoteFor(i.k);
-    const common = noted?.label ? '' : commonLabel(i.k);
-    const shown = noted?.label || common || prettyKey(i.k);
+    // order of trust: what you wrote, then the EA's own source, then its
+    // published manual, then a convention, then the name said out loud
+    const vendor = noted?.label ? null : vendorLabel(i.k);
+    const common = noted?.label || vendor ? '' : commonLabel(i.k);
+    const shown = noted?.label || vendor?.label || common || prettyKey(i.k);
     return `<div class="setrow${long ? ' text' : ''}" data-row="${n}">
       <label for="ea-in-${n}">
         <span class="${noted?.label ? (noted.origin === 'source' ? 'noted fromsrc' : 'noted')
-                       : common ? 'noted common' : ''}"${noted?.from
+                       : vendor ? 'noted common' : common ? 'noted common' : ''}"${noted?.from
           ? ` title="your note, taken on ${esc(noted.from)} - a different build of this EA"`
           : noted?.origin === 'source' ? " title=\"read from this EA's own source - the label MT5 shows\""
           : noted?.label ? ' title="your note"'
+          : vendor ? ' title="from this EA\'s published manual, not read from the EA'
+                     + ' - manuals describe the product and do get details wrong"'
           : common ? ' title="the usual meaning of this name in MQL5, not read from this EA'
                      + ' - label it yourself to be certain"' : ''}>${esc(shown)}</span>${isMagicKey(i.k)
         ? ' <span class="badge" title="how the EA recognises its own trades - not editable from here">locked</span>'
