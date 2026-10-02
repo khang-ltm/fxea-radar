@@ -27,7 +27,7 @@
 //|  market is closed.                                                |
 //+------------------------------------------------------------------+
 #property copyright "FX EA Radar"
-#property version   "1.31"
+#property version   "1.32"   // must equal MANAGER_VERSION - tests/e2e.py checks
 #property strict
 
 // The version the status file reports, and therefore the one the page shows.

@@ -372,6 +372,8 @@ def run_once(run_no: int, port: int) -> None:
         check_agent_imports()
         check_ex5_meta()
         check_version_report()
+        check_manager_versions()
+        check_bom_tolerant_sha()
         check_no_shadowed_locals()
         check_trade_path()
         check_no_control_chars()
@@ -438,6 +440,32 @@ def check_agent_names() -> None:
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     unknown = sorted(n for n in called - known if not hasattr(builtins, n))
     check(not unknown, f"agent calls only functions that exist{'' if not unknown else ': missing ' + ', '.join(unknown)}")
+
+
+def check_manager_versions() -> None:
+    """The manager carries its version twice: MANAGER_VERSION, which it reports
+    over the API, and #property version, which MT5 and the .ex5 header show.
+    They drifted once (1.32 vs 1.31) and made a stale build look current."""
+    import re as _re
+    src = open("mql5/FxeaManager.mq5", encoding="utf-8").read()
+    a = _re.search(r'#define MANAGER_VERSION "([^"]+)"', src)
+    b = _re.search(r'#property version\s+"([^"]+)"', src)
+    check(bool(a and b) and a.group(1) == b.group(1),
+          f"manager version strings agree ({a and a.group(1)} / {b and b.group(1)})")
+
+
+def check_bom_tolerant_sha() -> None:
+    import pathlib as _p, tempfile
+    from app import config as _cfg
+    from app import mt5_agent as ag
+    old = _cfg.ROOT
+    with tempfile.TemporaryDirectory() as d:
+        _cfg.ROOT = _p.Path(d); (_p.Path(d) / "data").mkdir()
+        try:
+            (_p.Path(d) / "data" / ".agent_version").write_text("\ufeff4a301af\r\n", encoding="utf-8")
+            check(ag._disk_sha() == "4a301af", "a version marker written by PowerShell (BOM, CRLF) reads cleanly")
+        finally:
+            _cfg.ROOT = old
 
 
 def check_version_report() -> None:

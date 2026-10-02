@@ -3791,7 +3791,7 @@ def _promote_pending() -> str:
     """Called at startup: this process IS the new version, so record it."""
     pending = config.ROOT / "data" / ".agent_pending"
     try:
-        sha = pending.read_text(encoding="utf-8").strip()
+        sha = _clean_sha(pending.read_text(encoding="utf-8"))
     except OSError:
         return ""
     if sha:
@@ -3808,11 +3808,21 @@ def _promote_pending() -> str:
 _BOOTED_SHA = ""
 
 
+def _clean_sha(text: str) -> str:
+    """A sha read from a marker file, without the byte-order mark.
+
+    The watchdog is PowerShell, and Windows PowerShell 5.1 writes a BOM with
+    Set-Content -Encoding utf8. The log showed "running new code <BOM>4a301a":
+    a version that can never equal the one GitHub reports.
+    """
+    return text.replace("\ufeff", "").strip()
+
+
 def _disk_sha() -> str:
     """What the files on disk say they are."""
     f = config.ROOT / "data" / ".agent_version"
     try:
-        return f.read_text(encoding="utf-8").strip()
+        return _clean_sha(f.read_text(encoding="utf-8"))
     except OSError:
         return ""
 
@@ -3824,7 +3834,7 @@ def _newest_on_disk() -> str:
     process that actually starts with it."""
     pending = config.ROOT / "data" / ".agent_pending"
     try:
-        staged = pending.read_text(encoding="utf-8").strip()
+        staged = _clean_sha(pending.read_text(encoding="utf-8"))
     except OSError:
         staged = ""
     return staged or _disk_sha()
