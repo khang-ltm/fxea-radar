@@ -135,10 +135,17 @@ if (probe) {
       // reached the card must not be satisfied by the reason text quoting it
       why: ['+5 grew well against its drawdown', '-1 something'],
       signal: { url: 'https://mql5.test/s/1', growth_pct: 357, dd_pct: 16, trades: 880,
-                win_pct: 61.2, profit_factor: 2.53, weeks: 101, deposit_load: 4.8 } },
+                win_pct: 61.2, profit_factor: 2.53, weeks: 101, deposit_load: 4.8,
+                subscribers: 66, latest_trade: '2 days ago' } },
     { id: '2', name: 'Unproven EA', url: 'https://mql5.test/2', author: 'B Seller',
       free: true, rating: null, reviews: 0, score: 0, proven: false,
       why: ['no live signal - nothing here is measured'], signal: null },
+    { id: '3', name: 'Quiet EA', url: 'https://mql5.test/3', author: 'C Seller',
+      score: 1, proven: true, why: ['+1 x'],
+      signal: { url: 'https://mql5.test/s/3', growth_pct: 10, subscribers: 0 } },
+    { id: '4', name: 'Unread EA', url: 'https://mql5.test/4', author: 'D Seller',
+      score: 1, proven: true, why: ['+1 y'],
+      signal: { url: 'https://mql5.test/s/4', growth_pct: 12 } },
   ];
   try {
     probe.setMarket({ eas: fixture, crawled_at: new Date().toISOString(), proven: 1 });
@@ -156,6 +163,12 @@ if (probe) {
       [!html.includes('vundefined') && !html.includes('v</span>'),
        'an EA with no version renders no version badge'],
       [html.includes('not read yet'), 'a half-crawled entry says so rather than looking blank'],
+      [html.includes('<b>66</b> subscribers'), 'the subscriber count reaches the card'],
+      [html.includes('<b>2 days ago</b> last trade'), 'when the signal last traded reaches the card'],
+      [html.includes('<b>0</b> subscribers'), 'a real zero subscribers reads as 0'],
+      [(html.match(/last trade/g) || []).length === 1,
+       'a signal with no last-trade value shows no last-trade chip'],
+      [(html.match(/subscribers/g) || []).length === 2, 'a signal with no subscriber count shows no subscriber chip, not 0'],
       [html.includes('https://mql5.test/s/1'), 'the card links the live signal'],
       [!html.includes('undefined') && !html.includes('NaN'),
        'no field renders as undefined or NaN'],
