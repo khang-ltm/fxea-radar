@@ -481,6 +481,15 @@ def crawl(limit: int = 60, budget: int = 160, delay: float = 2.5,
     out = []
     for entry in listed:
         old = cache.get(entry["id"]) or {}
+        # The listing is read on every crawl, so the price is always current
+        # even when the product page is not re-read. Keep each change: sellers
+        # here run "price rises to $999 on 01.10" countdowns, and whether one
+        # actually happened is worth more than the threat.
+        history = list(old.get("price_history") or [])
+        was = old.get("price")
+        if was is not None and entry.get("price") is not None and was != entry["price"]:
+            history.append({"price": was, "until": now.isoformat()})
+        entry["price_history"] = history[-8:]
         if fresh(old):
             merged = {**old, **entry, "signal": old.get("signal"),
                       "product": old.get("product"), "checked_at": old.get("checked_at")}
@@ -529,6 +538,57 @@ def crawl(limit: int = 60, budget: int = 160, delay: float = 2.5,
             "proven": sum(1 for e in out if e.get("proven")), "stale": False}
 
 
+def name_key(name: str) -> str:
+    """The part of an EA's name that survives the channel's renaming.
+
+    The catalog writes "Quantum Titan v2.2 MT5", "Smart Gold Hunter v3.3 fix",
+    "Gold Snap v1.0 Source code MT5"; the Market writes "Quantum Titan MT5" and
+    "Gold Snap". Versions, platform tags, "fix", "source code" and the channel's
+    own @handle are noise around the same product.
+
+    Deliberately an EXACT key, never a prefix or a fuzzy match. "Quantum Queen"
+    and "Quantum Queen X" are two different products at two different prices,
+    and a looser rule that joined them would put the wrong live account beside
+    an EA. A miss shows nothing; a wrong match shows a lie.
+    """
+    s = name.lower()
+    s = re.sub(r"@\S+|_?free_fx_pro\S*", " ", s)
+    s = re.sub(r"\b(v(er(sion)?)?\s*\d[\d.]*\w*|\d+(\.\d+)+\w*)\b", " ", s)
+    s = re.sub(r"\b(mt[45]|ea|expert advisor|fix(ed)?|source code|robot)\b", " ", s)
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return " ".join(s.split())
+
+
+def attach_market(posts: list[dict], market: dict) -> int:
+    """Put each catalog EA's Market listing beside it, where there is one.
+
+    Read-only on both sides: it adds a small summary to the post and touches
+    nothing else. Returns how many matched.
+    """
+    by_key: dict[str, dict] = {}
+    for e in market.get("eas") or []:
+        k = e.get("key") or name_key(e.get("name") or "")
+        if k and k not in by_key:
+            by_key[k] = e
+    hits = 0
+    for p in posts:
+        e = by_key.get(name_key(p.get("name") or ""))
+        if not e:
+            continue
+        sig = e.get("signal") or {}
+        p["market"] = {
+            "id": e.get("id"), "name": e.get("name"), "url": e.get("url"),
+            "price": e.get("price"), "free": bool(e.get("free")),
+            "version": e.get("version") or "", "score": e.get("score", 0),
+            "proven": bool(e.get("proven")),
+            "growth_pct": sig.get("growth_pct"), "dd_pct": sig.get("dd_pct"),
+            "weeks": sig.get("weeks"), "topped_up": bool(sig.get("topped_up")),
+            "signal_url": sig.get("url") or "",
+        }
+        hits += 1
+    return hits
+
+
 def public_view(data: dict, limit: int = 80) -> dict:
     """What the page needs, and nothing else.
 
@@ -549,6 +609,8 @@ def public_view(data: dict, limit: int = 80) -> dict:
             "proven": bool(e.get("proven")),
             "version": prod.get("version") or "",
             "updated": prod.get("updated") or "", "published": prod.get("published") or "",
+            "key": name_key(e.get("name") or ""),
+            "price_history": (e.get("price_history") or [])[-5:],
             "signal": {k: sig.get(k) for k in (
                 "url", "growth_pct", "dd_pct", "monthly_pct", "trades", "win_pct",
                 "profit_factor", "weeks", "weeks_estimated", "deposit", "deposits",

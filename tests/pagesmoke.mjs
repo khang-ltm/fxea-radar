@@ -23,7 +23,7 @@ const PROBE = `
   renderMarket,
   setMarket(d) { MARKET = d; },
   prettyKey, commonLabel, headingLabel, isHeading, vendorLabel,
-  trimSection, derivedSections, sectionOf,
+  trimSection, derivedSections, sectionOf, marketKey,
 };`;
 
 const node = (id = '') => {
@@ -338,6 +338,23 @@ if (probe) {
     if (ok) console.log(`  PASS  ${what}`);
     else { failed = true; console.log(`  FAIL  ${what}`); }
   }
+}
+
+// -- a catalog EA is joined to its own Market product, never a sibling -----
+// The key must agree with the server's name_key, and must keep "Quantum Queen"
+// and "Quantum Queen X" apart: they are different products at different prices.
+if (probe) {
+  const pairs = [
+    ['Quantum Titan v2.2 MT5', 'quantum titan'],
+    ['Smart Gold Hunter v3.3 fix', 'smart gold hunter'],
+    ['Gold Snap v1.0 Source code MT5', 'gold snap'],
+    ['Quantum Queen MT5 version 3.7@free_fx_pro', 'quantum queen'],
+    ['Quantum Queen X 4.3V', 'quantum queen x'],
+    ['Wave Rider EA v5.61 MT5', 'wave rider'],
+  ];
+  const off = pairs.filter(([n, k]) => probe.marketKey(n) !== k);
+  if (off.length) { failed = true; console.log('  FAIL  market key: ' + off.map(([n]) => `${n} -> "${probe.marketKey(n)}"`).join(', ')); }
+  else console.log(`  PASS  all ${pairs.length} names key to their own Market product`);
 }
 
 process.exit(failed ? 1 : 0);

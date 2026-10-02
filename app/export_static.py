@@ -18,7 +18,7 @@ from .buzz import attach_buzz
 from .grouping import group_products
 from .server import summarize
 from .shots import attach_shots
-from .mql5_market import public_view as market_view
+from .mql5_market import attach_market, public_view as market_view
 from .store import load_market, load_posts, load_state
 
 SITE_DIR = config.ROOT / "site"
@@ -47,6 +47,8 @@ def build_payload(limit: int = 3000) -> dict:
             g["shot"]["local_path"] = None
 
     state = load_state()
+    market = market_view(load_market())
+    attach_market(grouped, market)
     return {
         "posts": grouped[:limit],
         "matched": len(grouped),
@@ -58,7 +60,7 @@ def build_payload(limit: int = 3000) -> dict:
         "tag": "",
         "summary": summary,
         "state": state,
-        "market": market_view(load_market()),
+        "market": market,
         "sync": {
             "running": False,
             "static": True,

@@ -339,6 +339,7 @@ main { max-width: 1600px; margin: 0 auto; padding: var(--space-4); }
 
 .shot-none { color: var(--color-border); font-size: 12px; }
 
+.badge--mkt { border-color: color-mix(in srgb, var(--color-info) 55%, transparent); color: #BFDBFE; font-family: var(--font-head); }
 .searule { border: 0; border-top: 1px solid var(--color-border); margin: 18px 0 10px; }
 .eahelp { margin: 2px 0 12px; padding: 8px 12px; border-left: 2px solid var(--color-border);
   color: var(--color-muted-fg); font-size: 13px; line-height: 1.5; }
@@ -997,6 +998,51 @@ const RISKY = new Set(['cracked', 'martingale', 'grid']);
    how often an EA comes up and which way: green when people report it working,
    red when they report losses, plain when they only ask about it. The number is
    just a way to sort - the quotes in the detail sheet are the real answer. */
+/* The same EA, sold on the MQL5 Market. A lot of what the channel posts for free
+   is a copy of a product that costs hundreds of dollars, and the Market listing
+   carries the one thing the channel never does: the author's own live account.
+   The join is made on an exact name key server-side, so "Quantum Queen" and
+   "Quantum Queen X" stay two products. */
+function marketBadge(p) {
+  const m = p.market;
+  if (!m) return '';
+  const price = m.free ? 'free' : m.price != null ? '$' + Number(m.price).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '';
+  const verdict = !m.proven ? 'no live signal'
+    : m.topped_up ? 'live account topped up'
+    : m.growth_pct != null ? `live +${Math.round(m.growth_pct)}% / ${Math.round(m.dd_pct ?? 0)}% dd` : 'live signal';
+  return `<span class="badge badge--mkt" title="Sold on the MQL5 Market as ${esc(m.name)}${price ? ' for ' + price : ''}`
+    + ` - ${esc(verdict)}. Open the MQL5 Market tab for the full scorecard.">MQL5 ${esc(price)}</span>`;
+}
+
+function marketSection(p) {
+  const m = p.market;
+  if (!m) return '';
+  const price = m.free ? 'Free' : m.price != null ? '$' + Number(m.price).toLocaleString(undefined, { maximumFractionDigits: 0 }) : 'price not read';
+  const rows = [['Retail price', price], ['Version on sale', m.version ? 'v' + m.version : ''],
+    ['Live account', !m.proven ? 'none linked - nothing measured'
+      : m.topped_up ? 'topped up, so its growth % is not a track record'
+      : m.growth_pct != null ? `up ${Math.round(m.growth_pct)}%, worst drawdown ${Math.round(m.dd_pct ?? 0)}%` : 'linked'],
+    ['Weeks live', m.weeks != null ? String(Math.round(m.weeks)) : ''],
+    ['Scorecard', (m.score > 0 ? '+' : '') + m.score]].filter(([, v]) => v);
+  return `<section class="sect"><h3>On the MQL5 Market</h3>
+    <p class="hint">This looks like a copy of <b>${esc(m.name)}</b>. What follows is the seller's listing and
+    the seller's own live account, not this file - a free copy may be an older or modified build.</p>
+    <div class="kvgrid">${rows.map(([k, v]) => `<dl class="kvcell"><dt>${k}</dt><dd>${esc(v)}</dd></dl>`).join('')}</div>
+    <div class="tlinks"><a class="file__dl" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">Open the listing</a>
+    ${m.signal_url ? `<a class="file__dl" href="${esc(m.signal_url)}" target="_blank" rel="noopener noreferrer">Open the live signal</a>` : ''}</div>
+  </section>`;
+}
+
+/* Same rule as the server's name_key, so a running chart can be matched to a
+   Market product in the page. Exact key, never a prefix. */
+function marketKey(name) {
+  return String(name || '').toLowerCase()
+    .replace(/@\S+|_?free_fx_pro\S*/g, ' ')
+    .replace(/\b(v(er(sion)?)?\s*\d[\d.]*\w*|\d+(\.\d+)+\w*)\b/g, ' ')
+    .replace(/\b(mt[45]|ea|expert advisor|fix(ed)?|source code|robot)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+}
+
 function buzzBadge(p) {
   const b = p.buzz;
   if (!b?.mentions) return '';
@@ -1173,6 +1219,8 @@ function detailHtml(p) {
     ${specs.length ? `<section class="sect"><h3>Specification</h3>
       <div class="kvgrid">${specs.map(([k, v]) => `<dl class="kvcell"><dt>${k}</dt><dd>${esc(v)}</dd></dl>`).join('')}</div>
     </section>` : ''}
+
+    ${marketSection(p)}
 
     ${isSource(p) ? `<section class="sect"><h3>Source code, not an EA</h3>
       <p class="hint">This release is the .mq5 source. There is no compiled .ex5 in it,
@@ -1439,7 +1487,7 @@ function row(p) {
     <div class="row__name">
       <button class="row__open" data-key="${esc(p.family || p.dedupe_key || p.key)}"
         title="${esc(p.name)} - click for full details">${esc(p.name)}</button>
-      ${p.version ? `<span class="badge badge--ver">${esc(p.version)}</span>` : ''}
+      ${p.version ? `<span class="badge badge--ver">${esc(p.version)}</span>` : ''}${marketBadge(p)}
     </div>
     <div>${verdictBadge(p) || (buzzBadge(p) ? '' : '<span class="shot-none">—</span>')}${buzzBadge(p)}</div>
     <div class="row__hide">${testLinks(p, true)}</div>
@@ -4721,6 +4769,23 @@ function marketStats(s) {
   return `<div class="mchips">${chips.join('')}</div>`;
 }
 
+function marketLinks(e) {
+  const key = e.key || marketKey(e.name);
+  const copies = (POSTS || []).filter(p => p.market ? p.market.id === e.id : marketKey(p.name) === key);
+  const running = (typeof CHARTS !== 'undefined' ? CHARTS : [])
+    .filter(c => c.expert && !c.is_manager && marketKey(c.expert) === key);
+  const chips = [];
+  if (running.length) chips.push(`<span class="mchip good"><b>running</b> on your account</span>`);
+  if (copies.length) chips.push(`<span class="mchip"><b>${copies.length}</b> free ${copies.length === 1 ? 'copy' : 'copies'} in the catalog</span>`);
+  const h = (e.price_history || []).slice(-1)[0];
+  if (h && e.price != null && h.price != null && h.price !== e.price) {
+    const up = e.price > h.price;
+    chips.push(`<span class="mchip ${up ? 'bad' : 'good'}"><b>${up ? 'up' : 'down'} from $${Number(h.price).toLocaleString()}</b>`
+      + ` ${esc(String(h.until || '').slice(0, 10))}</span>`);
+  }
+  return chips.length ? `<div class="mchips">${chips.join('')}</div>` : '';
+}
+
 function marketCard(e) {
   const s = e.signal;
   const why = (e.why || []).map(w => {
@@ -4742,6 +4807,7 @@ function marketCard(e) {
     </div>
     <div class="mmeta">${esc(e.author || '')}${price ? ' \u00b7 ' + esc(price) : ''}${e.updated ? ' \u00b7 updated ' + esc(e.updated) : ''}${!e.version && !e.updated ? ' \u00b7 not read yet' : ''}</div>
     ${marketStats(s)}
+    ${marketLinks(e)}
     <ul class="pick__why">${why}</ul>
     ${s && s.url ? `<div class="pick__act"><a class="btn" href="${esc(s.url)}"
        target="_blank" rel="noopener noreferrer">Open the live signal</a></div>` : ''}

@@ -21,7 +21,7 @@ from . import config
 from .buzz import attach_buzz
 from .grouping import group_products
 from .shots import attach_shots
-from .mql5_market import public_view as market_view
+from .mql5_market import attach_market, public_view as market_view
 from .store import load_market, load_posts, load_state
 
 _sync_lock = threading.Lock()
@@ -288,6 +288,9 @@ class Handler(SimpleHTTPRequestHandler):
                 selected = attach_buzz(group_products(selected), posts)
                 attach_shots(selected)
                 collapsed = before - len(selected)
+            # the same EA on the MQL5 Market, with its price and live account
+            market = market_view(load_market())
+            attach_market(selected, market)
             matched = len(selected)
             if limit:
                 selected = selected[:limit]  # store is already newest-first
@@ -304,7 +307,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "tag": tag,
                     "summary": summary,
                     "state": load_state(),
-                    "market": market_view(load_market()),
+                    "market": market,
                     "sync": _sync_status,
                 }
             )
