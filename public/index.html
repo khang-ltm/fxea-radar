@@ -3710,7 +3710,7 @@ const GLOSSARY = [
    or a note written here, it is marked as coming from the manual, and where it
    argues with the input's own name the name wins. */
 const VENDOR_LABELS = {
-  InpPause:                  { label: 'Start the EA paused', opts: ['no', 'yes'] },
+  InpPause:                  { label: 'Start the EA paused' },
   InpLotsCalc:               { label: 'Lot calculation method' },
   InpAutoLotsValue:          { label: 'Risk level for auto lots' },
   InpLotsFixed:              { label: 'Fixed lot size' },
@@ -3718,6 +3718,11 @@ const VENDOR_LABELS = {
   InpDDMode:                 { label: 'What to do at the drawdown limit',
                                opts: ['off', 'close all and continue',
                                       'close all and remove', 'alert only'] },
+  InpTradingDirectionType:   { label: 'Allowed trade direction',
+                               opts: ['buys and sells', 'buys only', 'sells only'] },
+  InpLotsCalc:               { label: 'Lot calculation method',
+                               opts: ['automatic by risk level', 'fixed lot',
+                                      'fixed lot per balance'] },
   InpDDValue:                { label: 'Drawdown limit (percent or money)' },
   InpMQID:                   { label: 'MQL5 push notifications' },
   InpMagicNumber:            { label: 'Magic number' },
@@ -3904,7 +3909,10 @@ function renderEaRows() {
                      + ' - label it yourself to be certain"' : ''}>${esc(shown)}</span>${isMagicKey(i.k)
         ? ' <span class="badge" title="how the EA recognises its own trades - not editable from here">locked</span>'
         : ''}<small>${esc(i.k)}${noted?.note ? ' · ' + esc(noted.note) : ''}${
-          noted?.from ? ' · noted on ' + esc(shortEa(noted.from)) : ''}</small></label>
+          noted?.from ? ' · noted on ' + esc(shortEa(noted.from)) : ''}${
+          vendor?.opts && !noteOptions(noted?.note).length
+            ? ' · the manual lists: ' + esc(vendor.opts.join(' / '))
+            : ''}</small></label>
       ${eaField(i, n, noted, EA_EDIT.open || isMagicKey(i.k))}</div>`;
   }
 

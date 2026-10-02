@@ -22,7 +22,7 @@ const PROBE = `
 ;globalThis.__probe = {
   renderMarket,
   setMarket(d) { MARKET = d; },
-  prettyKey, commonLabel, headingLabel, isHeading,
+  prettyKey, commonLabel, headingLabel, isHeading, vendorLabel,
 };`;
 
 const node = (id = '') => {
@@ -271,6 +271,25 @@ if (probe) {
       + eaten.map(r => r.k).join(', '));
   } else {
     console.log('  PASS  an empty or decorated setting is still an editable setting');
+  }
+}
+
+// -- option names are offered, never a mapping ----------------------------
+// InpPause=1 on two EAs that are both actively trading, so 1 cannot mean
+// "paused" - a dropdown asserting 0=no/1=yes would have been confidently wrong.
+// Option lists are therefore shown as names and never bound to numbers.
+if (probe) {
+  const dd = probe.vendorLabel('InpDDMode');
+  const pause = probe.vendorLabel('InpPause');
+  const checks = [
+    [!!dd && Array.isArray(dd.opts) && dd.opts.length === 4,
+     'a documented option list is carried'],
+    [!!pause && !pause.opts,
+     'no option list is invented where the live values contradict it'],
+  ];
+  for (const [ok, what] of checks) {
+    if (ok) console.log(`  PASS  ${what}`);
+    else { failed = true; console.log(`  FAIL  ${what}`); }
   }
 }
 
