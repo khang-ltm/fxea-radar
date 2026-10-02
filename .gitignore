@@ -4,7 +4,10 @@ __pycache__/
 *.pyc
 site/
 tests/_tmp/
-.claude/
+.claude/*
+# the crew's roles and daily cycle are shared - the cloud crew reads them
+!.claude/agents/
+!.claude/crew-cycle.md
 
 # Nothing from data/ is tracked. The repo is public, and posts.json holds thousands
 # of raw group messages written by other people. CI keeps its own copy of the store
