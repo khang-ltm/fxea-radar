@@ -469,7 +469,13 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
     }
     return SHADES.get(k);
   };
-  const lit = c => !!c.desk && c.mode === 'sit' && !!c.doing;      // the same test that turns the desk lamp on
+  /* At the keyboard: someone with a real task, or someone keeping busy at an
+     empty desk. The owner wanted an office that looks at work, not one where
+     half the room stares at a dark screen. Only the first kind gets a speech
+     bubble - a typing agent with no bubble has nothing real assigned, and the
+     profile card says so. A blocked agent does not type: being stuck shows. */
+  const atKeys = c => c.mode === 'sit' && (!!c.doing || !!c.busy);
+  const lit = c => !!c.desk && atKeys(c);      // the same test that turns the desk lamp on
   const STARS = [[19, 12], [26, 15], [33, 11], [41, 13], [50, 12], [55, 16], [58, 11], [71, 12]];
   const CITY = [];                                    // lit skyline windows: [x, y, building colour]
 
@@ -873,7 +879,7 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
   function drawPerson(c, t) {
     const x = Math.round(c.x), y = Math.round(c.y);
     const walking = c.mode === 'walk';
-    const typing = c.mode === 'sit' && c.doing;
+    const typing = atKeys(c);
     const bob = reduced ? 0 : (typing && (t / 160 | 0) % 2 ? 1 : 0);
     const leg = walking && !reduced ? ((c.step / 5 | 0) % 2) : 0;
     const top = y - 15 + bob;
@@ -920,6 +926,7 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
   /* ── what each agent does next, decided from the tasks ──────────────── */
   const short = (s, n) => s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s;
   function decide(c) {
+    c.busy = false;
     // home time wins over everything, including work in progress
     if (afterHours()) {
       c.tx = DOOR.x + (crew.indexOf(c) - 2.5) * 2; c.ty = DOOR.y; c.plan = 'home';
@@ -996,11 +1003,10 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
       c.plan = 'board'; c.bubble = 'Next up: ' + short(pick.title, 56);
       return;
     }
-    if (queued.length) { c.tx = c.seat.x; c.ty = c.seat.y; c.plan = 'seat'; c.bubble = ''; return; }
-    // nothing on their plate: they sit at their desk like anyone else would.
-    // They used to be sent for coffee or a random spot every few seconds, which
-    // kept half the office walking in circles.
-    c.tx = c.seat.x; c.ty = c.seat.y; c.plan = 'seat'; c.bubble = '';
+    if (queued.length) { c.tx = c.seat.x; c.ty = c.seat.y; c.plan = 'seat'; c.bubble = ''; c.busy = true; return; }
+    // nothing on their plate: they sit at their desk and keep busy, the way
+    // anyone in an office would. No bubble - there is no task to name.
+    c.tx = c.seat.x; c.ty = c.seat.y; c.plan = 'seat'; c.bubble = ''; c.busy = true;
   }
 
   /* OPS walks a round of the office, and every time it arrives somewhere it
@@ -1210,7 +1216,7 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
     // seated people are drawn before their desk so the desk hides their legs
     crew.forEach(c => {
       if (seated.has(c.id)) drawPerson(c, t);
-      drawDesk(c, seated.has(c.id) && c.doing, t);
+      drawDesk(c, seated.has(c.id) && atKeys(c), t);
     });
     standing.forEach(c => drawPerson(c, t));
     drawLight();
