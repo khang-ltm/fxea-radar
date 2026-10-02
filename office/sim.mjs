@@ -22,14 +22,20 @@ function run(hash) {
   // one agent has had a task in progress all along
   o.setTasks([{ id: 't1', agent: 'be', status: 'doing', title: 'Find out why execv does nothing' }]);
   const said = new Set();
+  let walking = 0, samples = 0, wc = 0;
   for (let i = 0; i < 20 * 60 * 10; i++) {           // twenty simulated minutes at 10 fps
     T += 100; loopFn && loopFn(T);
     if (o.ops.bubble) said.add(o.ops.bubble);
+    if (i % 10 === 0) { samples++; walking += o.crew.filter(c => !c.gone && c.mode === 'walk').length;
+                        wc += o.crew.filter(c => c.gone && c.exitAt && c.exitAt.x < 20).length; }
   }
   const be = o.crew.find(c => c.id === 'be');
-  return { said: [...said], gone: o.crew.filter(c => c.gone).length, opsGone: o.ops.gone,
+  return { walkingAvg: +(walking / samples).toFixed(2), wcSeen: wc > 0,
+           atTable: o.crew.filter(c => c.plan === 'lunch-in').length,
+           said: [...said].length, gone: o.crew.filter(c => c.gone).length, opsGone: o.ops.gone,
            beBreaks: be.breakUntil ? 'had a break' : 'never rested' };
 }
 
 console.log('day  :', JSON.stringify(run('#day')));
 console.log('night:', JSON.stringify(run('#night')));
+console.log('lunch:', JSON.stringify(run('#lunch')));

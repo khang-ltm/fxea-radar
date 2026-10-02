@@ -344,6 +344,21 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
   const DESKS = [[34, 74], [136, 74], [238, 74], [34, 128], [136, 128], [238, 128]];
   const BOARD_SPOT = { x: 160, y: 56 }, COFFEE = { x: 292, y: 60 };
   const DOOR = { x: 227, y: 52 };
+  const WC_DOOR = { x: 8, y: 116 };          // a door in the left wall
+  /* Lunch, on the viewer's clock. #lunch forces it, like #night and #morning. */
+  const LUNCH_AT = 12, LUNCH_END = 13;
+  const lunchTime = () => {
+    const f = (location.hash || '').replace('#', '');
+    if (f === 'lunch') return true;
+    if (f === 'day' || f === 'night' || f === 'morning') return false;
+    const h = new Date().getHours();
+    return h >= LUNCH_AT && h < LUNCH_END;
+  };
+  const msUntilLunchEnds = () => {
+    const d = new Date(), e = new Date(d);
+    e.setHours(LUNCH_END, 0, 0, 0);
+    return Math.max(60000, e - d);
+  };
   /* Office hours, on the viewer's own clock. After ten the crew goes home and the
      lights go off; at seven they are back. #night and #day force either, so the
      after-hours office can be seen at lunchtime. */
@@ -551,6 +566,10 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
     px(110, 40, 100, 1, 'rgba(0,0,0,0.35)'); px(140, 40, 40, 2, '#8a8f9e');
     px(146, 39, 4, 1, '#d94a4a'); px(152, 39, 4, 1, '#4a7ad9'); px(158, 39, 4, 1, '#4f9a5c');
 
+    // the WC, a door in the left wall
+    px(0, 92, 6, 34, '#2c2119'); px(0, 94, 5, 31, '#5e4533'); px(0, 94, 1, 31, '#7d5f47');
+    px(3, 108, 1, 3, '#c9a24a');                                   // handle
+    px(7, 96, 7, 5, '#e8e2cc'); px(8, 97, 2, 3, '#4a7ad9'); px(11, 97, 2, 3, '#d94a8a');   // WC sign
     // the door out, with corridor light under it and an exit sign
     px(213, 6, 28, 40, '#3a2c22'); px(215, 8, 24, 38, '#6b4f3a');
     px(218, 11, 18, 14, '#5e4533'); px(218, 28, 18, 15, '#5e4533');
@@ -912,10 +931,37 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
       c.tx = s.x + (crew.indexOf(c) % 3) * 3; c.ty = s.y; c.plan = 'break'; c.bubble = s.say;
       return;
     }
+    /* Lunch: most of the office goes out, a couple eat at the table. */
+    if (lunchTime()) {
+      const i = crew.indexOf(c);
+      if (i % 3 === 1) {
+        c.tx = PLACES[i].x; c.ty = PLACES[i].y; c.plan = 'lunch-in'; c.bubble = 'Lunch at the table.';
+      } else {
+        c.tx = DOOR.x + (i - 3) * 2; c.ty = DOOR.y; c.plan = 'lunch-out';
+        c.bubble = 'Out for lunch. Back at ' + LUNCH_END + ':00.';
+      }
+      return;
+    }
+    /* Everyone gets up now and then - mostly the WC, sometimes water or coffee -
+       and comes back. Each person keeps their own clock, a few minutes apart,
+       so the room never empties at once. */
+    const now = performance.now();
+    if (!c.nextBreak) c.nextBreak = now + (90 + Math.random() * 240) * 1000;
+    if (now > c.nextBreak && !meeting) {
+      c.nextBreak = now + (200 + Math.random() * 300) * 1000;
+      const r = Math.random();
+      if (r < 0.5) {
+        c.tx = WC_DOOR.x + 2; c.ty = WC_DOOR.y + (crew.indexOf(c) % 3); c.plan = 'wc'; c.bubble = '';
+        return;
+      }
+      const s = r < 0.75 ? BREAK_SPOTS[1] : BREAK_SPOTS[2];
+      c.tx = s.x + (crew.indexOf(c) % 3) * 3; c.ty = s.y; c.plan = 'break'; c.bubble = s.say;
+      return;
+    }
     if (c.id === 'rev') {
       const waiting = TASKS.filter(x => x.status === 'review');
       const stuck = TASKS.filter(x => x.status === 'blocked');
-      const atBoard = (c.visits++ % 2) === 0;
+      const atBoard = Math.random() < 0.25;      // mostly at its station, now and then at the board
       c.tx = atBoard ? BOARD_SPOT.x + 34 : c.seat.x; c.ty = atBoard ? BOARD_SPOT.y + 2 : c.seat.y;
       c.plan = atBoard ? 'board' : 'seat';
       c.doing = null;
@@ -942,7 +988,8 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
       return;
     }
     c.blocked = false;
-    if (queued.length && c.plan !== 'board') {
+    // a glance at the wall board now and then - not on every decision
+    if (queued.length && c.plan !== 'board' && Math.random() < 0.2) {
       const pick = queued[c.visits++ % queued.length];
       c.tx = BOARD_SPOT.x + (AGENTS.indexOf(BY_ID[c.id]) - 2.5) * 9;
       c.ty = BOARD_SPOT.y + (c.id.length % 2) * 3;
@@ -950,12 +997,10 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
       return;
     }
     if (queued.length) { c.tx = c.seat.x; c.ty = c.seat.y; c.plan = 'seat'; c.bubble = ''; return; }
-    // nothing on their plate
-    const coffee = Math.random() < 0.5;
-    c.tx = coffee ? COFFEE.x - 4 - Math.random() * 10 : 40 + Math.random() * 240;
-    c.ty = coffee ? COFFEE.y + 6 + Math.random() * 6 : 96 + Math.random() * 70;
-    c.plan = coffee ? 'coffee' : 'wander';
-    c.bubble = coffee ? 'Nothing assigned. Coffee.' : '';
+    // nothing on their plate: they sit at their desk like anyone else would.
+    // They used to be sent for coffee or a random spot every few seconds, which
+    // kept half the office walking in circles.
+    c.tx = c.seat.x; c.ty = c.seat.y; c.plan = 'seat'; c.bubble = '';
   }
 
   /* OPS walks a round of the office, and every time it arrives somewhere it
@@ -1105,6 +1150,7 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
       else {
         for (const c of crew) {
           c.wait = Math.random() * 3;
+          c.awayUntil = 0;
           if (!night && c.gone) { c.gone = false; c.x = DOOR.x; c.y = DOOR.y + 2; }
         }
         if (!night && ops.gone) { ops.gone = false; ops.x = DOOR.x; ops.y = DOOR.y + 2; ops.wait = 0; }
@@ -1116,6 +1162,11 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
     for (const c of crew) {
       if (c.gone) {
         if (!night && c.arriveIn > 0) { c.arriveIn -= dt; if (c.arriveIn <= 0) enter(c); }
+        else if (!night && c.awayUntil && performance.now() >= c.awayUntil) {
+          // back from the WC or from lunch, through the same door
+          const e = c.exitAt || DOOR;
+          c.gone = false; c.awayUntil = 0; c.x = e.x; c.y = e.y + 2; c.plan = ''; c.wait = 0.2;
+        }
         continue;
       }
       c.typed = c.mode === 'sit' && c.doing ? (c.typed || 0) + dt : 0;
@@ -1133,10 +1184,21 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
       }
       c.mode = c.plan === 'seat' ? 'sit' : 'stand';
       if (c.plan === 'home') { c.gone = true; c.bubble = ''; continue; }   // through the door
+      if (c.plan === 'wc') {
+        c.gone = true; c.bubble = ''; c.exitAt = WC_DOOR;
+        c.awayUntil = performance.now() + (20 + Math.random() * 25) * 1000;
+        continue;
+      }
+      if (c.plan === 'lunch-out') {
+        c.gone = true; c.bubble = ''; c.exitAt = DOOR;
+        c.awayUntil = (location.hash || '') === '#lunch' ? Infinity : performance.now() + msUntilLunchEnds();
+        continue;
+      }
       c.wait -= dt;
       if (c.wait <= 0) {
         decide(c);
-        c.wait = c.doing ? 6 : c.plan === 'board' ? 3.2 : 4 + Math.random() * 4;
+        c.wait = c.doing ? 6 : c.plan === 'board' ? 3.2 : c.plan === 'seat' ? 8 + Math.random() * 8
+               : 4 + Math.random() * 4;
       }
     }
   }
@@ -1162,7 +1224,7 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
       tag[c.id].classList.toggle('sel', selected === c.id);
       // in a meeting only the speaker talks; otherwise people mid-task, at the board or at coffee
       const show = c.bubble && (meeting ? c !== ops
-        : (c === ops || c.doing || c.blocked || selected === c.id || ['board', 'coffee', 'break', 'home'].includes(c.plan))
+        : (c === ops || c.doing || c.blocked || selected === c.id || ['board', 'coffee', 'break', 'home', 'lunch-in', 'lunch-out'].includes(c.plan))
           && (selected === null || selected === c.id || c.doing));
       bub[c.id].hidden = !show;
       if (show) {
