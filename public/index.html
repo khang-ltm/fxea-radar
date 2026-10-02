@@ -716,13 +716,6 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
   </div>
 
   <div id="view-mt5" hidden style="min-width: 0">
-    <section class="mt5sect">
-      <h2><button class="checkfold" id="checkfold" aria-expanded="true"
-          aria-controls="checklist"><span class="checkfold__arrow"></span>System check</button>
-        <span class="num" id="checkstate"></span>
-        <button class="chip ghost" id="checkagain">Check again</button></h2>
-      <div id="checklist"></div>
-    </section>
     <section class="mt5bar">
       <div class="mt5bar__head">
         <span class="mt5bar__title">
@@ -1809,12 +1802,6 @@ const mt5Time = iso => {
 const magicOf = row => row?.magic_text || row?.magic;
 const mt5Magic = v => (!Number(v) ? '<span class="badge">manual</span>' : esc(String(v)));
 
-document.getElementById('checkagain').onclick = () => loadSelfCheck(true);
-document.getElementById('checkfold').onclick = () => {
-  const open = document.getElementById('checklist').hidden;
-  localStorage.setItem(CHECK_FOLD_KEY, open ? '1' : '0');
-  showCheck(open);
-};
 document.getElementById('mt5conf').onclick = () => {
   let url = MT5?.url || window.__MT5_URL__ || '';
   if (!url) {
@@ -4500,74 +4487,9 @@ async function managerPost(body) {
 let checkAt = 0;
 const CHECK_FOLD_KEY = 'fxea_check_open';
 
-/* Ten green lines are worth one line of screen; ten lines with a red one in
-   them are worth all of it. So it folds itself by what it found, unless you
-   have said otherwise - and what you say is remembered. */
-function foldCheck(state) {
-  const saved = localStorage.getItem(CHECK_FOLD_KEY);
-  const open = saved === null ? state !== 'ok' : saved === '1';
-  showCheck(open);
-}
-
-function showCheck(open) {
-  const list = document.getElementById('checklist');
-  const btn = document.getElementById('checkfold');
-  if (!list || !btn) return;
-  list.hidden = !open;
-  btn.setAttribute('aria-expanded', String(open));
-  document.getElementById('checkagain').hidden = !open;
-}
-
-async function loadSelfCheck(force) {
-  const box = document.getElementById('checklist');
-  if (!box || !MT5?.url) return;
-  if (!force && Date.now() - checkAt < 55000) return;
-  checkAt = Date.now();
-  let d;
-  try {
-    d = await (await fetch(`${MT5.url}/api/selfcheck`, {
-      credentials: 'include',
-      headers: MT5.token ? { Authorization: 'Bearer ' + MT5.token } : {},
-    })).json();
-  } catch (e) {
-    setHtml('checklist', `<div class="empty">The agent did not answer: ${esc(e.message)}</div>`);
-    return;
-  }
-  if (!d?.ok) {
-    setHtml('checklist', `<div class="empty">${esc(d?.error || 'no answer')}</div>`);
-    return;
-  }
-
-  /* The VPS hides AVX2, so two EAs compiled for it cannot load there. The owner
-     has decided to live with that rather than ask the provider, so it is a known
-     fact about this machine, not something to keep flagging: the row stays, as
-     information, and stops holding the panel open. An attach that fails for this
-     reason still says so at the moment it fails. */
-  d.rows = (d.rows || []).map(r => (r.name === 'CPU' && /avx2/i.test(r.detail || '') && r.state !== 'bad')
-    ? { ...r, state: 'ok', fix: '',
-        detail: String(r.detail).replace(/ - no AVX2, so .*$/i, '') + ' - no AVX2 (accepted: EAs that need it are not run here)' }
-    : r);
-  const RANK = { ok: 0, unknown: 1, warn: 2, bad: 3 };
-  d.state = d.rows.reduce((s, r) => (RANK[r.state] ?? 1) > (RANK[s] ?? 0) ? r.state : s, 'ok');
-
-  const word = { ok: 'all good', warn: 'needs a look', bad: 'something is down' }[d.state] || '';
-  const tag = document.getElementById('checkstate');
-  const bad = (d.rows || []).filter(r => r.state === 'bad').length;
-  const warn = (d.rows || []).filter(r => r.state !== 'ok' && r.state !== 'bad').length;
-  // folded, this line is the whole panel: it has to carry the count
-  tag.textContent = word + (bad || warn
-    ? ` · ${[bad ? `${bad} down` : '', warn ? `${warn} to look at` : ''].filter(Boolean).join(', ')}`
-    : ` · ${(d.rows || []).length} checks`);
-  tag.className = `num check--${d.state}`;
-  setHtml('checklist', `<div class="checks">${(d.rows || []).map(r => `
-    <div class="check check--${esc(r.state)}">
-      <span class="check__dot"></span>
-      <span class="check__name">${esc(r.name)}</span>
-      <span class="check__detail">${esc(r.detail)}${r.fix
-        ? `<span class="check__fix">${esc(r.fix)}</span>` : ''}</span>
-    </div>`).join('')}</div>`);
-  foldCheck(d.state);
-}
+/* The System check panel is gone from the page: the Radar Crew reads
+   /api/selfcheck at each stand-up and raises a task for anything that is down.
+   The agent still serves the endpoint; nothing here calls it. */
 
 /* ── orders with nobody left to manage them ────────────────────────────────
    Hooking the pending-order question onto the Pause command only answered it
@@ -4883,7 +4805,7 @@ function showTab(name) {
   if (!isEas) document.getElementById('stale').hidden = true;
 
   if (TAB === 'market') renderMarket();
-  if (TAB === 'mt5') { showSub(SUBTAB); loadMt5(); loadSelfCheck(); }
+  if (TAB === 'mt5') { showSub(SUBTAB); loadMt5(); }
   if (TAB === 'myea') { showEaSub(EASUB); loadEas().then(loadCharts); }
 }
 
@@ -4985,8 +4907,6 @@ document.addEventListener('visibilitychange', () => {
 syncMt5Transport();
 setInterval(loadMt5, 10000);       // fallback only: skipped while a stream is live
 setInterval(renderMt5Freshness, 5000);   // turns wordy only if frames stop
-setInterval(() => { if (TAB === 'mt5' && document.visibilityState === 'visible') loadSelfCheck(); },
-            60000);
 
 load();
 // The catalog is rebuilt twice a day, so re-fetching every 2 min was pointless

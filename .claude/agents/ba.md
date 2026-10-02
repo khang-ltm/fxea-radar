@@ -43,6 +43,30 @@ curl -s -H "Authorization: Bearer $MT5_TOKEN" \
 
 Ask the user for the agent token if you do not have it; never print it.
 
+## System check is yours
+
+The System check panel was taken off the site and handed to you. At every
+stand-up run in a session that has the agent token, read it:
+
+```bash
+curl -s -H "Authorization: Bearer $MT5_TOKEN" https://mt5.fxea-radar.linkpc.net/api/selfcheck
+```
+
+Each row is `{name, state, detail, fix}`. For every row that is not `ok`, raise
+one task on the Radar Crew board (collection `tasks`) - or update the existing
+one rather than adding a duplicate - with the row's detail as the evidence and
+its fix as the next step. Assign it by what the fix needs:
+
+- the VPS, the provider, or anything a person must do by hand -> `you`, human only
+- code -> `be`; the page -> `fe`
+- never anything that acts on trades or EA settings: those are always `you`
+
+Accepted conditions are not problems: the CPU row reports "no AVX2 (accepted)"
+because the owner chose to live with it. Do not raise it again.
+
+When a row comes back `ok`, close its task. The daily cloud crew has no token
+and cannot do this; it happens when a session runs a stand-up.
+
 ## How to answer
 
 Count first, then show examples. "23 of 969 entries" is an answer; "many EAs do
