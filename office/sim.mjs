@@ -27,7 +27,7 @@ function run(hash) {
     T += 100; loopFn && loopFn(T);
     if (o.ops.bubble) said.add(o.ops.bubble);
     if (i % 10 === 0) { samples++; walking += o.crew.filter(c => !c.gone && c.mode === 'walk').length;
-                        wc += o.crew.filter(c => c.gone && c.exitAt && c.exitAt.x < 20).length;
+                        wc += o.crew.filter(c => c.gone && c.exitAt && c.exitAt.x === 254).length;
                         typing += o.crew.filter(c => !c.gone && c.mode === 'sit' && (c.doing || c.busy)).length; }
   }
   const be = o.crew.find(c => c.id === 'be');

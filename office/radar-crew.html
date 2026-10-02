@@ -177,7 +177,7 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
 .ticker .sep { color: var(--line); padding: 0 6px; }
 
 /* the health lamp by the door: a real button over its pixels */
-.lamphot { left: 76.25%; top: 14.4%; width: 5.3%; height: 10%; border-radius: 3px; }
+.lamphot { left: 95.3%; top: 4.4%; width: 4.4%; height: 9%; border-radius: 3px; }
 
 /* the small dialogs: an agent's card, the health check */
 .boardlg.small { width: min(460px, calc(100vw - 32px)); }
@@ -344,7 +344,7 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
   const DESKS = [[34, 74], [136, 74], [238, 74], [34, 128], [136, 128], [238, 128]];
   const BOARD_SPOT = { x: 160, y: 56 }, COFFEE = { x: 292, y: 60 };
   const DOOR = { x: 227, y: 52 };
-  const WC_DOOR = { x: 8, y: 116 };          // a door in the left wall
+  const WC_DOOR = { x: 254, y: 52 };         // the door on the back wall, beside the exit
   /* Lunch, on the viewer's clock. #lunch forces it, like #night and #morning. */
   const LUNCH_AT = 12, LUNCH_END = 13;
   const lunchTime = () => {
@@ -377,8 +377,8 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
                        { x: 266, y: 62, say: 'Water break.' },
                        { x: 284, y: 66, say: 'Coffee break.' }];
   const TABLE = { x: 160, y: 111 };
-  // the health lamp on the wall between the door and the cooler, under the sunset picture
-  const LAMP = { x: 252, y: 34 }, UNDER_LAMP = { x: 252, y: 57 };
+  // the health lamp on the wall above the coffee counter
+  const LAMP = { x: 312, y: 16 }, UNDER_LAMP = { x: 306, y: 62 };
   // six places around the table, far side first so nobody stands in front of another
   const PLACES = [-2.4, -1.6, -0.75, 0, 0.75, 1.6, 2.4].map(a => ({
     x: TABLE.x + Math.sin(a) * 34, y: TABLE.y - Math.cos(a) * 13 + 4 }));
@@ -422,7 +422,7 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
     { x: 160, y: 58, say: 'Wall board: readable from the door. Approved.' },
     { x: 104, y: 60, say: 'Bookshelf: alphabetical, mostly.' },
     { x: 52, y: 62, say: 'Window: city still awake. So are we.' },
-    { x: 252, y: 58, say: 'That picture is hanging straight. Good.' },
+    { x: 254, y: 56, say: 'WC: clean, paper restocked.' },
     { x: 160, y: 124, say: 'Meeting table: no cold coffee left behind.' },
     { x: 30, y: 158, say: 'The cat has approved this corner.' },
     { x: 226, y: 54, say: 'Exit sign: lit. Fire drill passed.' },
@@ -572,17 +572,6 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
     px(110, 40, 100, 1, 'rgba(0,0,0,0.35)'); px(140, 40, 40, 2, '#8a8f9e');
     px(146, 39, 4, 1, '#d94a4a'); px(152, 39, 4, 1, '#4a7ad9'); px(158, 39, 4, 1, '#4f9a5c');
 
-    // the WC: a proper door in the left wall, with a sign you can read. The
-    // first version was a six-pixel sliver at the edge and nobody could see it.
-    px(0, 86, 15, 42, '#241a13');                                  // frame
-    px(1, 88, 12, 39, '#7a5a40'); px(1, 88, 12, 1, '#94704f');     // door
-    px(2, 104, 10, 1, '#654a35'); px(2, 116, 10, 1, '#654a35');    // panels
-    px(10, 109, 2, 2, '#d8b45a');                                  // handle
-    px(0, 127, 15, 1, 'rgba(255,240,200,0.25)');                   // light under the door
-    // "WC" in white on a blue plate, 3x5 letters
-    px(2, 90, 11, 8, '#2f5fb3'); px(2, 90, 11, 1, '#4a7ad9');
-    const WC = ['100010111', '100010100', '101010100', '101010100', '010100111'];   // W, gap, C
-    WC.forEach((row, y) => [...row].forEach((on, x) => { if (on === '1') px(3 + x, 91 + y, 1, 1, '#f4f0de'); }));
     // the door out, with corridor light under it and an exit sign
     px(213, 6, 28, 40, '#3a2c22'); px(215, 8, 24, 38, '#6b4f3a');
     px(218, 11, 18, 14, '#5e4533'); px(218, 28, 18, 15, '#5e4533');
@@ -594,10 +583,18 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
     px(223, 2, 1, 2, '#1c5a33'); px(226, 2, 1, 2, '#1c5a33'); px(229, 2, 1, 2, '#1c5a33');
     px(243, 24, 2, 3, '#c9c3b0');                                          // light switch
 
-    // framed picture: a sunset over hills
-    px(246, 10, 18, 15, '#8a6a3a'); px(247, 11, 16, 13, '#e8e2cc');
-    px(249, 13, 12, 9, '#d98b5a'); px(249, 13, 12, 3, '#b8607a'); px(256, 16, 2, 2, '#f3d27a');
-    px(249, 19, 12, 3, '#3b4f7d'); px(250, 18, 4, 1, '#3b4f7d'); px(255, 18, 5, 1, '#33456e');
+    // The WC, on the back wall beside the exit, where every door in this view
+    // belongs. A first attempt put it in the left edge, on the carpet, cut off
+    // by the frame - it read as a brown box on the floor.
+    px(245, 15, 19, 31, '#241a13');                                // frame
+    px(246, 17, 17, 29, '#6b4f3a'); px(246, 17, 17, 1, '#86644a'); // door
+    px(248, 20, 13, 10, '#5e4533'); px(248, 33, 13, 10, '#5e4533');// panels
+    px(248, 20, 13, 1, '#7d5f47'); px(248, 33, 13, 1, '#7d5f47');
+    px(259, 31, 2, 2, '#d8b45a');                                  // handle
+    // the sign above it, like the exit sign over the other door
+    px(247, 6, 15, 8, '#1d3e7a'); px(248, 7, 13, 6, '#2f5fb3');
+    const WC = ['100010111', '100010100', '101010100', '101010100', '010100111'];   // W, gap, C
+    WC.forEach((row, y) => [...row].forEach((on, x) => { if (on === '1') px(250 + x, 7 + y, 1, 1, '#f4f0de'); }));
 
     // water cooler
     px(269, 14, 8, 11, 'rgba(120,170,235,0.35)'); px(269, 17, 8, 8, 'rgba(80,140,220,0.55)');
@@ -765,7 +762,7 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
 
   function drawWcLight() {
     const busy = crew.some(c => c.gone && c.exitAt === WC_DOOR);
-    px(13, 99, 2, 2, busy ? '#ef5b4b' : '#5bd47a');                  // red when occupied
+    px(263, 8, 2, 2, busy ? '#ef5b4b' : '#5bd47a');                  // red when occupied
   }
 
   function drawRoom(t) {
@@ -971,7 +968,7 @@ h1 { font: 700 30px/1 var(--display); letter-spacing: .02em; margin: 0; color: v
       c.nextBreak = now + (200 + Math.random() * 300) * 1000;
       const r = Math.random();
       if (r < 0.5) {
-        c.tx = WC_DOOR.x + 2; c.ty = WC_DOOR.y + (crew.indexOf(c) % 3); c.plan = 'wc'; c.bubble = '';
+        c.tx = WC_DOOR.x; c.ty = WC_DOOR.y + (crew.indexOf(c) % 3); c.plan = 'wc'; c.bubble = '';
         return;
       }
       const s = r < 0.75 ? BREAK_SPOTS[1] : BREAK_SPOTS[2];
