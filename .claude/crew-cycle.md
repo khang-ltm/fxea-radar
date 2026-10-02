@@ -62,6 +62,11 @@ true status - see `.claude/agents/rev.md`. Merged PRs become done, abandoned
 ones go back to todo, stale doing is released. The owner should never have to
 correct a status by hand.
 
+**0b. Office review (OPS), some days.** On days whose day-of-year is divisible
+by 3, or when a board task is assigned to `ops`, OPS reviews the office page
+(`office/radar-crew.html`) as `.claude/agents/ops.md` describes and files what
+it finds. The office is a product like the site: its changes go through a PR.
+
 **1. Stand-up (BA + LEAD).** Run the checks and read the state:
 
 ```bash
