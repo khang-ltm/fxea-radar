@@ -69,6 +69,13 @@ agent who did something, plus a "waiting on you" line listing the PR and any
 gated items. This text is the day's meeting; it is copied onto the Radar Crew
 board.
 
+If any work was wanted and could not be done, add a `Blocked:` line for each -
+the task, and exactly what it is stuck on (the data that is missing, the access
+that is needed, the question nobody can answer from here). These go onto the
+board's Blocked lane. Being stuck is a normal result; being stuck silently is
+the failure. Work deliberately not done goes on a `Won't do:` line with its
+reason.
+
 ## Real data in the repo
 
 Two public fixtures exist so a cycle has something real to check against:
