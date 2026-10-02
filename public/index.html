@@ -4705,6 +4705,9 @@ function marketStats(s) {
          Math.round(s.weeks), s.weeks < 12 ? 'bad' : '');
   }
   push('max deposit load', pct(s.deposit_load), s.deposit_load >= 50 ? 'bad' : '');
+  // Activity as MQL5 printed it: a missing value is skipped, and a real 0 stays 0.
+  push(s.subscribers === 1 ? 'subscriber' : 'subscribers', s.subscribers == null ? null : Math.round(s.subscribers));
+  push('last trade (as of the crawl)', s.latest_trade);
   return `<div class="mchips">${chips.join('')}</div>`;
 }
 
