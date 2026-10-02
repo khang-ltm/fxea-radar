@@ -1079,6 +1079,11 @@ async function load() {
   renderTagChips(SUMMARY.tags || []);
   visible = PAGE;
   render();
+  // The tab is drawn at startup, before this data exists. Opening the page
+  // straight onto the Market tab - a link, or a reload while on it - showed
+  // "Nothing crawled yet" over a full crawl until the viewer clicked away and
+  // back. Caught by a screenshot of a PR, not by any test.
+  if (TAB === 'market') renderMarket();
 }
 
 function fillSelect(id, values) {
