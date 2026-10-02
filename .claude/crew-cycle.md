@@ -57,6 +57,11 @@ has `title`, `why`, `agent`, `status` (todo, doing, blocked, done, wont),
 
 ## The cycle
 
+**0. Tidy the board (REV).** Before anything else, REV puts every task in its
+true status - see `.claude/agents/rev.md`. Merged PRs become done, abandoned
+ones go back to todo, stale doing is released. The owner should never have to
+correct a status by hand.
+
 **1. Stand-up (BA + LEAD).** Run the checks and read the state:
 
 ```bash
@@ -86,6 +91,30 @@ skip to the report.
 the code and confirm the assertion fails. Revert the break. If anything in the
 diff touches `order_send`, `TRADE_ACTION`, `setinputs`, `ChartApplyTemplate`,
 `closeposition` or `cancelpending`, stop and do not open the PR.
+
+**3b. Screenshots, when the page changed.** If the diff touches
+`public/index.html`, render the affected tab before and after:
+
+```bash
+python tools/shoot.py --tab <eas|market|mt5|myea> --base origin/main --out /tmp/shots
+```
+
+Look at both images (Read them). An identical or blank pair means the shot is
+wrong - fix the tab or the size, do not ship it. Push them to the `crew-shots`
+branch under `pr-<branch-slug>/before.png` and `after.png` (that branch is
+never merged into main), and put this table in the PR body:
+
+```
+| Before | After |
+|---|---|
+| ![before](https://raw.githubusercontent.com/khang-ltm/fxea-radar/crew-shots/pr-<slug>/before.png) | ![after](https://raw.githubusercontent.com/khang-ltm/fxea-radar/crew-shots/pr-<slug>/after.png) |
+```
+
+If no browser can run, say so in the PR instead of leaving the table out silently.
+
+**3c. Review (REV).** REV reviews the diff, the task and the screenshots
+against `.claude/agents/rev.md`. Fails go back once; a second fail is blocked.
+Only a passed change is shipped, and its PR ends with **Reviewed by REV**.
 
 **4. Ship to the gate.** Push the branch and open a pull request against `main`
 titled `crew: <what changed>`. The body says:
