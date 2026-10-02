@@ -89,6 +89,21 @@ titled `crew: <what changed>`. The body says:
 - how it was tested, including the mutation that made the new assertion fail
 - end with: `Human gate: review and merge to deploy. Merging redeploys the VPS agent.`
 
+**If the push is refused** (a 403 means the Claude GitHub App has no write
+access to the repo - the owner has to grant it), do not let the work vanish with
+the sandbox. Save it on the board instead:
+
+```bash
+git format-patch main --stdout > /tmp/crew.patch && wc -c /tmp/crew.patch
+```
+
+Write one document to collection `patches`, id = the task id, with `task`,
+`branch`, `title`, `created` (ISO time), `tests` (what ran and passed, and what
+could not run) and `patch` (the full text of /tmp/crew.patch; keep it under
+200 KB - if it is larger the change was not small enough). Then set the task to
+`blocked` with `blocked_reason` "PR blocked: no GitHub write access. Patch saved
+in patches/<task id>." A person applies it from there.
+
 **5. Report.** Finish with a short stand-up written as the crew - one line per
 agent who did something, plus a "waiting on you" line listing the PR and any
 gated items. This text is the day's meeting; it is copied onto the Radar Crew
