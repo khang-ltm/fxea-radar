@@ -3421,13 +3421,73 @@ function heldBy(chart) {
   return { open: r ? r.open || 0 : 0, pending: r ? r.pending || 0 : 0 };
 }
 
-/* InpLotsFixed -> "Lots Fixed", inp_RiskPercent -> "Risk Percent" */
-const prettyKey = k => String(k)
-  .replace(/^(inp|input|i)[_]?/i, '')
-  .replace(/_/g, ' ')
-  .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-  .replace(/\s+/g, ' ')
-  .trim() || String(k);
+/* Every input gets a readable name, because most of them will never have a
+   better one. An EA ships compiled, its labels are compressed inside the .ex5,
+   and the chart template the agent reads gives only `key=value` - so for the
+   great majority of settings the name IS the only evidence of meaning.
+
+   Splitting InpLotsFixed into "Lots Fixed" was already happening. What was
+   still unreadable is the shorthand MQL5 authors write in: TPPts, SLDist,
+   MaxDDPerc, MMMode. Those expand to real words below.
+
+   This is formatting, not interpretation: nothing here claims to know what the
+   EA does with the setting, only how to say its name out loud. That is why it
+   is always safe to apply and is never marked as a label anybody vouched for. */
+const ABBREV = {
+  pts: 'points', pt: 'points', pips: 'pips',
+  sl: 'stop loss', tp: 'take profit', be: 'break even', ts: 'trailing stop',
+  tsl: 'trailing stop', dd: 'drawdown', mm: 'money management',
+  mgmt: 'management', calc: 'calculation', dist: 'distance', mult: 'multiplier',
+  multi: 'multiplier', coef: 'coefficient', pct: 'percent', perc: 'percent',
+  percentage: 'percent', lvl: 'level', thr: 'threshold', thresh: 'threshold',
+  qty: 'quantity', num: 'number', no: 'number', cnt: 'count', idx: 'index',
+  freq: 'frequency', dur: 'duration', acct: 'account', bal: 'balance',
+  eq: 'equity', pos: 'position', ord: 'order', vol: 'volume', spr: 'spread',
+  dev: 'deviation', slip: 'slippage', hr: 'hour', hrs: 'hours', min: 'minimum',
+  mins: 'minutes', max: 'maximum', tf: 'timeframe', ma: 'moving average',
+  magic: 'magic number', gmt: 'GMT', atr: 'ATR', rsi: 'RSI', macd: 'MACD',
+};
+
+// Words that are already the right word, but whose casing a sentence-case pass
+// would ruin.
+const KEEP_CASE = new Set(['GMT', 'ATR', 'RSI', 'MACD', 'MT4', 'MT5', 'EA', 'ID']);
+
+const prettyKey = k => {
+  const raw = String(k);
+  const words = raw
+    // Noise prefixes, in two passes on purpose. A single case-insensitive
+    // alternation that included `m` ate the first letter of MMMode and turned
+    // "Money management mode" into "M mode", so one-letter prefixes are only
+    // stripped when an underscore proves they were a prefix.
+    .replace(/^(?:inp|input|ext|extern)_?(?=[A-Za-z])/i, '')
+    .replace(/^[imgp]_/i, '')
+    .replace(/_/g, ' ')
+    // ABCDef -> ABC Def, and abcDef -> abc Def: an acronym runs into the next
+    // word without this, which is exactly how MaxDDPerc stayed one blob
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  if (!words.length) return raw;
+
+  const out = [];
+  for (const w of words) {
+    const expanded = ABBREV[w.toLowerCase()];
+    if (expanded) { out.push(...expanded.split(' ')); continue; }
+    out.push(w);
+  }
+  // sentence case, the way MT5 writes its own dialog
+  const said = out.map((w, n) => {
+    if (KEEP_CASE.has(w.toUpperCase()) && w.length <= 4) return w.toUpperCase();
+    const lower = w.toLowerCase();
+    return n === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+  }).join(' ');
+  // "Magic number number" - expanding `magic` and then meeting `Number` reads
+  // twice; collapse any word that repeats itself back to back
+  return said.replace(/\b(\w+) \1\b/gi, '$1') || raw;
+};
 
 const isHeading = i => !String(i.v ?? '').trim();
 const headingText = k => String(k).replace(/^[>#*=~\s-]+|[:=\s]+$/g, '')
@@ -3476,13 +3536,59 @@ const GLOSSARY = [
   [/^(inp)?(trade)?comment$/, 'Trade comment'],
   [/^(inp)?(use)?news(filter)?$/, 'News filter'],
   [/^(inp)?(min|max)?equity(stop|protect)?$/, 'Equity stop'],
+
+  // Widened after the names alone proved unreadable in use. Each one is still a
+  // convention rather than a reading of this EA, and is marked as such.
+  [/^(inp)?(use)?martingale$/, 'Martingale'],
+  [/^(inp)?(martin|marti)(gale)?(factor|mult(iplier)?)$/, 'Martingale multiplier'],
+  [/^(inp)?(max)?(grid)?(levels|steps|orders)$/, 'Grid levels'],
+  [/^(inp)?(use)?hedge(ing)?$/, 'Hedging'],
+  [/^(inp)?(use)?recovery(mode)?$/, 'Recovery mode'],
+  [/^(inp)?(use)?(dca|averaging)$/, 'Averaging down'],
+  [/^(inp)?(min|max)?lot(s)?(min|max)?$/, 'Lot size limits'],
+  [/^(inp)?lot(s)?(step|increment)$/, 'Lot step'],
+  [/^(inp)?(money|risk)(management|mode)$/, 'Risk mode'],
+  [/^(inp)?(balance|equity)(risk|percent)$/, 'Risk per trade'],
+  [/^(inp)?(risk)?reward(ratio)?$/, 'Reward ratio'],
+  [/^(inp)?(use)?partial(close|tp)?$/, 'Partial close'],
+  [/^(inp)?(break)?even(points|pips|trigger|after)?$/, 'Break even trigger'],
+  [/^(inp)?trail(ing)?(start|trigger|after)$/, 'Trailing starts at'],
+  [/^(inp)?trail(ing)?(distance|gap|offset)$/, 'Trailing distance'],
+  [/^(inp)?(magic)?(number)?(start|base|offset)$/, 'Magic number base'],
+  [/^(inp)?(order)?expir(ation|y|e)(bars|hours|minutes)?$/, 'Order expiry'],
+  [/^(inp)?(min|max)?(bars|candles)(back|history)?$/, 'Bars of history'],
+  [/^(inp)?(signal)?(time)?frame$/, 'Timeframe'],
+  [/^(inp)?(use)?(time|hours|session)filter$/, 'Trading hours filter'],
+  [/^(inp)?(trade)?(mon|tue|wed|thu|fri|sat|sun)(day)?$/, 'Trade this weekday'],
+  [/^(inp)?(use)?(friday|weekend)(close|exit|filter)$/, 'Close before weekend'],
+  [/^(inp)?(news)?(minutes|mins)(before|after)$/, 'News pause window'],
+  [/^(inp)?(max)?slippage(points|pips)?$/, 'Slippage'],
+  [/^(inp)?(retry|retries|attempts)(count|max)?$/, 'Retry attempts'],
+  [/^(inp)?(use|enable)?(dashboard|panel|gui|display|info)$/, 'On-chart panel'],
+  [/^(inp)?(show)?(comment|label|text)(onchart)?$/, 'On-chart text'],
+  [/^(inp)?(use)?(alert|notification|push|email)(s)?$/, 'Alerts'],
+  [/^(inp)?(print|verbose|debug|log)(mode|level)?$/, 'Logging'],
+  [/^(inp)?(prop|challenge|firm)(mode|limit)?$/, 'Prop firm mode'],
+  [/^(inp)?(daily)?(loss|profit)(limit|target)$/, 'Daily limit'],
+  [/^(inp)?(min|max)?margin(level|percent)?$/, 'Margin level'],
+  [/^(inp)?symbol(s|suffix|prefix)?$/, 'Symbol'],
 ];
 
 const glossaryKey = key => String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 function commonLabel(key) {
   const flat = glossaryKey(key);
-  for (const [re, label] of GLOSSARY) if (re.test(flat)) return label;
+  for (const [re, label] of GLOSSARY) {
+    if (!re.test(flat)) continue;
+    // A convention is only worth asserting when it says something the name
+    // does not. "inp_RiskPercent" reads as "Risk percent" on its own, and
+    // answering "Risk" there is both less informative and claims a reading
+    // nobody made. Stand down when every word is already in the plain name.
+    const words = l => new Set(String(l).toLowerCase().match(/[a-z0-9]+/g) || []);
+    const mine = words(label), plain = words(prettyKey(key));
+    if (mine.size < plain.size && [...mine].every(w => plain.has(w))) return '';
+    return label;
+  }
   return '';
 }
 

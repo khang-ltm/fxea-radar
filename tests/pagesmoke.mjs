@@ -22,6 +22,7 @@ const PROBE = `
 ;globalThis.__probe = {
   renderMarket,
   setMarket(d) { MARKET = d; },
+  prettyKey, commonLabel,
 };`;
 
 const node = (id = '') => {
@@ -169,6 +170,58 @@ if (probe) {
 } else {
   failed = true;
   console.log('  FAIL  the page no longer exposes renderMarket to the smoke test');
+}
+
+// -- EA input names are readable ------------------------------------------
+// An EA ships compiled and the chart template gives only `key=value`, so for
+// most settings the name is the only evidence of meaning there will ever be.
+// These are the shapes MQL5 authors actually write.
+if (probe) {
+  const cases = [
+    ['InpLotCalcMode', 'Lot calculation mode'],
+    ['MaxDDPerc', 'Maximum drawdown percent'],
+    ['TPPts', 'Take profit points'],
+    ['SLDist', 'Stop loss distance'],
+    ['InpMagicNumber', 'Magic number'],
+    // a one-letter prefix strip used to eat the first M here
+    ['MMMode', 'Money management mode'],
+    ['i_TF', 'Timeframe'],
+    ['inp_RiskPercent', 'Risk percent'],
+    ['GridStepPts', 'Grid step points'],
+    ['ATRPeriod', 'ATR period'],
+  ];
+  const bad = cases.filter(([key, want]) => probe.prettyKey(key) !== want);
+  if (bad.length) {
+    failed = true;
+    for (const [key, want] of bad) {
+      console.log(`  FAIL  ${key} reads as "${probe.prettyKey(key)}", expected "${want}"`);
+    }
+  } else {
+    console.log(`  PASS  all ${cases.length} input names read as words`);
+  }
+
+  // The glossary asserts a convention, so it must only speak when it says
+  // something the plain name does not.
+  const quiet = [['inp_RiskPercent', 'Risk'], ['DailyLossLimit', 'Daily limit']];
+  const loud = quiet.filter(([key]) => probe.commonLabel(key) !== '');
+  if (loud.length) {
+    failed = true;
+    console.log(`  FAIL  the glossary overrides a richer plain name: `
+      + loud.map(([k]) => `${k} -> "${probe.commonLabel(k)}"`).join(', '));
+  } else {
+    console.log('  PASS  the glossary stands down when the name already says it');
+  }
+
+  // ...and must still speak when it does.
+  const speaks = [['InpMagicNumber', 'Magic number'], ['PropMode', 'Prop firm mode']];
+  const mute = speaks.filter(([key, want]) => probe.commonLabel(key) !== want);
+  if (mute.length) {
+    failed = true;
+    console.log(`  FAIL  the glossary went quiet where it was needed: `
+      + mute.map(([k, w]) => `${k} gave "${probe.commonLabel(k)}" not "${w}"`).join(', '));
+  } else {
+    console.log('  PASS  the glossary still names what the key alone cannot');
+  }
 }
 
 process.exit(failed ? 1 : 0);
