@@ -11,6 +11,7 @@ FILES_DIR = DATA_DIR / "files"
 POSTS_FILE = DATA_DIR / "posts.json"
 STATE_FILE = DATA_DIR / "state.json"
 MARKET_FILE = DATA_DIR / "market.json"   # MQL5 Market crawl
+TG_EVIDENCE_FILE = DATA_DIR / "tg_evidence.json"   # public Telegram evidence
 PUBLIC_DIR = ROOT / "public"
 SESSION_FILE = DATA_DIR / "tg.session"  # Telethon sqlite session
 

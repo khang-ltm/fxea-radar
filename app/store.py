@@ -75,6 +75,16 @@ def save_market(data: dict) -> None:
     _write(config.MARKET_FILE, data)
 
 
+def load_tg_evidence() -> dict:
+    """Live-account links and reports per EA from public Telegram channels."""
+    data = _read(config.TG_EVIDENCE_FILE, {})
+    return data if isinstance(data, dict) else {}
+
+
+def save_tg_evidence(data: dict) -> None:
+    _write(config.TG_EVIDENCE_FILE, data)
+
+
 def merge_posts(existing: list[dict], incoming: list[dict]) -> tuple[list[dict], int, int]:
     """Key on channel+message id. Edited posts get refreshed but keep their first_seen."""
     by_key = {p["key"]: p for p in existing}
