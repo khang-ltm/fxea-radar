@@ -1788,7 +1788,7 @@ def self_check() -> dict:
 
     health = agent_health()
     here, there = health.get("code") or "unknown", health.get("remote") or ""
-    on_disk = _disk_sha()[:7]
+    on_disk = _newest_on_disk()[:7]
     if on_disk and here != "unknown" and on_disk != here:
         row("agent", "bad",
             f"running {here} but {on_disk} is on disk - a restart did not take",
@@ -1896,7 +1896,7 @@ def agent_health(fresh: bool = False) -> dict:
     import subprocess
 
     here = _current_sha()
-    out = {"ok": True, "code": here[:7] or "unknown", "on_disk": _disk_sha()[:7],
+    out = {"ok": True, "code": here[:7] or "unknown", "on_disk": _newest_on_disk()[:7],
            "cpu": cpu_name()}
 
     # the agent polls for its own updates, so the page could only ever say what
@@ -3817,6 +3817,19 @@ def _disk_sha() -> str:
         return ""
 
 
+def _newest_on_disk() -> str:
+    """The newest code on disk: a staged update if one is waiting, else the
+    recorded version. A process still running after an update was downloaded is
+    caught by comparing against this - the staged sha is only promoted by the
+    process that actually starts with it."""
+    pending = config.ROOT / "data" / ".agent_pending"
+    try:
+        staged = pending.read_text(encoding="utf-8").strip()
+    except OSError:
+        staged = ""
+    return staged or _disk_sha()
+
+
 def _current_sha() -> str:
     """What this process is actually running."""
     return _BOOTED_SHA or _disk_sha()
@@ -4015,9 +4028,14 @@ def main() -> None:
     args = ap.parse_args()
 
     global _BOOTED_SHA
-    _BOOTED_SHA = _disk_sha()          # pinned before anything can rewrite the file
-    log = _start_logging()
+    # Promote first, then pin. The other way round, every restart that WORKED
+    # pinned the previous version a moment before recording the new one, and the
+    # System check then reported "running <old> but <new> is on disk - a restart
+    # did not take" about a restart that had taken. That false alarm sent hours
+    # after a restart problem that was, at least some of the time, not there.
     promoted = _promote_pending()
+    _BOOTED_SHA = _disk_sha()
+    log = _start_logging()
     if promoted:
         print(f"  running new code {promoted[:7]}")
 

@@ -371,6 +371,7 @@ def run_once(run_no: int, port: int) -> None:
         check_agent_names()
         check_agent_imports()
         check_ex5_meta()
+        check_version_report()
         check_no_shadowed_locals()
         check_trade_path()
         check_no_control_chars()
@@ -437,6 +438,43 @@ def check_agent_names() -> None:
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     unknown = sorted(n for n in called - known if not hasattr(builtins, n))
     check(not unknown, f"agent calls only functions that exist{'' if not unknown else ': missing ' + ', '.join(unknown)}")
+
+
+def check_version_report() -> None:
+    """The System check must not cry wolf about a restart that worked.
+
+    It compares what the process booted as against what is on disk. Pinning the
+    boot version before promoting the staged update made every successful
+    restart read as a failed one.
+    """
+    import pathlib as _p
+    import tempfile
+
+    from app import config as _cfg
+    from app import mt5_agent as ag
+
+    src = _p.Path("app/mt5_agent.py").read_text(encoding="utf-8")
+    body = src[src.index("def main() -> None:"):]
+    check(body.index("_promote_pending()") < body.index("_BOOTED_SHA = _disk_sha()"),
+          "startup promotes the staged update before pinning what it runs")
+
+    old_root = _cfg.ROOT
+    with tempfile.TemporaryDirectory() as d:
+        _cfg.ROOT = _p.Path(d)
+        (_p.Path(d) / "data").mkdir()
+        ver, pend = _p.Path(d) / "data" / ".agent_version", _p.Path(d) / "data" / ".agent_pending"
+        try:
+            # a restart that worked: the new process promotes, and both agree
+            ver.write_text("old1234"); pend.write_text("new5678")
+            ag._promote_pending()
+            check(ag._disk_sha() == "new5678" and ag._newest_on_disk() == "new5678",
+                  "after a good restart, running and on-disk agree")
+            # a process left behind: update staged, never promoted
+            ver.write_text("old1234"); pend.write_text("new5678")
+            check(ag._newest_on_disk() == "new5678" and ag._disk_sha() == "old1234",
+                  "a stuck process is still caught: the staged update counts as on disk")
+        finally:
+            _cfg.ROOT = old_root
 
 
 def check_ex5_meta() -> None:
