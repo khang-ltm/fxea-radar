@@ -3090,8 +3090,15 @@ function renderExpertOptions(eas, keepPath) {
   const had = keepPath || eaSel.value;
   eaSel.innerHTML = (eas.ok ? eas.experts.filter(e => !notMine(e)) : [])
     .map(e => `<option value="${esc(e.path)}" data-name="${esc(e.name)}"
-        data-new="${e.unregistered ? '1' : ''}">`
+        data-new="${e.unregistered ? '1' : ''}" data-tampered="${e.tampered ? '1' : ''}"
+        title="${esc(e.tampered_why || e.author || '')}">`
       + esc(e.folder ? `${e.folder}/${e.name}` : e.name)
+      // the version compiled into the .ex5, which is the one that is true: the
+      // channel renames its downloads, and a file called 4.3V reports 4.301
+      + (e.version && !e.name.includes(e.version) ? `  v${esc(e.version)}` : '')
+      // an author field advertising an unlock service means somebody other than
+      // the author has been inside the file
+      + (e.tampered ? '  ⚠ MODIFIED BUILD' : '')
       + (e.unregistered ? '  (new - not loaded by MT5 yet)' : '') + '</option>').join('')
     || '<option value="">no .ex5 found</option>';
   eaSel.disabled = false;

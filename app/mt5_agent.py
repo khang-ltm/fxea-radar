@@ -33,6 +33,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import config
+from . import ex5_meta
 
 # The MetaTrader5 package is NOT thread-safe: two threads calling into the
 # terminal at once can stall for a minute or more. Every IPC read goes through
@@ -1402,11 +1403,21 @@ def read_experts() -> dict:
         # installed here and never seen to load: MT5 probably has not registered
         # it, and attaching will appear to work while nothing runs
         entry = fresh.get(f.stem)
+        # The .ex5 keeps its own version, author and link in clear text even
+        # though everything else in it is encrypted. The compiled version is the
+        # authoritative one - the channel renames downloads however it likes,
+        # and "Quantum Queen X 4.3V.ex5" reports itself as 4.301 - and the
+        # author field is where a cracked build announces itself.
+        meta = ex5_meta.read(f)
         out.append({"unregistered": bool(entry) and not entry.get("loaded"),
                     "name": f.stem,
                     "path": str(pathlib.PurePath("Experts") / rel),
                     "folder": "" if str(rel.parent) == "." else str(rel.parent),
-                    "size_bytes": f.stat().st_size})
+                    "size_bytes": f.stat().st_size,
+                    "version": meta.get("version") or "",
+                    "author": meta.get("author") or "",
+                    "tampered": bool(meta.get("tampered")),
+                    "tampered_why": meta.get("tampered_why") or ""})
     return {"ok": True, "count": len(out), "experts": out}
 
 

@@ -370,6 +370,7 @@ def run_once(run_no: int, port: int) -> None:
         check_page_script(html)
         check_agent_names()
         check_agent_imports()
+        check_ex5_meta()
         check_no_shadowed_locals()
         check_trade_path()
         check_no_control_chars()
@@ -436,6 +437,34 @@ def check_agent_names() -> None:
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     unknown = sorted(n for n in called - known if not hasattr(builtins, n))
     check(not unknown, f"agent calls only functions that exist{'' if not unknown else ': missing ' + ', '.join(unknown)}")
+
+
+def check_ex5_meta() -> None:
+    """The .ex5 reader, against the real files in the store when they are there.
+
+    The body of an .ex5 is encrypted - 7.99 bits of entropy per byte - so the
+    only thing to verify is that the three clear-text fields still come out and
+    that nothing else is mistaken for them.
+    """
+    import pathlib as _p
+
+    from app import ex5_meta
+
+    check(ex5_meta.read("README.md").get("ok") is False, "a non-.ex5 file is refused")
+    check(ex5_meta.read("data/files/does-not-exist.ex5").get("ok") is False,
+       "a missing file is refused rather than raising")
+
+    files = sorted(_p.Path("data/files").rglob("*.ex5"))
+    if not files:
+        check(True, "no .ex5 in the store to read (skipped)")
+        return
+    read = [ex5_meta.read(f) for f in files]
+    check(all(m.get("ok") for m in read), f"all {len(read)} stored .ex5 files parse")
+    check(any(m.get("version") for m in read), "at least one reports a compiled version")
+    for m, f in zip(read, files):
+        v = m.get("version") or ""
+        check(len(v) <= 24 and all(c.isprintable() for c in v),
+           f"{f.name[:28]}: version {v!r} is a plausible string")
 
 
 def check_agent_imports() -> None:
@@ -573,7 +602,7 @@ def check_no_control_chars() -> None:
     """
     for rel in ("public/index.html", "app/mt5_agent.py", "app/installer.py",
                 "app/buzz.py", "app/mq5_inputs.py", "app/basket_dd.py",
-                "app/mql5_market.py", "install_vps.ps1",
+                "app/mql5_market.py", "app/ex5_meta.py", "install_vps.ps1",
                 "restart_agent.ps1", "fix_watchdog.ps1",
                 "mql5/FxeaManager.mq5"):
         f = ROOT / rel
