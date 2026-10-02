@@ -64,6 +64,13 @@ its fix as the next step. Assign it by what the fix needs:
 Accepted conditions are not problems: the CPU row reports "no AVX2 (accepted)"
 because the owner chose to live with it. Do not raise it again.
 
+Then write the whole check to the office's health lamp - document `health` in
+collection `office` on the same board - as
+`{state, checked_at, rows: [{name, state, detail}]}`, where `state` is the worst
+row (`bad` > `warn` > `unknown` > `ok`) and `checked_at` is now in ISO time. The
+lamp turns grey after 26 hours without a check, so a stale lamp means nobody has
+looked, not that all is well.
+
 When a row comes back `ok`, close its task. The daily cloud crew has no token
 and cannot do this; it happens when a session runs a stand-up.
 
