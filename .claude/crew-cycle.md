@@ -115,8 +115,18 @@ Two public fixtures exist so a cycle has something real to check against:
 Never add private data to them: no trade history, balances, lot sizes, magic
 numbers or settings values. The repo is public.
 
-Setup note: telethon's `pyaes` dependency does not build in the cloud sandbox
-without `pip install setuptools wheel` first.
+Setup note: telethon's `pyaes` dependency does not build in the cloud sandbox,
+even with setuptools and wheel, so `tests/e2e.py` fails to import. What worked
+on the first cloud run - install the package files by hand:
+
+```bash
+pip install -q --no-deps telethon==1.36.0 rsa pyasn1
+cd /tmp && pip download -q pyaes==1.6.1 && tar xzf pyaes-1.6.1.tar.gz   && cp -r pyaes-1.6.1/pyaes "$(python -c 'import site; print(site.getsitepackages()[0])')"/ && cd -
+python -c "import telethon" && python tests/e2e.py
+```
+
+Run both suites before AND after the change. If e2e still cannot run, say so in
+the stand-up - never report a suite as passing that did not run.
 
 ## Known gaps
 
