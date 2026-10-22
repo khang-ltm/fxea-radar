@@ -376,6 +376,9 @@ def run_once(run_no: int, port: int) -> None:
         check_bom_tolerant_sha()
         check_no_shadowed_locals()
         check_trade_path()
+        check_setsltp()
+        check_close_cancel_tickets()
+        check_contract_size()
         check_no_control_chars()
 
         status, tagged = http_json(f"http://127.0.0.1:{port}/api/posts?ea=0&group=0&kind=all&tag=has-ea-file")
@@ -588,75 +591,560 @@ def check_no_shadowed_locals() -> None:
           + ("" if not clashes else " - " + "; ".join(clashes)))
 
 
-def check_trade_path() -> None:
-    """The agent may remove a pending order or close a position. Nothing else.
+_TRADE_CALLS = ("order_send", "order_check")
+_TRADE_FORBIDDEN = ("Close", "Buy", "Sell")         # MetaTrader5's own shortcuts
+_REQUEST_WRITES_OK = ("type_filling",)              # the one key close may vary
 
-    Both were added on purpose - a stopped EA leaves orders that still fill, and
-    there has to be a way out of a trade from the page. Both only remove
-    something that exists. Opening a trade, and modifying one, must stay
-    impossible, so that a stolen token can never put money at risk. This asserts
-    it in the source rather than trusting a comment: every order_send is either
-    TRADE_ACTION_REMOVE, or TRADE_ACTION_DEAL naming the position it closes.
+
+def trade_path_problems(src: str) -> list[str]:
+    """Every way `src` can reach order_send/order_check that this test cannot
+    read as REMOVE, or DEAL / SLTP naming an existing position. Empty is safe.
+
+    A call must be `mt5.order_send(<request>)` with nothing else on it, and the
+    request a dict literal - written there, or bound once to a name in the same
+    function, or `dict(name)` of one. Anything else that touches order_send (an
+    alias, a getattr string, an import) is a problem, and so is anything that
+    could change the request after it was read: a key written, an update(),
+    dict(base, **kw), ** unpacking, a second binding, passing it anywhere.
     """
     import ast
 
-    src = (ROOT / "app" / "mt5_agent.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
+    lines = src.splitlines()
+    parent = {}
+    for n in ast.walk(tree):
+        for c in ast.iter_child_nodes(n):
+            parent[c] = n
 
-    src_lines = src.splitlines()
+    def where(node):
+        return f"line {node.lineno}: {lines[node.lineno - 1].strip()[:60]}"
 
-    def request_of(node):
-        """The dict literal a request was built from, following one local name."""
-        for arg in node.args:
-            if isinstance(arg, ast.Dict):
-                return arg
-            if isinstance(arg, ast.Name):                  # req = {...}; order_send(req)
-                for other in ast.walk(tree):
-                    if isinstance(other, ast.Assign) and isinstance(other.value, ast.Dict) \
-                            and any(isinstance(x, ast.Name) and x.id == arg.id
-                                    for x in other.targets):
-                        return other.value
-                    # req = dict(base) - follow to what base was
-                    if isinstance(other, ast.Assign) and isinstance(other.value, ast.Call) \
-                            and getattr(other.value.func, "id", "") == "dict" \
-                            and any(isinstance(x, ast.Name) and x.id == arg.id
-                                    for x in other.targets) and other.value.args:
-                        inner = other.value.args[0]
-                        if isinstance(inner, ast.Name):
-                            for again in ast.walk(tree):
-                                if isinstance(again, ast.Assign) \
-                                        and isinstance(again.value, ast.Dict) \
-                                        and any(isinstance(x, ast.Name) and x.id == inner.id
-                                                for x in again.targets):
-                                    return again.value
-        return None
+    def scope_of(node):
+        while node in parent:
+            node = parent[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                return node
+        return tree
+
+    def is_mt5(node):
+        return isinstance(node, ast.Name) and node.id == "mt5"
+
+    def resolve(scope, name, allowed, chain):
+        """The dict literal `name` was bound to in `scope`, or (None, why)."""
+        if name in chain:
+            return None, f"{name} is built from itself"
+        chain.append(name)
+        binds = [n for n in ast.walk(scope)
+                 if (isinstance(n, ast.Name) and n.id == name
+                     and isinstance(n.ctx, (ast.Store, ast.Del)))
+                 or (isinstance(n, ast.arg) and n.arg == name)]
+        if len(binds) != 1:
+            return None, f"{name} is bound {len(binds)} times in its function"
+        b = binds[0]
+        stmt = parent.get(b)
+        if not (isinstance(stmt, ast.Assign) and stmt.targets == [b]):
+            return None, f"{name} is not bound by a plain assignment"
+        value = stmt.value
+        if isinstance(value, ast.Dict):
+            return value, ""
+        if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) \
+                and value.func.id == "dict" and len(value.args) == 1 \
+                and not value.keywords and isinstance(value.args[0], ast.Name):
+            allowed.add(id(value.args[0]))
+            return resolve(scope, value.args[0].id, allowed, chain)
+        return None, f"{name} is not a dict literal or dict() of one"
 
     bad = []
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
-            continue
-        if node.func.attr not in ("order_send", "order_check", "Close", "Buy", "Sell"):
-            continue
-        where = f"line {node.lineno}: {src_lines[node.lineno - 1].strip()[:60]}"
-        req = request_of(node)
-        if req is None:
-            bad.append(f"{where} - request is not a literal this test can read")
-            continue
-        keys = {k.value for k in req.keys if isinstance(k, ast.Constant)}
-        action = ""
-        for k, v in zip(req.keys, req.values):
-            if isinstance(k, ast.Constant) and k.value == "action":
-                action = ast.unparse(v).split(".")[-1]
-        if action == "TRADE_ACTION_REMOVE":
-            continue
-        if action == "TRADE_ACTION_DEAL" and "position" in keys:
-            continue                                       # closing what already exists
-        bad.append(f"{where} - {action or 'no action'}"
-                   + (" without a position to close" if action == "TRADE_ACTION_DEAL" else ""))
+        if isinstance(node, ast.alias) and node.name.split(".")[-1] in _TRADE_CALLS:
+            bad.append(f"{node.name} is imported by name")
+        elif isinstance(node, ast.Name) and node.id in _TRADE_CALLS:
+            bad.append(f"{where(node)} - a bare {node.id}")
+        elif isinstance(node, ast.Constant) and node.value in _TRADE_CALLS:
+            bad.append(f"{where(node)} - {node.value} named as a string")
+        elif isinstance(node, ast.Attribute) and node.attr in _TRADE_FORBIDDEN:
+            bad.append(f"{where(node)} - {node.attr} is never allowed")
+        elif isinstance(node, ast.Attribute) and node.attr in _TRADE_CALLS:
+            call = parent.get(node)
+            if not (is_mt5(node.value) and isinstance(call, ast.Call) and call.func is node):
+                bad.append(f"{where(node)} - {node.attr} used other than as mt5.{node.attr}(...)")
+                continue
+            if len(call.args) != 1 or call.keywords or isinstance(call.args[0], ast.Starred):
+                bad.append(f"{where(node)} - not exactly one request argument")
+                continue
+            arg, scope = call.args[0], scope_of(call)
+            if isinstance(arg, ast.Dict):
+                req, why, names = arg, "", []
+            elif isinstance(arg, ast.Name):
+                allowed, names = {id(arg)}, []
+                req, why = resolve(scope, arg.id, allowed, names)
+                # every other read of these names could alias or change the request
+                for n in ast.walk(scope):
+                    if not (isinstance(n, ast.Name) and n.id in names
+                            and isinstance(n.ctx, ast.Load)) or id(n) in allowed:
+                        continue
+                    up = parent.get(n)
+                    if isinstance(up, ast.Subscript) and up.value is n \
+                            and isinstance(up.ctx, ast.Store) \
+                            and isinstance(up.slice, ast.Constant) \
+                            and up.slice.value in _REQUEST_WRITES_OK:
+                        continue
+                    why = why or f"{n.id} is used or changed at line {n.lineno}"
+            else:
+                req, why = None, "request is not a literal this test can read"
+            if why or req is None:
+                bad.append(f"{where(node)} - {why or 'request is not a literal'}")
+                continue
+            keys = [k.value if isinstance(k, ast.Constant) else None for k in req.keys]
+            if None in keys:
+                bad.append(f"{where(node)} - a key that is not a plain string (** or computed)")
+                continue
+            if len(set(keys)) != len(keys):
+                bad.append(f"{where(node)} - a key given twice")
+                continue
+            vals = dict(zip(keys, req.values))
+            act = vals.get("action")
+            action = act.attr if isinstance(act, ast.Attribute) and is_mt5(act.value) else ""
+            if action == "TRADE_ACTION_REMOVE":
+                continue
+            if action in ("TRADE_ACTION_DEAL", "TRADE_ACTION_SLTP"):
+                if "position" not in vals:
+                    bad.append(f"{where(node)} - {action} without a position")
+                elif isinstance(vals["position"], ast.Constant):
+                    bad.append(f"{where(node)} - {action} on a literal position"
+                               f" {vals['position'].value!r}")
+                continue                                   # on what already exists
+            bad.append(f"{where(node)} - {action or 'no readable mt5.TRADE_ACTION_*'}")
+    return bad
 
+
+# Each of these must be caught. The first one passed the old version of the check.
+_TRADE_MUTANTS = {
+    "an alias of order_send": (
+        "def f(mt5):\n    s = mt5.order_send\n"
+        "    s({'action': mt5.TRADE_ACTION_DEAL, 'symbol': 'X', 'volume': 1.0})\n"),
+    "order_send through getattr": (
+        "def f(mt5):\n    getattr(mt5, 'order_send')({'action': mt5.TRADE_ACTION_DEAL})\n"),
+    "order_send imported by name": "from MetaTrader5 import order_send\n",
+    "a request key rewritten": (
+        "def f(mt5, t):\n    req = {'action': mt5.TRADE_ACTION_SLTP, 'position': t}\n"
+        "    req['action'] = mt5.TRADE_ACTION_PENDING\n    mt5.order_send(req)\n"),
+    "a request key deleted": (
+        "def f(mt5, t):\n    req = {'action': mt5.TRADE_ACTION_DEAL, 'position': t}\n"
+        "    del req['position']\n    mt5.order_send(req)\n"),
+    "a request update()": (
+        "def f(mt5, t):\n    base = {'action': mt5.TRADE_ACTION_DEAL, 'position': t}\n"
+        "    req = dict(base)\n    req.update(position=0)\n    mt5.order_send(req)\n"),
+    "dict(base, **override)": (
+        "def f(mt5, t):\n    base = {'action': mt5.TRADE_ACTION_DEAL, 'position': t}\n"
+        "    req = dict(base, action=mt5.TRADE_ACTION_PENDING)\n    mt5.order_send(req)\n"),
+    "** unpacking in the literal": (
+        "def f(mt5, t, kw):\n    mt5.order_send({'action': mt5.TRADE_ACTION_REMOVE, **kw})\n"),
+    "a literal position 0": (
+        "def f(mt5):\n    mt5.order_send({'action': mt5.TRADE_ACTION_DEAL, 'position': 0,"
+        " 'symbol': 'X', 'volume': 1.0})\n"),
+    "a key given twice": (
+        "def f(mt5, t, u):\n    mt5.order_send({'action': mt5.TRADE_ACTION_SLTP,"
+        " 'position': t, 'position': u})\n"),
+    "a request name bound twice": (
+        "def f(mt5, t, other):\n    req = {'action': mt5.TRADE_ACTION_REMOVE, 'order': t}\n"
+        "    req = other\n    mt5.order_send(req)\n"),
+    "a request built in another function": (
+        "def a(mt5, t):\n    req = {'action': mt5.TRADE_ACTION_REMOVE, 'order': t}\n"
+        "def b(mt5, req):\n    mt5.order_send(req)\n"),
+    "a request aliased and changed": (
+        "def f(mt5, t):\n    req = {'action': mt5.TRADE_ACTION_REMOVE, 'order': t}\n"
+        "    r2 = req\n    r2['action'] = mt5.TRADE_ACTION_DEAL\n    mt5.order_send(req)\n"),
+    "a keyword request": (
+        "def f(mt5, t):\n    mt5.order_send(request={'action': mt5.TRADE_ACTION_REMOVE})\n"),
+    "a pending order": (
+        "def f(mt5):\n    mt5.order_send({'action': mt5.TRADE_ACTION_PENDING, 'symbol': 'X'})\n"),
+    "a deal without a position": (
+        "def f(mt5):\n    mt5.order_send({'action': mt5.TRADE_ACTION_DEAL, 'symbol': 'X'})\n"),
+    "mt5.Buy": "def f(mt5):\n    mt5.Buy('XAUUSD', 0.01)\n",
+}
+
+_TRADE_GOOD = (
+    "def f(mt5, t):\n"
+    "    base = {'action': mt5.TRADE_ACTION_DEAL, 'position': t, 'symbol': 'X'}\n"
+    "    for fill in (1, 2):\n"
+    "        req = dict(base)\n"
+    "        req['type_filling'] = fill\n"
+    "        mt5.order_send(req)\n"
+    "    mt5.order_send({'action': mt5.TRADE_ACTION_REMOVE, 'order': t})\n"
+    "    mt5.order_send({'action': mt5.TRADE_ACTION_SLTP, 'position': t, 'sl': 0.0})\n")
+
+
+def check_trade_path() -> None:
+    """The agent may remove a pending order, close a position, or set SL/TP on
+    an open position. Nothing else.
+
+    All three were added on purpose - a stopped EA leaves orders that still
+    fill, there has to be a way out of a trade from the page, and a break-even
+    TP is the cheapest way out of all. Each acts only on something that exists.
+    Nothing can open a trade, add volume, or place or modify an order. With the
+    PIN, SL/TP on an open position can be changed, including widening or
+    removing a stop - that is the owner's accepted risk (2026-10-22). This
+    asserts it in the source rather than trusting a comment: every order_send is
+    TRADE_ACTION_REMOVE, or TRADE_ACTION_DEAL / TRADE_ACTION_SLTP naming an
+    existing position.
+    """
+    check(not trade_path_problems(_TRADE_GOOD),
+          "trade-path check accepts the allowed shapes"
+          f" ({trade_path_problems(_TRADE_GOOD)})")
+    for label, snippet in _TRADE_MUTANTS.items():
+        check(bool(trade_path_problems(snippet)), f"trade-path check catches {label}")
+
+    bad = trade_path_problems((ROOT / "app" / "mt5_agent.py").read_text(encoding="utf-8"))
     check(not bad,
           "every trade request removes something that exists"
           + ("" if not bad else " - " + "; ".join(bad)))
+
+
+class _FakeMT5:
+    """Just enough of the MetaTrader5 module for the trade paths, with made-up
+    positions. Every order_send is recorded and nothing is ever sent anywhere."""
+
+    POSITION_TYPE_BUY, POSITION_TYPE_SELL = 0, 1
+    TRADE_ACTION_DEAL, TRADE_ACTION_SLTP, TRADE_ACTION_REMOVE = 1, 6, 8
+    TRADE_RETCODE_DONE = 10009
+    ORDER_TYPE_BUY, ORDER_TYPE_SELL = 0, 1
+
+    def __init__(self):
+        from types import SimpleNamespace as NS
+        self.NS = NS
+        self.sent, self.info_calls, self.code = [], 0, 10009
+        self.positions = {
+            101: NS(ticket=101, type=0, symbol="XAUUSD", sl=2600.0, tp=0.0, magic=1, comment="",
+                    volume=0.01, price_open=2660.0, price_current=2640.0, profit=-1.0,
+                    swap=0.0, time=0),
+            102: NS(ticket=102, type=1, symbol="XAUUSD", sl=2700.0, tp=2500.0, magic=1, comment="",
+                    volume=0.01, price_open=2620.0, price_current=2640.3, profit=-1.0,
+                    swap=0.0, time=0),
+            103: NS(ticket=103, type=0, symbol="EURUSD", sl=0.0, tp=0.0, magic=2, comment="",
+                    volume=0.01, price_open=1.1, price_current=1.1, profit=0.0, swap=0.0, time=0),
+        }
+        self.symbols = {
+            "XAUUSD": NS(digits=2, point=0.01, trade_stops_level=0, trade_contract_size=100.0),
+            "EURUSD": NS(digits=5, point=0.00001, trade_stops_level=30,
+                         trade_contract_size=100000.0),
+            "ZEROSZ": NS(digits=2, point=0.01, trade_stops_level=0, trade_contract_size=0.0),
+        }
+        self.ticks = {"XAUUSD": NS(bid=2640.00, ask=2640.30), "EURUSD": NS(bid=1.10000, ask=1.10010)}
+
+    def positions_get(self, ticket=None):
+        if ticket is None:
+            return tuple(self.positions.values())
+        return (self.positions[ticket],) if ticket in self.positions else ()
+
+    def orders_get(self):
+        return ()
+
+    def account_info(self):
+        return None
+
+    def terminal_info(self):
+        return None
+
+    def symbol_info(self, symbol):
+        self.info_calls += 1
+        return self.symbols.get(symbol)
+
+    def symbol_info_tick(self, symbol):
+        return self.ticks.get(symbol)
+
+    def order_send(self, req):
+        self.sent.append(dict(req))
+        return self.NS(retcode=self.code, comment="done" if self.code == 10009 else "Invalid stops")
+
+
+def check_setsltp() -> None:
+    """setsltp against a fake terminal: what it sends, and what it refuses to."""
+    from app import mt5_agent as ag
+
+    fake = _FakeMT5()
+    old = ag._connect
+    ag._connect = lambda: fake
+
+    def run(**item):
+        fake.sent.clear()
+        out = ag.set_sltp([item])
+        return out, out["results"][0] if out.get("results") else {}
+
+    try:
+        out, row = run(ticket=101, tp=2650.123, sl=None)
+        req = fake.sent[0] if len(fake.sent) == 1 else {}
+        check(set(req) == {"action", "position", "symbol", "sl", "tp"}
+              and req["action"] == fake.TRADE_ACTION_SLTP and req["position"] == 101
+              and req["symbol"] == "XAUUSD",
+              "setsltp sends one TRADE_ACTION_SLTP naming the position, nothing else")
+        check(req.get("tp") == 2650.12, f"setsltp rounds to the symbol's digits (sent tp {req.get('tp')})")
+        check(req.get("sl") == 2600.0, f"setsltp: sl null keeps the live SL (sent sl {req.get('sl')})")
+        check(row.get("ok") is True and row.get("retcode") == 10009 and row.get("tp") == 2650.12
+              and row.get("sl") == 2600.0 and out["changed"] == 1 and out["ok"] is True,
+              "setsltp reports ok, retcode and the new sl/tp per ticket")
+
+        for label, item, word in (
+                ("buy TP below the bid", dict(ticket=101, tp=2630.0), "above"),
+                ("buy SL above the bid", dict(ticket=101, sl=2645.0), "below"),
+                ("sell TP above the ask", dict(ticket=102, tp=2645.0), "below"),
+                ("sell SL below the ask", dict(ticket=102, sl=2630.0), "above"),
+                ("TP inside the stops level", dict(ticket=103, tp=1.10020), "at least 30"),
+                ("SL inside the stops level", dict(ticket=103, sl=1.09990), "at least 30"),
+                ("a negative TP", dict(ticket=101, tp=-1), "negative"),
+                ("a NaN SL", dict(ticket=101, sl=float("nan")), "finite"),
+                ("a string TP", dict(ticket=101, tp="2650"), "not a price"),
+                ("a boolean SL", dict(ticket=101, sl=True), "not a price"),
+                ("neither TP nor SL", dict(ticket=101), "nothing to change"),
+                ("the values already set", dict(ticket=102, tp=2500.0, sl=2700.0), "already set")):
+            out, row = run(**item)
+            check(not fake.sent and row.get("ok") is False and word in (row.get("error") or "")
+                  and out["ok"] is False,
+                  f"setsltp refuses {label} without sending ({row.get('error')!r})")
+
+        out, row = run(ticket=103, tp=1.10030)
+        check(len(fake.sent) == 1 and fake.sent[0]["tp"] == 1.1003 and fake.sent[0]["sl"] == 0.0,
+              "setsltp sends a TP exactly at the stops level")
+        out, row = run(ticket=102, tp=2600.0)
+        check(len(fake.sent) == 1 and fake.sent[0]["tp"] == 2600.0 and fake.sent[0]["sl"] == 2700.0,
+              "setsltp sends a sell TP below the ask, keeping its SL")
+        out, row = run(ticket=101, sl=0)
+        check(len(fake.sent) == 1 and fake.sent[0]["sl"] == 0.0 and fake.sent[0]["tp"] == 0.0,
+              "setsltp: 0 removes the SL")
+        out, row = run(ticket=999, tp=2650.0)
+        check(not fake.sent and out["already_gone"] == [999] and row.get("ok") is False
+              and out["ok"] is True and not out["failed"],
+              "setsltp reports a closed ticket and sends nothing for it")
+
+        fake.code = 10016
+        out, row = run(ticket=101, tp=2650.0)
+        check(len(fake.sent) == 1 and row.get("ok") is False and row.get("retcode") == 10016
+              and "Invalid stops" in (row.get("comment") or "") and out["ok"] is False,
+              "setsltp reports MT5's refusal with its retcode and comment")
+        fake.code = 10009
+
+        fake.sent.clear()
+        out = ag.set_sltp([{"ticket": 101, "tp": 2650.0}, {"ticket": 102, "tp": 2601.0},
+                           {"ticket": 101, "tp": 2660.0}])
+        dup = [r for r in out["results"] if r.get("ticket") == 101]
+        check([q["position"] for q in fake.sent] == [102] and len(dup) == 2
+              and all("more than once" in (r.get("error") or "") and not r["ok"] for r in dup),
+              f"setsltp refuses both entries of a ticket listed twice, sends the rest"
+              f" (sent {[q['position'] for q in fake.sent]})")
+
+        log = (ag.config.DATA_DIR / "manager.log")
+
+        def last_audit():
+            text = log.read_text(encoding="utf-8").strip().splitlines() if log.exists() else []
+            return json.loads(text[-1]) if text else {}
+
+        # one bad item in a batch: judged before anything is sent, never a crash
+        fake.sent.clear()
+        try:
+            out = ag.set_sltp([{"ticket": 101, "tp": 2650.0}, {"ticket": 102, "tp": 10 ** 400}])
+        except Exception as exc:                               # noqa: BLE001
+            out = {"crashed": repr(exc)}
+        bad = (out.get("results") or [{}, {}])[1]
+        check(len(fake.sent) == 1 and fake.sent[0]["position"] == 101
+              and "too large to be a price" in (bad.get("error") or "")
+              and [s["ticket"] for s in last_audit().get("fields", {}).get("setsltp", [])] == [101],
+              f"setsltp refuses a huge number, sends the rest and audits it ({out.get('crashed')})")
+        fake.positions[107] = fake.NS(**{**vars(fake.positions[101]), "ticket": 107, "sl": "x"})
+        fake.sent.clear()
+        try:
+            out = ag.set_sltp([{"ticket": 107, "tp": 2650.0}, {"ticket": 101, "tp": 2651.0}])
+        except Exception as exc:                               # noqa: BLE001
+            out = {"crashed": repr(exc)}
+        bad = (out.get("results") or [{}])[0]
+        check(len(fake.sent) == 1 and fake.sent[0]["position"] == 101
+              and "could not check" in (bad.get("error") or ""),
+              f"setsltp refuses an item that fails to check, and still sends the rest"
+              f" ({out.get('crashed') or bad.get('error')})")
+        del fake.positions[107]
+
+        class _Stop(BaseException):
+            pass
+
+        real_send = fake.order_send
+
+        def send_then_stop(req):
+            if fake.sent:
+                raise _Stop()
+            return real_send(req)
+
+        fake.order_send, stopped = send_then_stop, False
+        fake.sent.clear()
+        try:
+            ag.set_sltp([{"ticket": 101, "tp": 2652.0}, {"ticket": 102, "tp": 2601.0}])
+        except _Stop:
+            stopped = True
+        finally:
+            fake.order_send = real_send
+        audited = last_audit().get("fields", {}).get("setsltp", [])
+        check(stopped and [(s.get("ticket"), s.get("ok")) for s in audited] == [(101, True), (102, False)],
+              f"setsltp audits what was sent even when sending is cut off ({audited})")
+
+        # rounding: judged as it will be sent
+        for label, item, word in (
+                ("a sell SL that rounds to 0", dict(ticket=102, sl=0.004), "rounds to 0"),
+                ("a TP that rounds to 0", dict(ticket=101, tp=0.001), "rounds to 0"),
+                ("a buy SL that rounds onto the bid", dict(ticket=101, sl=2639.996), "below")):
+            out, row = run(**item)
+            check(not fake.sent and word in (row.get("error") or ""),
+                  f"setsltp refuses {label} without sending ({row.get('error')!r})")
+
+        # tickets: a whole number or digits, nothing int() would bend into one
+        for label, raw in (("a float ticket", 101.9), ("a whole float ticket", 101.0),
+                           ("a boolean ticket", True), ("a negative ticket", -101),
+                           ("ticket 0", 0), ("a non-digit string ticket", "1e2"),
+                           ("a huge ticket", 10 ** 400), ("a unicode-digit ticket", "１０１")):
+            out, row = run(ticket=raw, tp=2655.0)
+            check(not fake.sent and row.get("error") == "not a ticket number",
+                  f"setsltp refuses {label} ({row.get('error')!r})")
+        out, row = run(ticket=" 101 ", tp=2655.0)
+        check(len(fake.sent) == 1 and fake.sent[0]["position"] == 101,
+              "setsltp takes a ticket given as a digit string")
+
+        # MT5 must answer with the position that was asked for
+        fake.alias = {106: 101}
+        real_get = fake.positions_get
+        fake.positions_get = lambda ticket=None: (real_get(fake.alias.get(ticket, ticket))
+                                                  if ticket is not None else real_get())
+        try:
+            out, row = run(ticket=106, tp=2650.0)
+        finally:
+            fake.positions_get = real_get
+        check(not fake.sent and "answered with position 101" in (row.get("error") or ""),
+              f"setsltp refuses when MT5 returns another position ({row.get('error')!r})")
+
+        # freeze level: no change near a stop that may be filling
+        fake.symbols["GBPUSD"] = fake.NS(digits=5, point=0.00001, trade_stops_level=0,
+                                         trade_freeze_level=50, trade_contract_size=100000.0)
+        fake.ticks["GBPUSD"] = fake.NS(bid=1.30000, ask=1.30010)
+        base = {**vars(fake.positions[103]), "symbol": "GBPUSD"}
+        fake.positions[104] = fake.NS(**{**base, "ticket": 104})
+        fake.positions[105] = fake.NS(**{**base, "ticket": 105, "sl": 1.29960})
+        out, row = run(ticket=104, tp=1.30030)
+        check(not fake.sent and "freezes changes within 50" in (row.get("error") or ""),
+              f"setsltp refuses a TP inside the freeze level ({row.get('error')!r})")
+        out, row = run(ticket=105, tp=1.30200)
+        check(not fake.sent and "frozen" in (row.get("error") or ""),
+              f"setsltp refuses a change while the live SL is inside the freeze level"
+              f" ({row.get('error')!r})")
+        out, row = run(ticket=104, tp=1.30100)
+        check(len(fake.sent) == 1 and fake.sent[0]["tp"] == 1.301,
+              "setsltp sends a TP beyond the freeze level")
+        for t in (104, 105):
+            del fake.positions[t]
+
+        # the owner's call: widening or removing a stop stays allowed, behind the PIN
+        out, row = run(ticket=102, sl=2800.0)
+        check(len(fake.sent) == 1 and fake.sent[0]["sl"] == 2800.0,
+              "setsltp moves a sell SL further away (owner's accepted risk)")
+
+        check(log.exists() and '"setsltp"' in log.read_text(encoding="utf-8"),
+              "setsltp writes an audit entry")
+        check(ag.needs_pin("setsltp", {}), "setsltp needs the PIN")
+
+        # through the real handler: PIN, confirm, then the same function
+        import http.client
+        from http.server import ThreadingHTTPServer
+        old_pin, old_token = ag.AGENT_PIN, ag.Handler.token
+        ag.AGENT_PIN, ag.Handler.token = "246810", ""
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), ag.Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+        def post(body):
+            c = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=10)
+            c.request("POST", "/api/manager", json.dumps(body),
+                      {"Content-Type": "application/json", "Origin": ag.ALLOWED_ORIGINS[0]})
+            r = c.getresponse()
+            return r.status, json.loads(r.read() or b"{}")
+
+        try:
+            fake.sent.clear()
+            items = [{"ticket": 101, "tp": 2650.0, "sl": None}]
+            st, _ = post({"action": "setsltp", "confirm": True, "items": items})
+            check(st == 403 and not fake.sent, f"POST setsltp without the PIN is refused ({st})")
+            st, _ = post({"action": "setsltp", "pin": "246810", "items": items})
+            check(st == 400 and not fake.sent, f"POST setsltp without confirm is refused ({st})")
+            st, body = post({"action": "setsltp", "pin": "246810", "confirm": True, "items": items})
+            check(st == 200 and body.get("changed") == 1 and len(fake.sent) == 1,
+                  f"POST setsltp with PIN and confirm sets the TP ({st}, {body.get('message')})")
+            for action in ("closeposition", "cancelpending"):
+                fake.sent.clear()
+                st, _ = post({"action": action, "pin": "246810", "confirm": True,
+                              "tickets": "101"})
+                check(st == 400 and not fake.sent,
+                      f"POST {action} with tickets as a string is refused, not read"
+                      f" digit by digit ({st})")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            ag.AGENT_PIN, ag.Handler.token = old_pin, old_token
+            ag._pin_fails.clear()
+    finally:
+        ag._connect = old
+
+
+def check_close_cancel_tickets() -> None:
+    """closeposition and cancelpending take a ticket as setsltp does: a whole
+    number or digits. int(101.9) is 101 - another position - so it is refused."""
+    from app import mt5_agent as ag
+
+    fake = _FakeMT5()
+    fake.orders_get = lambda: (fake.NS(ticket=201),)
+    old = ag._connect
+    ag._connect = lambda: fake
+    try:
+        for fn, live in ((ag.close_positions, 101), (ag.cancel_pendings, 201)):
+            name = fn.__name__
+            for raw in (live + 0.9, float(live), True, "abc", None, -live):
+                fake.sent.clear()
+                try:
+                    out = fn([raw])
+                except Exception as exc:                       # noqa: BLE001
+                    out = {"crashed": repr(exc)}
+                check(not fake.sent and out.get("ok") is False
+                      and out.get("failed") == [{"ticket": raw, "error": "not a ticket number"}],
+                      f"{name} refuses ticket {raw!r} without sending"
+                      f" ({out.get('crashed') or out.get('message')})")
+            fake.sent.clear()
+            out = fn([str(live), live + 0.9])
+            target = fake.sent[0].get("position", fake.sent[0].get("order")) if fake.sent else None
+            check(len(fake.sent) == 1 and target == live and len(out["failed"]) == 1
+                  and "1 not a ticket number" in out["message"]
+                  and "refused by MT5" not in out["message"],
+                  f"{name} acts on the good ticket and refuses the bad one ({out['message']})")
+    finally:
+        ag._connect = old
+
+
+def check_contract_size() -> None:
+    """Each position carries its symbol's contract size, or null - never a guess."""
+    from app import mt5_agent as ag
+
+    fake = _FakeMT5()
+    seen: dict = {}
+    check(ag._contract_size(fake, "XAUUSD", seen) == 100.0, "contract size is read from symbol_info")
+    calls = fake.info_calls
+    ag._contract_size(fake, "XAUUSD", seen)
+    check(fake.info_calls == calls, "contract size is cached per symbol within one read")
+    check(ag._contract_size(fake, "NOSUCH", seen) is None, "an unknown symbol has no contract size")
+    check(ag._contract_size(fake, "ZEROSZ", seen) is None, "a zero contract size reads as null")
+
+    old = ag._connect
+    ag._connect = lambda: fake
+    try:
+        state = ag._read_state_locked(time.time())
+        sizes = {p["ticket"]: p.get("contract_size", "missing") for p in state.get("positions", [])}
+        check(sizes == {101: 100.0, 102: 100.0, 103: 100000.0},
+              f"the positions payload carries contract_size ({sizes})")
+    finally:
+        ag._connect = old
+        ag._cache.update(at=0.0, data=None)
+        for sym in fake.symbols:
+            ag._digits_cache.pop(sym, None)
 
 
 def check_no_control_chars() -> None:

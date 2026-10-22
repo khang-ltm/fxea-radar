@@ -24,6 +24,10 @@ const PROBE = `
   setMarket(d) { MARKET = d; },
   prettyKey, commonLabel, headingLabel, isHeading, vendorLabel,
   trimSection, derivedSections, sectionOf, marketKey, marketOrder,
+  renderMt5, sltpOpen, sltpRender, sltpRead, sltpBE, sltpCell, sltpMoney,
+  setPositions(p) { MT5_POSITIONS = p; },
+  setSltp,
+  stubDialog(post, askFn) { managerPost = post; ask = askFn; },
 };`;
 
 const node = (id = '') => {
@@ -429,6 +433,112 @@ if (probe) {
   }
   if (raw.length) { failed = true; console.log(`  FAIL  ${raw.length} of ${total} live inputs still read raw:`); raw.slice(0, 10).forEach(r => console.log('        ' + r)); }
   else console.log(`  PASS  all ${total} live inputs read as words`);
+}
+
+// -- TP/SL on open positions -----------------------------------------------
+// Made-up tickets and prices. contract_size 100 gives money figures that no
+// other text on the sheet can contain by accident.
+if (probe) {
+  const mk = (ticket, type, volume, open, extra = {}) => ({
+    ticket, symbol: 'XAUUSD', type, volume, price_open: open, price_current: 4100.5,
+    sl: 0, tp: 0, profit: 0, magic: 0, digits: 2, contract_size: 100, ...extra });
+  const basket = [mk(9001, 'buy', 0.10, 2000), mk(9002, 'buy', 0.30, 1990),
+                  mk(9003, 'buy', 0.10, 1960)];
+  const tpOf = (rows, tpText, slText = '') => {
+    probe.setPositions(rows);
+    probe.sltpOpen(rows.map(p => p.ticket));
+    document.getElementById('sltp-tp').value = tpText;
+    document.getElementById('sltp-tp-rm').checked = false;
+    document.getElementById('sltp-sl').value = slText;
+    document.getElementById('sltp-sl-rm').checked = false;
+    probe.sltpRender();
+    return { bad: document.getElementById('sltp-bad').textContent,
+             rows: document.getElementById('sltp-rows').innerHTML,
+             go: document.getElementById('sltp-go').disabled };
+  };
+  try {
+    const none = probe.sltpCell(0, 2), nul = probe.sltpCell(null, 2);
+    // current price in every fixture is 4100.50
+    const wrongBuy = tpOf([mk(9101, 'buy', 0.1, 4100)], '4090');
+    const wrongSell = tpOf([mk(9102, 'sell', 0.1, 4100)], '4110');
+    const rightBuy = tpOf([mk(9103, 'buy', 0.1, 4100)], '4110');
+    const buyTpUnderEntry = tpOf([mk(9107, 'buy', 0.1, 4120)], '4110');
+    const buySlOverEntry = tpOf([mk(9108, 'buy', 0.1, 4080)], '', '4090');
+    const buySlOverNow = tpOf([mk(9109, 'buy', 0.1, 4080)], '', '4110');
+    const sellTpOverEntry = tpOf([mk(9110, 'sell', 0.1, 4080)], '4090');
+    const sellSlUnderNow = tpOf([mk(9111, 'sell', 0.1, 4120)], '', '4090');
+    const mixed = tpOf([mk(9112, 'buy', 0.1, 4120), mk(9113, 'buy', 0.1, 4120, { price_current: 4200 })], '4150');
+    const noCs = tpOf([mk(9104, 'buy', 0.1, 4100, { contract_size: null })], '4110');
+    const withCs = tpOf([mk(9105, 'buy', 0.1, 4100, { contract_size: 250 })], '4110');
+    probe.renderMt5({ ok: true, account: { login: 1, server: 's', currency: 'USD' },
+      terminal: { connected: true, trade_allowed: true }, totals: { positions: 1, orders: 0 },
+      positions: [mk(9106, 'buy', 0.1, 4100)], orders: [] });
+    const table = document.getElementById('mt5positions').innerHTML || '';
+    // one position that already has both: the sheet prefills them, and a field
+    // left as prefilled is kept (null), not sent back
+    const both = mk(9114, 'buy', 0.1, 4100, { tp: 4120, sl: 4080 });
+    probe.setPositions([both]);
+    probe.sltpOpen([9114]);
+    const preTp = document.getElementById('sltp-tp').value, preSl = document.getElementById('sltp-sl').value;
+    const untouched = probe.sltpRead([both]);
+    document.getElementById('sltp-tp').value = '4130';
+    probe.sltpRender();
+    const tpOnly = probe.sltpRead([both]);
+    const tpOnlyGo = document.getElementById('sltp-go').disabled;
+    const be = probe.sltpBE(basket);
+    // result dialog: ticket 9201 was already closed -> listed once as skipped, not failed
+    let resultBody = '';
+    probe.stubDialog(
+      async () => ({ ok: true, results: [{ ticket: 9200, ok: true, tp: 4120, sl: 0 }],
+                     failed: [{ ticket: 9201, error: 'position not found' }], already_gone: [9201] }),
+      async o => { resultBody = o.body; return true; });
+    await probe.setSltp([{ ticket: 9200, tp: 4120, sl: null }, { ticket: 9201, tp: 4120, sl: null }], {});
+    const goneLines = resultBody.split('\n').filter(l => l.includes('#9201'));
+    const checks = [
+      [goneLines.length === 1 && goneLines[0].includes('closed, skipped') && resultBody.includes('1 ok, 0 failed'),
+       'an already-closed ticket shows once as "closed, skipped" and is not counted as failed'],
+      [none.includes('none') && nul.includes('none') && !none.includes('0.00'),
+       'an SL/TP of 0 or null renders "none"'],
+      [/<td class="n"><span class="sltpnone">none<\/span><\/td><td class="n"><span class="sltpnone">none<\/span><\/td>/.test(table),
+       'the positions table shows "none" for SL and TP of 0, not 0.00'],
+      [be === 1986, `break-even of the sample basket is lot-weighted 1986.00 (got ${be})`],
+      [preTp === '4120.00' && preSl === '4080.00' && untouched.tp.v === null && untouched.sl.v === null,
+       `a single position's TP/SL are prefilled and, left alone, kept (${preTp}/${preSl}`
+       + ` -> ${untouched.tp.v}/${untouched.sl.v})`],
+      [tpOnly.tp.v === 4130 && tpOnly.sl.v === null && !tpOnlyGo,
+       `a TP-only change sends the TP and null for the SL (tp ${tpOnly.tp.v}, sl ${tpOnly.sl.v})`],
+      [wrongBuy.bad.includes('TP must be above now 4100.50 for buy') && wrongBuy.go,
+       'a buy TP below the current price is blocked and Review is disabled'],
+      [wrongSell.bad.includes('TP must be below now 4100.50 for sell') && wrongSell.go,
+       'a sell TP above the current price is blocked'],
+      [rightBuy.bad === '' && !rightBuy.go, 'a buy TP above the current price is allowed'],
+      [buyTpUnderEntry.bad === '' && !buyTpUnderEntry.go,
+       'a buy TP under entry but above the current price is allowed (closes at a loss)'],
+      [buySlOverEntry.bad === '' && !buySlOverEntry.go,
+       'a buy SL over entry but under the current price is allowed (locks profit)'],
+      [buySlOverNow.bad.includes('SL must be below now') && buySlOverNow.go,
+       'a buy SL above the current price is blocked'],
+      [sellTpOverEntry.bad === '' && !sellTpOverEntry.go, 'a sell TP under the current price is allowed'],
+      [sellSlUnderNow.bad.includes('SL must be above now') && sellSlUnderNow.go,
+       'a sell SL below the current price is blocked'],
+      [mixed.bad.includes('#9113') && !mixed.bad.includes('#9112') && mixed.go,
+       'in a basket the failing ticket is named, the passing one is not'],
+      [probe.sltpMoney(mk(1, 'buy', 0.1, 4100), 4110) === 100,
+       'money at target = move x lots x contract size (buy +10 x 0.1 x 100 = 100)'],
+      [probe.sltpMoney(mk(1, 'sell', 0.1, 4100), 4090) === 100, 'a sell profits when price falls'],
+      [probe.sltpMoney(mk(1, 'buy', 0.1, 4100, { contract_size: null }), 4110) === null,
+       'money is unknown, not zero, when the contract size is null'],
+      [withCs.rows.includes('(250.00)') && !noCs.rows.includes('250') && noCs.rows.includes('+10.00'),
+       'money is hidden when contract_size is null, the price distance still shows'],
+    ];
+    for (const [ok, what] of checks) {
+      if (ok) console.log(`  PASS  ${what}`);
+      else { failed = true; console.log(`  FAIL  ${what}`); }
+    }
+  } catch (err) {
+    failed = true;
+    console.log(`  FAIL  the TP/SL sheet threw while rendering: ${err.stack || err.message}`);
+  }
 }
 
 process.exit(failed ? 1 : 0);

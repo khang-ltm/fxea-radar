@@ -1,7 +1,12 @@
-"""Read-only MT5 monitor agent. Runs ON the VPS, beside the running terminal.
+"""MT5 monitor agent. Runs ON the VPS, beside the running terminal.
 
-SAFETY - this module is deliberately incapable of touching your trading:
-  * no order_send, no order_check, no position close, no SL/TP edit anywhere
+SAFETY - this module can never open a trade, or place or modify an order:
+  * order_send carries exactly three requests, each on something that already
+    exists: TRADE_ACTION_REMOVE of a pending order, TRADE_ACTION_DEAL closing a
+    named position, and TRADE_ACTION_SLTP setting SL/TP on a named open
+    position. All three need the PIN; tests/e2e.py fails on any other request.
+    None adds volume. SLTP can widen or remove a stop, which is more risk on that
+    position - the owner's accepted risk (2026-10-22), behind the PIN
   * never launches a terminal: MetaTrader5.initialize() is called WITHOUT a path,
     and only after a terminal64 process is confirmed running, so it can never
     start a second instance or take over a fresh one
@@ -145,6 +150,20 @@ def _px(value, digits: int):
     return None if value is None else round(float(value), digits)
 
 
+def _contract_size(mt5, symbol: str, seen: dict):
+    """Units per lot, as the broker states it, or None. Cached in `seen` for one
+    read only - a broker can change it - and never defaulted: 100 is right for
+    most gold and wrong for most everything else."""
+    if symbol not in seen:
+        try:
+            info = mt5.symbol_info(symbol)
+            size = float(getattr(info, "trade_contract_size", 0) or 0) if info else 0.0
+        except Exception:  # noqa: BLE001 - unknown symbol must not break the read
+            size = 0.0
+        seen[symbol] = size if size > 0 and size == size else None
+    return seen[symbol]
+
+
 POSITION_TYPE = {0: "buy", 1: "sell"}
 ORDER_TYPE = {0: "buy", 1: "sell", 2: "buy limit", 3: "sell limit", 4: "buy stop", 5: "sell stop"}
 
@@ -185,6 +204,7 @@ def _read_state_locked(now: float) -> dict:
     orders = mt5.orders_get() or ()
 
     pos = []
+    sizes: dict = {}
     for p in positions:
         d = _as_dict(p)
         dg = _digits(mt5, d.get("symbol", ""))
@@ -192,6 +212,7 @@ def _read_state_locked(now: float) -> dict:
             "ticket": d.get("ticket"),
             "symbol": d.get("symbol"),
             "digits": dg,
+            "contract_size": _contract_size(mt5, d.get("symbol", ""), sizes),
             "type": POSITION_TYPE.get(d.get("type"), str(d.get("type"))),
             "volume": round(float(d.get("volume") or 0), 2),
             "price_open": _px(d.get("price_open"), dg),
@@ -1235,7 +1256,7 @@ def _stage_inputs(pairs, chart) -> object:
 # can do nothing until someone confirms it - so it costs no PIN, which is what
 # makes reviewing settings before enabling the easy path rather than the annoying
 # one.
-GUARDED = ("uninstall", "cancelpending", "closeposition")
+GUARDED = ("uninstall", "cancelpending", "closeposition", "setsltp")
 
 
 def needs_pin(action: str, body: dict) -> bool:
@@ -2812,7 +2833,7 @@ def orphan_pendings() -> dict:
 
 
 def close_positions(tickets) -> dict:
-    """Close open positions by ticket. The second and last trade request here.
+    """Close open positions by ticket. The second trade request here.
 
     Cancelling an order that has not filled is tidying up; closing a position is
     taking money off the table, and there was no way to do it from here at all -
@@ -2823,8 +2844,8 @@ def close_positions(tickets) -> dict:
     no argument anyone can pass that opens exposure rather than removing it. A
     ticket that is not an open position is refused, not guessed at.
     """
-    want = {int(t) for t in (tickets or []) if str(t).strip()}
-    if not want:
+    want, refused = _tickets_of(tickets)
+    if not want and not refused:
         return {"ok": False, "error": "no ticket numbers given"}
 
     with _ipc_lock:
@@ -2843,7 +2864,7 @@ def close_positions(tickets) -> dict:
                  ("ORDER_FILLING_FOK", "ORDER_FILLING_IOC", "ORDER_FILLING_RETURN")
                  if hasattr(mt5, name)]
 
-        done, failed, gone = [], [], sorted(want - set(live))
+        done, failed, gone = [], list(refused), sorted(want - set(live))
         for ticket in sorted(want & set(live)):
             p = live[ticket]
             symbol = str(p.get("symbol") or "")
@@ -2891,8 +2912,10 @@ def close_positions(tickets) -> dict:
         parts[0] += f" for {took:+.2f}"
     if gone:
         parts.append(f"{len(gone)} had already closed")
-    if failed:
-        parts.append(f"{len(failed)} refused by MT5")
+    if len(failed) > len(refused):
+        parts.append(f"{len(failed) - len(refused)} refused by MT5")
+    if refused:
+        parts.append(f"{len(refused)} not a ticket number")
     out = {"ok": bool(done) or not failed, "closed": len(done), "profit": took,
            "failed": failed, "already_gone": gone, "message": ", ".join(parts)}
     _audit(out, {"closeposition": [d["ticket"] for d in done]})
@@ -2900,17 +2923,18 @@ def close_positions(tickets) -> dict:
 
 
 def cancel_pendings(tickets) -> dict:
-    """Delete these pending orders. The only trade request this agent can send.
+    """Delete these pending orders. The first trade request this agent can send.
 
     A stopped EA leaves its stop and limit orders in the book, and they still
     fill - opening a position with no EA left to manage it. Removing them is the
     one thing worth being able to do from outside, so it is the one thing allowed
     here: TRADE_ACTION_REMOVE against the exact tickets that were listed while
-    the EA was still on its chart. Nothing in this file can open, close or modify
-    a position, and no ticket is removed that is not still a pending order.
+    the EA was still on its chart. Nothing in this file can open a position or
+    place or modify an order, and no ticket is removed that is not still a
+    pending order.
     """
-    want = {int(t) for t in (tickets or []) if str(t).strip()}
-    if not want:
+    want, refused = _tickets_of(tickets)
+    if not want and not refused:
         return {"ok": False, "error": "nothing to cancel - this EA reports no magic"
                                       " number, so its orders cannot be told apart"
                                       " from another EA's"}
@@ -2923,7 +2947,7 @@ def cancel_pendings(tickets) -> dict:
         except Exception as exc:                               # noqa: BLE001
             return {"ok": False, "error": f"cannot read orders: {exc}"}
 
-        done, failed, gone = [], [], sorted(want - live)
+        done, failed, gone = [], list(refused), sorted(want - live)
         for ticket in sorted(want & live):
             try:
                 r = mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": ticket})
@@ -2941,11 +2965,266 @@ def cancel_pendings(tickets) -> dict:
     parts = [f"cancelled {len(done)} pending order{'' if len(done) == 1 else 's'}"]
     if gone:
         parts.append(f"{len(gone)} had already gone")
-    if failed:
-        parts.append(f"{len(failed)} refused by MT5")
+    if len(failed) > len(refused):
+        parts.append(f"{len(failed) - len(refused)} refused by MT5")
+    if refused:
+        parts.append(f"{len(refused)} not a ticket number")
     out = {"ok": bool(done) or not failed, "cancelled": len(done),
            "failed": failed, "already_gone": gone, "message": ", ".join(parts)}
     _audit(out, {"cancelpending": done})
+    return out
+
+
+def _ticket_of(raw):
+    """(ticket, error). A whole number as JSON gives it, or a string of digits.
+    Never a bool, and never a float: int(101.9) is 101, some other position."""
+    if isinstance(raw, bool):
+        return None, "not a ticket number"
+    if isinstance(raw, int):
+        t = raw
+    elif isinstance(raw, str) and raw.strip().isascii() and raw.strip().isdigit():
+        t = int(raw.strip())
+    else:
+        return None, "not a ticket number"
+    if not 0 < t < 2 ** 63:
+        return None, "not a ticket number"
+    return t, ""
+
+
+def _tickets_of(raw) -> tuple[set, list]:
+    """The ticket numbers in a list, and a refusal for each entry that is not
+    one. Blank strings are skipped."""
+    want, refused = set(), []
+    for t in (raw or []):
+        if isinstance(t, str) and not t.strip():
+            continue
+        ticket, err = _ticket_of(t)
+        if err:
+            refused.append({"ticket": t, "error": err})
+        else:
+            want.add(ticket)
+    return want, refused
+
+
+def _sltp_value(raw):
+    """(value, error) for one asked SL or TP. None keeps what is there, 0 removes."""
+    if raw is None:
+        return None, ""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None, f"{raw!r} is not a price"
+    try:
+        v = float(raw)
+    except OverflowError:
+        return None, "too large to be a price"
+    if v != v or v in (float("inf"), float("-inf")):
+        return None, "not a finite number"
+    if v < 0:
+        return None, f"{v} is negative"
+    return v, ""
+
+
+def _sl_change_refused(is_buy: bool, was_sl: float, new_sl: float) -> str:
+    """Why this SL change is not allowed, or "" when it is - the one place that
+    decides how far a stop may be loosened. The owner's call (2026-10-22): full
+    control. With the PIN a stop may be moved further away, or removed with 0."""
+    return ""
+
+
+def _sltp_plan(mt5, ticket: int, want_sl, want_tp, row: dict):
+    """(symbol, sl, tp) to send for one position, "gone" if it has closed, or
+    None with row["error"] saying why nothing will be sent. Sends nothing."""
+    sl_in, err_sl = _sltp_value(want_sl)
+    tp_in, err_tp = _sltp_value(want_tp)
+    if err_sl or err_tp:
+        row["error"] = "; ".join(x for x in (err_sl and f"SL {err_sl}",
+                                             err_tp and f"TP {err_tp}") if x)
+        return None
+    if sl_in is None and tp_in is None:
+        row["error"] = "nothing to change: give a tp or an sl"
+        return None
+    try:
+        found = mt5.positions_get(ticket=ticket) or ()
+    except Exception as exc:                                   # noqa: BLE001
+        row["error"] = f"cannot read the position: {exc}"
+        return None
+    if not found:
+        row["error"] = "no longer open - nothing sent"
+        return "gone"
+    p = _as_dict(found[0])
+    if p.get("ticket") != ticket:
+        row["error"] = f"MT5 answered with position {p.get('ticket')!r} - nothing sent"
+        return None
+    symbol = str(p.get("symbol") or "")
+    row["symbol"] = symbol
+    buy = getattr(mt5, "POSITION_TYPE_BUY", 0)
+    sell = getattr(mt5, "POSITION_TYPE_SELL", 1)
+    kind = p.get("type")
+    if kind not in (buy, sell):
+        row["error"] = f"position type {kind!r} is neither buy nor sell"
+        return None
+    is_buy = kind == buy
+    try:
+        info = mt5.symbol_info(symbol)
+        tick = mt5.symbol_info_tick(symbol)
+    except Exception:                                          # noqa: BLE001
+        info = tick = None
+    if info is None:
+        row["error"] = f"no symbol info for {symbol} - nothing sent"
+        return None
+    digits = int(getattr(info, "digits", 0) or 0)
+    point = float(getattr(info, "point", 0) or 0) or 10.0 ** -digits
+    level = int(getattr(info, "trade_stops_level", 0) or 0)
+    freeze = int(getattr(info, "trade_freeze_level", 0) or 0)
+    ref = float(getattr(tick, "bid" if is_buy else "ask", 0) or 0)
+    if ref <= 0:
+        row["error"] = f"no current price for {symbol} - nothing sent"
+        return None
+    ref = round(ref, digits)
+    row["was"] = {"sl": _px(p.get("sl") or 0, digits),
+                  "tp": _px(p.get("tp") or 0, digits)}
+    sl = row["was"]["sl"] if sl_in is None else round(sl_in, digits)
+    tp = row["was"]["tp"] if tp_in is None else round(tp_in, digits)
+    side = "bid" if is_buy else "ask"
+
+    problems = []
+    # A broker refuses any change while an existing stop is within its freeze
+    # level of the price - it may be filling right now.
+    if freeze > 0:
+        for name, value, above in (("TP", row["was"]["tp"], is_buy),
+                                   ("SL", row["was"]["sl"], not is_buy)):
+            gap = (value - ref) if above else (ref - value)
+            if value and round(gap / point, 6) <= freeze:
+                problems.append(f"the position is frozen: its {name} {value} is"
+                                f" {round(gap / point)} points from the {side};"
+                                f" the broker freezes changes within {freeze}")
+    # Only what was asked for is judged here, and only as it will be sent:
+    # rounded to the symbol's digits. None keeps a value and 0 removes it.
+    for name, asked, value, above in (("TP", tp_in, tp, is_buy),
+                                      ("SL", sl_in, sl, not is_buy)):
+        if not asked:
+            continue
+        if value <= 0:
+            problems.append(f"{name} {asked} rounds to 0 at {digits} digits,"
+                            f" which would remove it")
+            continue
+        gap = (value - ref) if above else (ref - value)
+        pts = round(gap / point, 6)
+        if gap <= 0:
+            problems.append(f"{name} {value} must be {'above' if above else 'below'}"
+                            f" the {side} {ref}")
+        elif level > 0 and pts < level:
+            problems.append(f"{name} {value} is {round(gap / point)} points from the {side};"
+                            f" the broker needs at least {level}")
+        elif freeze > 0 and pts <= freeze:
+            problems.append(f"{name} {value} is {round(gap / point)} points from the {side};"
+                            f" the broker freezes changes within {freeze}")
+    if sl_in is not None:
+        why = _sl_change_refused(is_buy, row["was"]["sl"], sl)
+        if why:
+            problems.append(why)
+    if problems:
+        row["error"] = "; ".join(problems) + " - nothing sent"
+        return None
+    if sl == row["was"]["sl"] and tp == row["was"]["tp"]:
+        row["error"] = "already set to that - nothing sent"
+        return None
+    return symbol, sl, tp
+
+
+def set_sltp(items) -> dict:
+    """Set Take Profit and/or Stop Loss on open positions. The third trade request.
+
+    A basket in the red has one exit that does not cost a fill at a bad moment: a
+    TP waiting at break-even. So this exists, drawn as narrowly as closing is: the
+    caller names a ticket and the two prices, nothing else. TRADE_ACTION_SLTP on a
+    position can only move where an existing trade ends - it cannot open one,
+    change its size, or touch a pending order. It can widen or remove a stop,
+    which is more risk on that position: the owner's accepted risk (2026-10-22),
+    behind the PIN. Each ticket is re-read from MT5 at the moment of sending; one
+    that has closed is reported, never guessed at. A price on the wrong side of
+    the market, inside the broker's stops or freeze level, or that rounds to 0,
+    is refused here with a reason rather than sent to find out. Every item is
+    judged before any is sent, and what was sent is always written down.
+
+    items: [{"ticket": int, "tp": float|None, "sl": float|None}]
+           None leaves that field as it is now, 0 removes it.
+    """
+    asked, results, parsed = [], [], []
+    for it in (items or []):
+        it = it if isinstance(it, dict) else {}
+        ticket, err = _ticket_of(it.get("ticket"))
+        if err:
+            results.append({"ticket": it.get("ticket"), "ok": False, "error": err})
+            continue
+        parsed.append((ticket, it.get("sl"), it.get("tp")))
+    # A ticket named twice has two answers and no way to tell which was meant:
+    # neither is sent.
+    counts: dict[int, int] = {}
+    for ticket, _, _ in parsed:
+        counts[ticket] = counts.get(ticket, 0) + 1
+    for ticket, want_sl, want_tp in parsed:
+        if counts[ticket] > 1:
+            results.append({"ticket": ticket, "ok": False,
+                             "error": "listed more than once - nothing sent"})
+        else:
+            asked.append((ticket, want_sl, want_tp))
+    if not asked and not results:
+        return {"ok": False, "error": "no ticket numbers given"}
+
+    gone, ready, sent = [], [], []
+    with _ipc_lock:
+        mt5 = _connect() if asked else None
+        if asked and mt5 is None:
+            return {"ok": False, "error": _init_error or "terminal not reachable"}
+
+        for ticket, want_sl, want_tp in asked:
+            row = {"ticket": ticket, "ok": False}
+            results.append(row)
+            try:
+                plan = _sltp_plan(mt5, ticket, want_sl, want_tp, row)
+            except Exception as exc:                           # noqa: BLE001
+                row["error"] = f"could not check it: {exc!r} - nothing sent"
+                continue
+            if plan == "gone":
+                gone.append(ticket)
+            elif plan is not None:
+                row["error"] = "not sent"
+                ready.append((ticket, *plan, row))
+
+        try:
+            for ticket, symbol, sl, tp, row in ready:
+                note = {"ticket": ticket, "sl": sl, "tp": tp, "ok": False}
+                sent.append(note)
+                try:
+                    r = mt5.order_send({"action": mt5.TRADE_ACTION_SLTP,
+                                        "position": ticket,
+                                        "symbol": symbol,
+                                        "sl": sl,
+                                        "tp": tp})
+                except Exception as exc:                       # noqa: BLE001
+                    row["error"] = note["error"] = str(exc)
+                    continue
+                code = getattr(r, "retcode", None)
+                row.update({"retcode": code, "comment": str(getattr(r, "comment", "") or ""),
+                            "sl": sl, "tp": tp})
+                note["retcode"] = code
+                if code == getattr(mt5, "TRADE_RETCODE_DONE", 10009):
+                    row["ok"] = note["ok"] = True
+                    row.pop("error", None)
+                else:
+                    row["error"] = f"MT5 refused it: {code} {row['comment']}".strip()
+        finally:
+            done = [r for r in results if r["ok"]]
+            failed = [{"ticket": r["ticket"], "error": r.get("error", "not sent")}
+                      for r in results if not r["ok"] and r["ticket"] not in gone]
+            parts = [f"set SL/TP on {len(done)} position{'' if len(done) == 1 else 's'}"]
+            if gone:
+                parts.append(f"{len(gone)} had already closed")
+            if failed:
+                parts.append(f"{len(failed)} not changed")
+            out = {"ok": bool(done) or not failed, "changed": len(done), "results": results,
+                   "failed": failed, "already_gone": gone, "message": ", ".join(parts)}
+            _audit(out, {"setsltp": sent})
     return out
 
 
@@ -3530,10 +3809,11 @@ class Handler(BaseHTTPRequestHandler):
         return origin in ALLOWED_ORIGINS
 
     def do_POST(self):  # noqa: N802
-        """Manager commands, plus exactly two trade requests: cancelling a pending
-        order, and closing an open position by its ticket. Both only ever remove
-        something that already exists - there is no path here that opens a trade,
-        and unloading an EA still leaves its positions alone unless asked."""
+        """Manager commands, plus exactly three trade requests: cancelling a pending
+        order, closing an open position by its ticket, and setting SL/TP on an
+        open position by its ticket. Each only acts on something that already
+        exists - there is no path here that opens a trade, and unloading an EA
+        still leaves its positions alone unless asked."""
         if urlparse(self.path).path != "/api/manager":
             self._json({"ok": False, "error": "no trade endpoints exist on this agent"}, 405)
             return
@@ -3574,12 +3854,13 @@ class Handler(BaseHTTPRequestHandler):
         if action not in ("status", "pause", "run", "resume", "unload", "setinputs",
                           "attach", "forget", "install", "uninstall", "savepreset",
                           "delpreset", "update", "reload", "cancelpending",
-                          "closeposition", "setnote", "readlabels", "seenloaded"):
+                          "closeposition", "setsltp", "setnote", "readlabels",
+                          "seenloaded"):
             self._json({"ok": False, "error": f"unsupported action: {action}"}, 400)
             return
         if action in ("pause", "unload", "setinputs", "attach", "forget",
                       "install", "uninstall", "savepreset", "cancelpending",
-                      "closeposition", "delpreset") and not body.get("confirm"):
+                      "closeposition", "setsltp", "delpreset") and not body.get("confirm"):
             self._json({"ok": False, "error": f"{action} requires confirm: true"}, 400)
             return
 
@@ -3594,7 +3875,19 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if action == "closeposition":
-            self._json(close_positions((body.get("tickets") or [])[:50]))
+            tickets = body.get("tickets") or []
+            if not isinstance(tickets, list):
+                self._json({"ok": False, "error": "tickets must be a list"}, 400)
+                return
+            self._json(close_positions(tickets[:50]))
+            return
+
+        if action == "setsltp":
+            items = body.get("items")
+            if not isinstance(items, list) or not items:
+                self._json({"ok": False, "error": "no positions given"}, 400)
+                return
+            self._json(set_sltp(items[:50]))
             return
 
         if action == "seenloaded":
@@ -3633,16 +3926,14 @@ class Handler(BaseHTTPRequestHandler):
                 # order a running EA placed, which is a thing you sometimes need
                 # to do. cancel_pendings only ever removes tickets that are still
                 # pending orders, and the PIN is what stands in front of it.
-                want = []
-                for t in asked[:50]:
-                    try:
-                        want.append(int(t))
-                    except (TypeError, ValueError):
-                        continue
-                if not want:
+                if not isinstance(asked, list):
+                    self._json({"ok": False, "error": "tickets must be a list"}, 400)
+                    return
+                want, refused = _tickets_of(asked[:50])
+                if not want and not refused:
                     self._json({"ok": False, "error": "no ticket numbers given"}, 400)
                     return
-                self._json(cancel_pendings(want))
+                self._json(cancel_pendings(asked[:50]))
                 return
             chart = str(body.get("chart") or "")
             known = _PAUSED_ORDERS.get(chart)
