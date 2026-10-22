@@ -13,10 +13,14 @@ Live site: https://fxea-radar.linkpc.net · agent: https://mt5.fxea-radar.linkpc
 
 ## Hard rules
 
-**Real money is attached to this.** The agent can close positions and cancel
-orders on an account that trades. Every trade request must be either a
-`TRADE_ACTION_REMOVE`, or a `TRADE_ACTION_DEAL` naming an existing `position`.
+**Real money is attached to this.** The agent can close positions, cancel
+orders and set SL/TP on open positions on an account that trades. Every trade
+request must be a `TRADE_ACTION_REMOVE`, a `TRADE_ACTION_DEAL` naming an
+existing `position`, or a `TRADE_ACTION_SLTP` naming an existing `position`.
 Nothing in this repo may open a trade. `tests/e2e.py` enforces this.
+Nothing can open a trade or add volume; with the PIN, SL/TP on an open position
+can be changed, including widening or removing a stop - that is the owner's
+accepted risk (2026-10-22).
 
 **Never invent a number.** Everything shown is either measured, read from a
 source that is named on screen, or absent. An unknown is displayed as unknown,
