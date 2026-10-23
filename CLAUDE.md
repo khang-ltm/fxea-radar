@@ -1,11 +1,12 @@
 # fxea-radar
 
-A catalog of free EAs scraped from Telegram, plus a control panel for a live
-MT5 account. Two halves that ship differently:
+A control panel for a live MT5 account. The EA catalog (free EAs scraped from
+Telegram) and the MQL5 Market tab were shut down on 2026-10-23: their code is
+kept, dormant, and nothing calls it or shows it. Two halves that ship differently:
 
 | half | lives in | how it ships |
 |---|---|---|
-| the site | `public/index.html` | GitHub Actions builds `site/` twice daily and publishes it |
+| the site | `public/index.html` | GitHub Actions builds `site/` on every push to `main` and publishes it |
 | the agent | `app/mt5_agent.py` | runs on a Windows VPS, updates itself from `main` |
 | the manager | `mql5/FxeaManager.mq5` | the agent compiles it; MT5 reloads it by itself |
 
@@ -44,13 +45,18 @@ out in words - claims nothing and is shown plain.
 
 ```
 app/mt5_agent.py    the VPS agent: MT5, HTTP API, self-update  (large)
-app/mql5_market.py  MQL5 Market crawler, ranks EAs by live signal
 app/basket_dd.py    drawdown reconstruction from M1 bars
-app/server.py       local catalog server + JSON API
-app/export_static.py bakes the payload into site/index.html
-public/index.html   the whole front end, one file, no build step
+app/export_static.py builds site/index.html, baking in the agent hostname
+public/index.html   the whole front end, one file, no build step: My MT5 + My EA
 mql5/FxeaManager.mq5 sits on a spare chart, reads other charts' inputs
 ```
+
+Dormant since 2026-10-23 (kept so they can be revived, not called by anything
+that ships): `app/sync.py` and `app/sync_shots.py` (Telegram catalog sync),
+`app/mql5_market.py` (MQL5 Market crawler), `app/server.py` (local catalog
+server + JSON API), `build_payload()` in `app/export_static.py`, and
+`tests/fixtures/market_sample.json`. The catalog and Market front end was
+removed from `public/index.html`; it is in git history before that date.
 
 ## Before saying anything is done
 
@@ -67,7 +73,7 @@ was looking for.
 
 ## Things that will waste your time
 
-- `public/index.html` is 4,500 lines and has no build step. Patch it with a
+- `public/index.html` is 4,300 lines and has no build step. Patch it with a
   script, not by hand. Heredocs mangle backslashes: write patch scripts with the
   Write tool, and build regex escapes with `chr(92)`.
 - The agent's self-restart does not reliably work on that VPS. After deploying,

@@ -20,10 +20,9 @@ const ids = new Set([...html.matchAll(/id="([^"]+)"/g)].map(m => m[1]));
 // Appended to the page's last script block so the test can call into it.
 const PROBE = `
 ;globalThis.__probe = {
-  renderMarket,
-  setMarket(d) { MARKET = d; },
+  tab: () => TAB,
   prettyKey, commonLabel, headingLabel, isHeading, vendorLabel,
-  trimSection, derivedSections, sectionOf, marketKey, marketOrder,
+  trimSection, derivedSections, sectionOf,
   renderMt5, sltpOpen, sltpRender, sltpRead, sltpBE, sltpCell, sltpMoney,
   setPositions(p) { MT5_POSITIONS = p; },
   setSltp,
@@ -95,9 +94,7 @@ globalThis.prompt = () => null;
 globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
 globalThis.requestAnimationFrame = fn => fn();
 
-let failed = false;
-let probe = null;
-try {
+function runPage() {
   for (const [i, block] of blocks.entries()) {
     try {
       // The page's functions live inside the block's own scope, so a test can
@@ -108,6 +105,12 @@ try {
       throw new Error(`block ${i + 1}/${blocks.length}: ${err.message}`);
     }
   }
+}
+
+let failed = false;
+let probe = null;
+try {
+  runPage();
   console.log(`  PASS  all ${blocks.length} script block(s) run without throwing`);
   probe = globalThis.__probe || null;
 } catch (err) {
@@ -127,67 +130,9 @@ if (unknown.length) {
   console.log('  PASS  every element the script looks up exists in the page');
 }
 
-// -- the MQL5 Market tab renders ------------------------------------------
-// An EA is ranked on its live signal, so the card has to survive both shapes it
-// arrives in: one with a signal, and one without. The unproven case shipped as
-// a crash once already, reading .dd_pct off a null signal.
-if (probe) {
-  const fixture = [
-    { id: '1', name: 'Proven EA', url: 'https://mql5.test/1', author: 'A Seller',
-      price: 499, rating: 4.5, reviews: 80, score: 9, proven: true, version: '4.91',
-      // deliberately free of numbers: an assertion that the growth figure
-      // reached the card must not be satisfied by the reason text quoting it
-      why: ['+5 grew well against its drawdown', '-1 something'],
-      signal: { url: 'https://mql5.test/s/1', growth_pct: 357, dd_pct: 16, trades: 880,
-                win_pct: 61.2, profit_factor: 2.53, weeks: 101, deposit_load: 4.8,
-                subscribers: 66, latest_trade: '2 days ago' } },
-    { id: '2', name: 'Unproven EA', url: 'https://mql5.test/2', author: 'B Seller',
-      free: true, rating: null, reviews: 0, score: 0, proven: false,
-      why: ['no live signal - nothing here is measured'], signal: null },
-    { id: '3', name: 'Quiet EA', url: 'https://mql5.test/3', author: 'C Seller',
-      score: 1, proven: true, why: ['+1 x'],
-      signal: { url: 'https://mql5.test/s/3', growth_pct: 10, subscribers: 0 } },
-    { id: '4', name: 'Unread EA', url: 'https://mql5.test/4', author: 'D Seller',
-      score: 1, proven: true, why: ['+1 y'],
-      signal: { url: 'https://mql5.test/s/4', growth_pct: 12 } },
-  ];
-  try {
-    probe.setMarket({ eas: fixture, crawled_at: new Date().toISOString(), proven: 1 });
-    probe.renderMarket();
-    const html = document.getElementById('mktlist').innerHTML || '';
-    const checks = [
-      [html.includes('Proven EA'), 'the proven EA is listed'],
-      [html.includes('Unproven EA'), 'the unproven EA is listed'],
-      [html.includes('unproven'), 'the unproven EA is labelled, not scored badly'],
-      [html.includes('<b>357%</b>'), 'the growth figure reaches the card'],
-      [html.includes('<b>101</b>'), 'the age reaches the card'],
-      [html.includes('<b>2.53</b>'), 'the profit factor reaches the card'],
-      [html.includes('v4.91'), 'the version is shown next to the name'],
-      [(html.match(/v4\.91/g) || []).length === 1, 'the version is shown once, not per field'],
-      [!html.includes('vundefined') && !html.includes('v</span>'),
-       'an EA with no version renders no version badge'],
-      [html.includes('not read yet'), 'a half-crawled entry says so rather than looking blank'],
-      [html.includes('<b>66</b> subscribers'), 'the subscriber count reaches the card'],
-      [html.includes('<b>2 days ago</b> last trade'), 'when the signal last traded reaches the card'],
-      [html.includes('<b>0</b> subscribers'), 'a real zero subscribers reads as 0'],
-      [(html.match(/last trade/g) || []).length === 1,
-       'a signal with no last-trade value shows no last-trade chip'],
-      [(html.match(/subscribers/g) || []).length === 2, 'a signal with no subscriber count shows no subscriber chip, not 0'],
-      [html.includes('https://mql5.test/s/1'), 'the card links the live signal'],
-      [!html.includes('undefined') && !html.includes('NaN'),
-       'no field renders as undefined or NaN'],
-    ];
-    for (const [ok, what] of checks) {
-      if (ok) { console.log(`  PASS  ${what}`); }
-      else { failed = true; console.log(`  FAIL  ${what}`); }
-    }
-  } catch (err) {
-    failed = true;
-    console.log(`  FAIL  the Market tab threw while rendering: ${err.message}`);
-  }
-} else {
+if (!probe) {
   failed = true;
-  console.log('  FAIL  the page no longer exposes renderMarket to the smoke test');
+  console.log('  FAIL  the page script did not hand the smoke test its functions');
 }
 
 // -- EA input names are readable ------------------------------------------
@@ -357,56 +302,6 @@ if (probe) {
   }
 }
 
-// -- a catalog EA is joined to its own Market product, never a sibling -----
-// The key must agree with the server's name_key, and must keep "Quantum Queen"
-// and "Quantum Queen X" apart: they are different products at different prices.
-if (probe) {
-  const pairs = [
-    ['Quantum Titan v2.2 MT5', 'quantum titan'],
-    ['Smart Gold Hunter v3.3 fix', 'smart gold hunter'],
-    ['Gold Snap v1.0 Source code MT5', 'gold snap'],
-    ['Quantum Queen MT5 version 3.7@free_fx_pro', 'quantum queen'],
-    ['Quantum Queen X 4.3V', 'quantum queen x'],
-    ['Wave Rider EA v5.61 MT5', 'wave rider'],
-  ];
-  const off = pairs.filter(([n, k]) => probe.marketKey(n) !== k);
-  if (off.length) { failed = true; console.log('  FAIL  market key: ' + off.map(([n]) => `${n} -> "${probe.marketKey(n)}"`).join(', ')); }
-  else console.log(`  PASS  all ${pairs.length} names key to their own Market product`);
-}
-
-// -- the Market sort puts unknowns last, never as zero ----------------------
-// Run against the real crawled listings: 14 have a signal, 6 have none.
-if (probe) {
-  const mk = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'tests', 'fixtures', 'market_sample.json'), 'utf8')).market.eas;
-  const withSig = mk.filter(e => e.signal && typeof e.signal.growth_pct === 'number').length;
-  const num = (e, k) => e.signal && typeof e.signal[k] === 'number' && !(k === 'growth_pct' && e.signal.topped_up) ? e.signal[k] : null;
-  const ok = (by, k, dir) => {
-    const r = probe.marketOrder(mk, by);
-    const v = r.map(e => num(e, k));
-    const known = v.filter(x => x != null);
-    const sortedKnown = known.every((x, i) => i === 0 || (known[i - 1] - x) * dir <= 0);
-    const unknownLast = v.slice(known.length).every(x => x == null) && v.slice(0, known.length).every(x => x != null);
-    return r.length === mk.length && known.length > 0 && known.length < mk.length && sortedKnown && unknownLast;
-  };
-  const checks = [
-    [withSig > 0 && withSig < mk.length, 'the fixture has both measured and unmeasured listings'],
-    [ok('growth', 'growth_pct', -1), 'sort by growth: highest first, listings without a signal last'],
-    [(() => { const r = probe.marketOrder(mk, 'growth'); const i = r.findIndex(e => e.signal && e.signal.topped_up);
-              const j = r.map(e => !!(e.signal && !e.signal.topped_up)).lastIndexOf(true);
-              return i >= 0 && j >= 0 && j < i; })(),
-     'sort by growth: topped-up accounts, whose growth is not a track record, come after every clean one'],
-    [ok('dd', 'dd_pct', 1), 'sort by drawdown: lowest first, listings without a signal last'],
-    [ok('subs', 'subscribers', -1), 'sort by subscribers: most first, listings without a signal last'],
-    [ok('weeks', 'weeks', -1), 'sort by weeks live: longest first, listings without a signal last'],
-    [probe.marketOrder(mk, 'score').every((e, i, a) => i === 0 || (a[i - 1].proven - e.proven) >= 0),
-     'default order keeps proven listings above unproven ones'],
-  ];
-  for (const [good, what] of checks) {
-    if (good) console.log(`  PASS  ${what}`);
-    else { failed = true; console.log(`  FAIL  ${what}`); }
-  }
-}
-
 // -- every real input on the account reads as words -------------------------
 // tests/fixtures/live_inputs.json holds the input NAMES of the EAs running on
 // the owner's account (values reduced to their kind, except text the EA's
@@ -538,6 +433,51 @@ if (probe) {
   } catch (err) {
     failed = true;
     console.log(`  FAIL  the TP/SL sheet threw while rendering: ${err.stack || err.message}`);
+  }
+}
+
+// -- only the MT5 control panel is left ------------------------------------
+// The EA catalog and MQL5 Market tabs were shut down on 2026-10-23. An old link
+// (?tab=market, ?tab=eas) or a tab remembered from before must land on the
+// account, not on a view that no longer exists. Each case runs the page again
+// from scratch with that URL and that remembered tab.
+{
+  const tabIds = [...ids].filter(id => id.startsWith('tab-')).sort();
+  const landOn = (search, stored) => {
+    nodes.clear();
+    localStorage.store.clear();
+    if (stored) localStorage.setItem('fxea_tab', stored);
+    location.search = search;
+    try {
+      runPage();
+    } catch (err) {
+      return { tab: `threw: ${err.message}`, mt5: false, myea: false };
+    }
+    return { tab: globalThis.__probe.tab(),
+             mt5: !nodes.get('view-mt5').hidden, myea: !nodes.get('view-myea').hidden };
+  };
+  const fresh = landOn('', null);
+  const market = landOn('?tab=market', 'myea');
+  const eas = landOn('?tab=eas', 'myea');
+  const remembered = landOn('', 'market');
+  const myea = landOn('?tab=myea', null);
+  const shown = r => `${r.tab}, mt5 ${r.mt5 ? 'shown' : 'hidden'}, myea ${r.myea ? 'shown' : 'hidden'}`;
+  const onMt5 = r => r.tab === 'mt5' && r.mt5 && !r.myea;
+  const checks = [
+    [JSON.stringify(tabIds) === JSON.stringify(['tab-mt5', 'tab-myea']),
+     `the only tabs are My MT5 and My EA (got ${tabIds.join(', ')})`],
+    [!ids.has('view-eas') && !ids.has('view-market'), 'the catalog and Market views are gone'],
+    [!/Nothing crawled yet|>EA catalog<|>MQL5 Market</.test(html),
+     'no catalog or Market tab text is left in the page'],
+    [onMt5(fresh), `a first visit lands on My MT5 (${shown(fresh)})`],
+    [onMt5(market), `?tab=market lands on My MT5, not the remembered tab (${shown(market)})`],
+    [onMt5(eas), `?tab=eas lands on My MT5 (${shown(eas)})`],
+    [onMt5(remembered), `a remembered Market tab lands on My MT5 (${shown(remembered)})`],
+    [myea.tab === 'myea' && myea.myea && !myea.mt5, `?tab=myea still opens My EA (${shown(myea)})`],
+  ];
+  for (const [ok, what] of checks) {
+    if (ok) console.log(`  PASS  ${what}`);
+    else { failed = true; console.log(`  FAIL  ${what}`); }
   }
 }
 

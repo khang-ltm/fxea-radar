@@ -315,21 +315,18 @@ def run_once(run_no: int, port: int) -> None:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10) as r:
             html = r.read().decode("utf-8")
         check(r.status == 200 and "FX EA Radar" in html, "GET / serves dashboard")
-        check("/api/posts" in html and 'id="grid"' in html, "dashboard wired to API")
-        check('id="syncbox"' in html, "dashboard shows sync status")
-        # the ban is on a manual CATALOG sync trigger, not on POST in general -
-        # unloading an EA legitimately posts to the agent
+        # the EA catalog and MQL5 Market tabs were shut down on 2026-10-23: the
+        # page is the MT5 control panel only and asks for no catalog data
+        check("/api/posts" not in html and 'id="grid"' not in html and 'id="syncbox"' not in html,
+              "the page no longer loads or shows the catalog")
+        check('id="tab-eas"' not in html and 'id="view-eas"' not in html
+              and 'id="tab-market"' not in html and 'id="view-market"' not in html,
+              "the catalog and Market tabs are gone")
+        check("const TABS = ['mt5', 'myea'];" in html,
+              "My MT5 and My EA are the only tabs")
         check('id="sync"' not in html and "'/api/sync'" not in html,
-              "no manual catalog sync control (auto-sync only)")
+              "no manual catalog sync control")
         check("prefers-reduced-motion" in html, "dashboard respects reduced motion")
-        check("verdicts refreshed" in html or "verdicts not refreshed" in html,
-              "dashboard reports verdict-index freshness")
-        check("renderStaleness" in html and "STALE_WARN_H" in html,
-              "dashboard warns when the data goes stale")
-        check(".stale[hidden]" in html and ".stale:not([hidden])" in html,
-              "stale banner respects [hidden] (a bare display:flex leaves an empty bar)")
-        check(".toolbar[hidden]" in html and ".toolbar:not([hidden])" in html,
-              "EA filter bar respects [hidden] so it disappears on the MT5 tab")
         check(".btn[hidden]" in html and ".btn:not([hidden])" in html,
               "buttons respect [hidden] (Undo changes must vanish when nothing changed)")
         for el in ("eadlg", "ea-save", "ea-inputs"):
@@ -338,18 +335,34 @@ def run_once(run_no: int, port: int) -> None:
               "MT5 is a tab in this page, not a separate page")
         check("dialog.sheet[open]" in html and "\ndialog.sheet {" in html.replace("\r", ""),
               "sheet display is scoped to [open] for the same reason")
-        check("VERDICT_RANK" in html and 'value="verdict"' in html,
-              "dashboard can sort by test verdict")
 
-        # static export must work off the SAME page, with data inlined and no polling
+        # static export works off the SAME page and bakes in no catalog data
+        import os as _os
         from app.export_static import render
-        static_html = render({"posts": [], "matched": 0, "summary": {}, "state": {}, "sync": {}})
-        check("window.__FXEA__" in static_html, "static build inlines the payload")
-        check("realFetch" in static_html and "/api/posts" in static_html,
-              "static build answers only the catalog fetch, passing others through")
-        check("setInterval(load," not in static_html, "static build drops the polling timer")
-        check("id=\"grid\"" in static_html and "detailHtml" in static_html,
+        _was = _os.environ.get("MT5_AGENT_URL")
+        _os.environ["MT5_AGENT_URL"] = "https://agent.example.test/"
+        try:
+            static_html = render()
+        finally:
+            if _was is None:
+                _os.environ.pop("MT5_AGENT_URL", None)
+            else:
+                _os.environ["MT5_AGENT_URL"] = _was
+        check("window.__FXEA__" not in static_html and "realFetch" not in static_html,
+              "static build bakes in no catalog payload and stubs no fetch")
+        check("window.__MT5_URL__ = 'https://agent.example.test';" in static_html,
+              "static build bakes in the agent hostname, trailing slash trimmed")
+        check('id="view-mt5"' in static_html and "renderMt5" in static_html,
               "static build reuses the real UI (no second dashboard to maintain)")
+
+        # the scheduled Telegram sync and Market crawl are off; the publish is not
+        wf = (ROOT / ".github" / "workflows" / "sync.yml").read_text(encoding="utf-8")
+        check("schedule:" not in wf and "cron:" not in wf, "the workflow runs on no schedule")
+        check("app.sync" not in wf and "app.mql5_market" not in wf,
+              "the workflow neither syncs Telegram nor crawls the Market")
+        check("push:" in wf and "workflow_dispatch:" in wf and "python -m app.export_static" in wf
+              and "pages deploy site" in wf,
+              "a push to main still builds and publishes the site")
 
         # the verdict index must be on the auto-sync cycle, not manual-only
         from app import config as cfg
@@ -360,9 +373,8 @@ def run_once(run_no: int, port: int) -> None:
         check(callable(run_shots) and callable(do_shots_blocking), "verdict refresh is callable in-process")
         check("_refresh_shots" in loop_src, "auto-sync cycle refreshes verdicts")
         check(cfg.SHOTS_EVERY_N_SYNCS >= 1, f"verdict refresh cadence set (every {cfg.SHOTS_EVERY_N_SYNCS} cycles)")
-        check('id="detail"' in html and "detailHtml" in html, "dashboard has the detail sheet")
         check("dialog.sheet[open]" in html,
-              "detail sheet only displays when open (a bare display:flex leaves it stuck open)")
+              "a sheet only displays when open (a bare display:flex leaves it stuck open)")
         check("body.modal-open" in html and "classList.add('modal-open')" in html,
               "opening the sheet locks page scroll")
         check("addEventListener('close'" in html and "remove('modal-open')" in html,

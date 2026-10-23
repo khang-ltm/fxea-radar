@@ -1,9 +1,10 @@
-﻿name: sync and publish
+﻿name: build and publish
 
-# Runs on GitHub's machines, so the site stays current while your PC is off.
+# Builds the MT5 control panel and publishes it. The EA catalog and MQL5 Market
+# tabs were shut down on 2026-10-23, and with them the twice-daily schedule that
+# only existed to sync the Telegram catalog and crawl the Market. The code for
+# both (app/sync.py, app/sync_shots.py, app/mql5_market.py) is kept, dormant.
 on:
-  schedule:
-    - cron: "0 1,13 * * *"     # 08:00 and 20:00 Vietnam time (UTC+7)
   workflow_dispatch:            # manual run button in the Actions tab
   push:                         # code change -> rebuild and republish right away
     branches: [main]
@@ -12,31 +13,20 @@ on:
       - "public/**"
       - "requirements.txt"
       - ".github/workflows/sync.yml"
-      # not last-sync.txt: the heartbeat commit must not trigger another run
 
 permissions:
-  contents: write               # commit the refreshed store back
+  contents: read
   pages: write
   id-token: write
 
 concurrency:
   group: fxea-sync
-  cancel-in-progress: false     # never let two syncs write the store at once
+  cancel-in-progress: false     # let a publish finish before the next one starts
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     env:
-      TG_API_ID: ${{ secrets.TG_API_ID }}
-      TG_API_HASH: ${{ secrets.TG_API_HASH }}
-      TG_SESSION: ${{ secrets.TG_SESSION }}
-      TG_CHANNELS: free_fx_pro_chat
-      TG_IMAGE_CHANNELS: free_fx_pro_robotest
-      SINCE_DATE: "2026-07-01"
-      EXCLUDE_KEYWORDS: "money box"
-      DOWNLOAD_FILES: "false"   # a static site cannot serve binaries anyway
-      DOWNLOAD_PHOTOS: "false"
-      FIRST_SYNC_LIMIT: "0"
       # `secrets` cannot be read inside an `if:`, so mirror them into env here
       CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -44,45 +34,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # The store lives in the Actions cache, not in git: the repo is public and
-      # posts.json holds thousands of raw group messages from other people.
-      # Cache miss just means one slower sync back to SINCE_DATE.
-      - name: Restore store
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            data/posts.json.gz
-            data/shots.json.gz
-            data/state.json.gz
-            data/market.json.gz
-          key: fxea-store-${{ github.run_id }}
-          restore-keys: |
-            fxea-store-
-
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
-
-      - name: Sync messages
-        run: python -m app.sync
-
-      # --since all on purpose: a test is usually posted BEFORE the EA is dropped,
-      # so limiting this to SINCE_DATE finds only ~14 tests instead of ~231.
-      - name: Refresh test verdicts
-        run: python -m app.sync_shots --since all
-        continue-on-error: true   # a verdict hiccup must not block publishing
-
-      # mql5.com answers 403 to a runner, so this goes through r.jina.ai, which
-      # is free and rate-limited. The budget caps a run at ~90 requests and
-      # anything checked in the last 3 days is reused, so a twice-daily schedule
-      # re-reads each EA about every third run instead of every time.
-      - name: Crawl the MQL5 Market
-        run: python -m app.mql5_market --limit 60 --budget 90 --delay 2 --max-age 72 --deadline 240
-        timeout-minutes: 6        # the deadline should stop it first; this is the backstop
-        continue-on-error: true   # the reader rate-limits; a miss keeps yesterday's
 
       - name: Build static site
         env:
@@ -92,32 +49,6 @@ jobs:
           # agent hostname baked into the page so only the token is ever asked for
           MT5_AGENT_URL: ${{ vars.MT5_AGENT_URL }}
         run: python -m app.export_static
-
-      - name: Save store
-        uses: actions/cache/save@v6
-        with:
-          path: |
-            data/posts.json.gz
-            data/shots.json.gz
-            data/state.json.gz
-            data/market.json.gz
-          key: fxea-store-${{ github.run_id }}
-
-      # GitHub disables scheduled workflows after 60 days of repository inactivity.
-      # The store lives in the cache now, so runs commit nothing on their own -
-      # this pushes a dated marker only when the last commit is over 25 days old.
-      - name: Keep the schedule alive
-        run: |
-          age_days=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
-          echo "last commit ${age_days}d ago"
-          if [ "$age_days" -ge 25 ]; then
-            date -u +%Y-%m-%dT%H:%MZ > .github/last-sync.txt
-            git config user.name  "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .github/last-sync.txt
-            git commit -m "chore: heartbeat so the cron stays enabled"
-            git push
-          fi
 
       # Always downloadable from the run page, whatever hosting is set up.
       - name: Upload site artifact
@@ -161,4 +92,3 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v5
-
