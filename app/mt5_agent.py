@@ -802,6 +802,102 @@ def floating_drawdowns(hours: int = DD_WINDOW_HOURS) -> dict:
     return out
 
 
+BARS_TFS = ("M1", "M5", "M15", "M30", "H1", "H4", "D1")
+BARS_DEFAULT, BARS_MAX = 500, 5000
+
+
+def _bars_time(raw: str):
+    """Epoch seconds or ISO-8601 to a UTC datetime; raises ValueError on anything else."""
+    raw = raw.strip()
+    try:
+        return datetime.fromtimestamp(float(raw), timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        pass
+    dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def read_bars(qs: dict) -> tuple[dict, int]:
+    """Market OHLC bars for one symbol and timeframe. Read only: copy_rates_*
+    returns what the terminal already holds, nothing here can send a request.
+
+    Times are the broker's server time as MT5 reports them, shown as UTC-looking
+    epochs. Asked three ways like basket_dd._rate_span, because copy_rates_range
+    answers nothing for an unselected symbol. Returns (payload, http status)."""
+    def arg(name):
+        return (qs.get(name) or [""])[0].strip()
+
+    symbol, tf_name = arg("symbol"), (arg("tf") or "M15").upper()
+    if not symbol:
+        return {"ok": False, "error": "symbol is required"}, 400
+    if tf_name not in BARS_TFS:
+        return {"ok": False, "error": f"tf must be one of {', '.join(BARS_TFS)}"}, 400
+    try:
+        count = int(arg("count") or BARS_DEFAULT)
+    except ValueError:
+        return {"ok": False, "error": "count must be an integer"}, 400
+    if count < 1:
+        return {"ok": False, "error": "count must be at least 1"}, 400
+    count = min(count, BARS_MAX)
+    try:
+        t_from = _bars_time(arg("from")) if arg("from") else None
+        t_to = _bars_time(arg("to")) if arg("to") else None
+    except ValueError:
+        return {"ok": False, "error": "from/to must be an epoch or an ISO-8601 time"}, 400
+    if t_from and t_to and t_from > t_to:
+        return {"ok": False, "error": "from is after to"}, 400
+
+    with _ipc_lock:
+        mt5 = _connect()
+        if mt5 is None:
+            return {"ok": False, "error": _init_error}, 503
+        try:
+            if mt5.symbol_info(symbol) is None:
+                return {"ok": False, "error": f"unknown symbol {symbol}"}, 400
+            try:
+                mt5.symbol_select(symbol, True)
+            except Exception:                              # noqa: BLE001
+                pass
+            tf = getattr(mt5, "TIMEFRAME_" + tf_name)
+            end = t_to or datetime.now(timezone.utc)
+            rows = None
+            steps = (["range"] if t_from else []) + ["from"] + ([] if t_to else ["pos"])
+            for step in steps:
+                try:
+                    if step == "range":
+                        rows = mt5.copy_rates_range(symbol, tf, t_from, end)
+                    elif step == "from":
+                        rows = mt5.copy_rates_from(symbol, tf, end, count)
+                    else:
+                        rows = mt5.copy_rates_from_pos(symbol, tf, 0, count)
+                except Exception:                          # noqa: BLE001
+                    rows = None
+                if rows is not None and len(rows) > 0:
+                    break
+            digits = _digits(mt5, symbol)
+        except Exception as exc:                           # noqa: BLE001 - never kill the agent
+            return {"ok": False, "error": f"bars read failed: {exc}"}, 502
+
+    rows = list(rows) if rows is not None else []
+    if t_from:
+        lo = t_from.timestamp()
+        rows = [r for r in rows if int(r["time"]) >= lo]
+    if t_to:
+        hi = t_to.timestamp()
+        rows = [r for r in rows if int(r["time"]) <= hi]
+    rows = rows[-count:] if not t_from else rows[:count]
+    bars = [{"t": int(r["time"]),
+             "iso": datetime.fromtimestamp(int(r["time"]), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": _px(r["open"], digits), "h": _px(r["high"], digits),
+             "l": _px(r["low"], digits), "c": _px(r["close"], digits),
+             "v": int(r["tick_volume"])} for r in rows]
+    out = {"ok": True, "symbol": symbol, "tf": tf_name, "digits": digits,
+           "source": "MT5 copy_rates, broker server time", "bars": bars, "count": len(bars)}
+    if not bars:
+        out["note"] = "MT5 returned no bars for this symbol, timeframe and span"
+    return out, 200
+
+
 def read_history(days: int = 30, tz_minutes: int = 0, with_dd: bool = False) -> dict:
     """Realised results from closed deals, grouped per EA.
 
@@ -3651,6 +3747,13 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
                 self._json(read_symbols(q))
+            return
+        if path == "/api/bars":
+            if not self._authorized():
+                self._json({"ok": False, "error": "unauthorized"}, 401)
+                return
+            body, status = read_bars(parse_qs(urlparse(self.path).query))
+            self._json(body, status)
             return
         if path == "/api/history":
             # this one does real work on every call, so its failures are the
