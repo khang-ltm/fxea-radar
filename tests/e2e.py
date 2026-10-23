@@ -379,6 +379,7 @@ def run_once(run_no: int, port: int) -> None:
         check_setsltp()
         check_close_cancel_tickets()
         check_contract_size()
+        check_bars()
         check_no_control_chars()
 
         status, tagged = http_json(f"http://127.0.0.1:{port}/api/posts?ea=0&group=0&kind=all&tag=has-ea-file")
@@ -857,6 +858,30 @@ class _FakeMT5:
         self.sent.append(dict(req))
         return self.NS(retcode=self.code, comment="done" if self.code == 10009 else "Invalid stops")
 
+    # made-up OHLC bars for the /api/bars checks; copy_rates_range answers
+    # nothing, like a terminal that has not selected the symbol
+    TIMEFRAME_M1, TIMEFRAME_M5, TIMEFRAME_M15, TIMEFRAME_M30 = 1, 5, 15, 30
+    TIMEFRAME_H1, TIMEFRAME_H4, TIMEFRAME_D1 = 16385, 16388, 16408
+
+    def symbol_select(self, symbol, enable):
+        self.selected = getattr(self, "selected", []) + [symbol]
+        return True
+
+    def _bars(self, n):
+        return [{"time": 1700000000 + 900 * i, "open": 2000.0 + 1.5 * i, "high": 2001.5 + 1.5 * i,
+                 "low": 1999.0 + 1.5 * i, "close": 2000.5 + 1.5 * i, "tick_volume": 10 + i}
+                for i in range(n)]
+
+    def copy_rates_range(self, symbol, tf, start, end):
+        return ()
+
+    def copy_rates_from(self, symbol, tf, end, count):
+        self.asked = count
+        return self._bars(min(count, 6))
+
+    def copy_rates_from_pos(self, symbol, tf, pos, count):
+        return self._bars(min(count, 6))
+
 
 def check_setsltp() -> None:
     """setsltp against a fake terminal: what it sends, and what it refuses to."""
@@ -1143,6 +1168,75 @@ def check_contract_size() -> None:
     finally:
         ag._connect = old
         ag._cache.update(at=0.0, data=None)
+        for sym in fake.symbols:
+            ag._digits_cache.pop(sym, None)
+
+
+def check_bars() -> None:
+    """GET /api/bars through the real handler, against a fake terminal with made-up bars."""
+    import http.client
+    from http.server import ThreadingHTTPServer
+    from app import mt5_agent as ag
+
+    fake = _FakeMT5()
+    old_conn, old_token = ag._connect, ag.Handler.token
+    ag._connect = lambda: fake
+    ag.Handler.token = "bars-test-token"
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), ag.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    def get(query, auth=True):
+        c = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=10)
+        c.request("GET", "/api/bars?" + query,
+                  headers={"Authorization": "Bearer bars-test-token"} if auth else {})
+        r = c.getresponse()
+        return r.status, json.loads(r.read() or b"{}")
+
+    try:
+        st, body = get("symbol=XAUUSD&tf=M15&count=4")
+        bars = body.get("bars") or [{}]
+        check(st == 200 and body.get("symbol") == "XAUUSD" and body.get("tf") == "M15"
+              and body.get("digits") == 2 and body.get("count") == 4 == len(body.get("bars", []))
+              and body.get("source") == "MT5 copy_rates, broker server time"
+              and set(bars[0]) == {"t", "iso", "o", "h", "l", "c", "v"},
+              f"/api/bars returns the documented shape ({st})")
+        check(bars[0] == {"t": 1700000000, "iso": "2023-11-14T22:13:20Z", "o": 2000.0, "h": 2001.5,
+                          "l": 1999.0, "c": 2000.5, "v": 10}
+              and bars[1]["o"] == 2001.5 and bars[1]["v"] == 11,
+              "/api/bars carries the terminal's own values, rounded to digits")
+        check("XAUUSD" in getattr(fake, "selected", []), "/api/bars selects the symbol first")
+
+        st, body = get("symbol=XAUUSD&tf=M2")
+        check(st == 400 and body.get("ok") is False, f"/api/bars rejects an unknown timeframe ({st})")
+        st, _ = get("tf=M15")
+        check(st == 400, f"/api/bars requires a symbol ({st})")
+        st, _ = get("symbol=NOSUCH&tf=M15")
+        check(st == 400, f"/api/bars rejects an unknown symbol ({st})")
+        st, _ = get("symbol=XAUUSD&count=abc")
+        check(st == 400, f"/api/bars rejects a non-numeric count ({st})")
+        st, _ = get("symbol=XAUUSD&from=yesterday")
+        check(st == 400, f"/api/bars rejects an unreadable from ({st})")
+
+        get("symbol=XAUUSD&tf=H1&count=999999")
+        check(fake.asked == 5000, f"/api/bars caps count at 5000 (asked MT5 for {fake.asked})")
+
+        st, body = get("symbol=XAUUSD&tf=M15&from=1700000900&to=2023-11-14T22:30:00Z")
+        check(st == 200 and body["bars"]
+              and all(1700000900 <= b["t"] <= 1700001800 for b in body["bars"]),
+              "/api/bars honours from/to given as epoch or ISO, after range returned nothing")
+
+        fake.copy_rates_from = lambda *a: ()
+        fake.copy_rates_from_pos = lambda *a: None
+        st, body = get("symbol=XAUUSD&tf=M15")
+        check(st == 200 and body.get("bars") == [] and body.get("count") == 0 and body.get("note"),
+              "/api/bars with no data returns an empty list and a note, not zeros")
+
+        st, _ = get("symbol=XAUUSD&tf=M15", auth=False)
+        check(st == 401, f"/api/bars needs the Bearer token ({st})")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        ag._connect, ag.Handler.token = old_conn, old_token
         for sym in fake.symbols:
             ag._digits_cache.pop(sym, None)
 
