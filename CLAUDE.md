@@ -73,7 +73,7 @@ was looking for.
 
 ## Things that will waste your time
 
-- `public/index.html` is 4,000 lines and has no build step. Patch it with a
+- `public/index.html` is 4,300 lines and has no build step. Patch it with a
   script, not by hand. Heredocs mangle backslashes: write patch scripts with the
   Write tool, and build regex escapes with `chr(92)`.
 - The agent's self-restart does not reliably work on that VPS. After deploying,
