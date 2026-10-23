@@ -1,16 +1,16 @@
-"""Build a static, serverless copy of the dashboard into site/.
+"""Build the static site into site/: the MT5 control panel.
 
     python -m app.export_static
 
-The page is the SAME public/index.html - no second UI to maintain. The generator
-injects the API payload as a constant and stubs window.fetch so the existing
-load() call resolves against it. Attachments are not hosted (a static host has no
-/files route), so each file links to its Telegram post instead.
+The page is the SAME public/index.html - no second UI to maintain. The only
+thing baked in is the agent's hostname, so a new device asks for the token alone.
+
+The EA catalog and MQL5 Market tabs were shut down on 2026-10-23, so their data
+is no longer baked into the page. build_payload() is kept, unused, so they can
+be revived: it is what used to be inlined as window.__FXEA__.
 """
 from __future__ import annotations
 
-import json
-import re
 from datetime import datetime, timezone
 
 from . import config
@@ -25,6 +25,7 @@ SITE_DIR = config.ROOT / "site"
 
 
 def build_payload(limit: int = 3000) -> dict:
+    """Dormant since 2026-10-23: the catalog + Market payload the page used to carry."""
     posts = [p for p in load_posts() if not p.get("excluded")]
     summary = summarize(posts)
 
@@ -71,50 +72,29 @@ def build_payload(limit: int = 3000) -> dict:
     }
 
 
-def render(payload: dict) -> str:
+def render() -> str:
     import os
 
     agent_url = (os.environ.get("MT5_AGENT_URL") or "").strip().rstrip("/")
     html = (config.PUBLIC_DIR / "index.html").read_text(encoding="utf-8")
-    data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
 
     shim = f"""<script>
-/* Static build: the catalog request is answered from this constant, but every
-   OTHER fetch must reach the network - the MT5 panel talks to your own agent.
-   Swallowing those broke it with "Cannot read properties of undefined (reading
-   'get')", because this stub has no headers. */
-window.__FXEA__ = {data};
 // agent hostname baked in at build time so only the token is ever asked for;
 // the token is NEVER built in - this file is public
 window.__MT5_URL__ = {agent_url!r};
-(() => {{
-  const realFetch = window.fetch.bind(window);
-  window.fetch = (input, init) => {{
-    const url = typeof input === 'string' ? input : (input && input.url) || '';
-    if (!url.includes('/api/posts')) return realFetch(input, init);
-    return Promise.resolve(new Response(JSON.stringify(window.__FXEA__), {{
-      status: 200,
-      headers: {{ 'Content-Type': 'application/json' }},
-    }}));
-  }};
-}})();
 </script>
 """
     if "</head>" not in html:
-        raise SystemExit("public/index.html has no </head> - cannot inject the static payload")
-    html = html.replace("</head>", shim + "</head>", 1)
-    # the auto-refresh timer is pointless without a server
-    html = re.sub(r"setInterval\(load, \d+\);", "/* static: no polling */", html)
-    return html
+        raise SystemExit("public/index.html has no </head> - cannot inject the agent URL")
+    return html.replace("</head>", shim + "</head>", 1)
 
 
 def main() -> None:
     import os
 
-    payload = build_payload()
     SITE_DIR.mkdir(parents=True, exist_ok=True)
     out = SITE_DIR / "index.html"
-    out.write_text(render(payload), encoding="utf-8")
+    out.write_text(render(), encoding="utf-8")
     (SITE_DIR / ".nojekyll").write_text("", encoding="utf-8")   # GitHub Pages: serve as-is
 
     # PAGES_DOMAIN -> a CNAME file in the artifact, which is what tells Pages the
@@ -124,11 +104,8 @@ def main() -> None:
         (SITE_DIR / "CNAME").write_text(domain + "\n", encoding="utf-8")
         print(f"  CNAME -> {domain}")
 
-    with_test = sum(1 for p in payload["posts"] if p.get("shot"))
     kb = out.stat().st_size / 1024
-    print(f"site/index.html  {kb:,.0f} KB")
-    print(f"  {payload['matched']} EAs, {payload['collapsed']} versions/reposts grouped, {with_test} with a test verdict")
-    print("  attachments link to Telegram (a static host cannot serve /files)")
+    print(f"site/index.html  {kb:,.0f} KB  (MT5 control panel; no catalog data baked in)")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """Before/after screenshots of one tab, for a pull request description.
 
-    python tools/shoot.py --tab market --base main --out shots/
+    python tools/shoot.py --tab mt5 --base main --out shots/
 
 Builds the static site twice - from the base ref (in a temporary worktree) and
 from the working tree - and screenshots the given tab of each with a headless
@@ -74,7 +74,7 @@ def shoot(html: Path, tab: str, png: Path, width: int, height: int) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--tab", default="market", help="eas, market, mt5 or myea")
+    ap.add_argument("--tab", default="mt5", help="mt5 or myea")
     ap.add_argument("--base", default="main", help="the ref to compare against")
     ap.add_argument("--out", default="shots", help="where before.png and after.png go")
     ap.add_argument("--width", type=int, default=1100)

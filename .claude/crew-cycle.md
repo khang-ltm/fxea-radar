@@ -101,7 +101,7 @@ diff touches `order_send`, `TRADE_ACTION`, `setinputs`, `ChartApplyTemplate`,
 `public/index.html`, render the affected tab before and after:
 
 ```bash
-python tools/shoot.py --tab <eas|market|mt5|myea> --base origin/main --out /tmp/shots
+python tools/shoot.py --tab <mt5|myea> --base origin/main --out /tmp/shots
 ```
 
 Look at both images (Read them). An identical or blank pair means the shot is
@@ -164,7 +164,8 @@ Two public fixtures exist so a cycle has something real to check against:
   wrote. `node tests/pagesmoke.mjs` renders all of them and fails on any that
   still read as a variable name.
 - `tests/fixtures/market_sample.json` - crawled MQL5 Market listings and their
-  sellers' public signals, the same shape the Market tab renders.
+  sellers' public signals. Dormant: the Market tab was shut down on 2026-10-23
+  and no test reads it; kept for a revival.
 
 Never add private data to them: no trade history, balances, lot sizes, magic
 numbers or settings values. The repo is public.
@@ -191,10 +192,9 @@ Small, checkable, not behind a gate. Remove an item when its PR merges.
 - Quantum Bitcoin's drawdown self-check is off by $30.28 (BTCUSD contract size
   is the suspect) - `app/basket_dd.py`.
 - Smart Gold Hunter's drawdown self-check is off by $11.56.
-- The MQL5 Market crawl reaches only the first ~70 listings: later pages
-  lazy-load through XHR.
 - Settings that differ from the author's shipped `.set` are not marked yet.
   Display only - never a reset button. Blocked in the cloud: no `.set` files are tracked.
-- Market cards: check every listing in `tests/fixtures/market_sample.json`
-  renders without a blank or misleading field (a missing number must read as
-  missing, never as 0).
+- The EA catalog and MQL5 Market tabs were shut down on 2026-10-23 (owner
+  decision). `app/sync.py`, `app/sync_shots.py`, `app/mql5_market.py` and
+  `app/server.py` are dormant: nothing schedules or shows them. Not a gap to
+  work on - do not revive them without an owner-asked task.
