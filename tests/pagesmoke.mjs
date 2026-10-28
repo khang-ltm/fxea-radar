@@ -27,6 +27,8 @@ const PROBE = `
   setPositions(p) { MT5_POSITIONS = p; },
   setSltp,
   stubDialog(post, askFn) { managerPost = post; ask = askFn; },
+  reportStats, renderReport, rptFillPicker,
+  setReport(hist, acct, dd) { RPT_HIST = hist; RPT_ACCT = acct; RPT_DD = dd; RPT_DD_BUSY = false; RPT_ERR = ''; },
 };`;
 
 const node = (id = '') => {
@@ -436,6 +438,142 @@ if (probe) {
   }
 }
 
+// -- Report tab: one EA since a start day -----------------------------------
+// Every number here is made up. Position 9501 closes in two parts (it must
+// count once), 9504 closes five minutes after server midnight (next day), 9500
+// is before the start, 9505 belongs to another EA on the same symbol.
+if (probe) {
+  const close = (ticket, magic, comment, at, profit) => ({
+    ticket, symbol: 'XAUUSD', type: 'buy', volume: 0.01, price_open: 2000, price_close: 2001,
+    magic, comment, closed_at: at + ':00+00:00', profit });
+  const hist = {
+    ok: true, days: 30,
+    by_ea: [{ magic: 11111, ea: 'Test EA Alpha', trades: 3 }, { magic: 11112, ea: 'Test EA Alpha', trades: 1 },
+            { magic: 22222, ea: 'Test EA Beta', trades: 1 }],
+    closed: [
+      close(9504, 11112, 'TA S2 swing', '2026-10-03T00:05', -4),
+      close(9503, 11111, 'TA S1 quick', '2026-10-02T23:59', 20),
+      close(9505, 22222, 'TB', '2026-10-02T13:00', 100),
+      close(9502, 11112, 'TA S2 swing', '2026-10-02T12:00', -8),
+      close(9501, 11111, 'TA S1 quick', '2026-10-02T11:00', 5),
+      close(9501, 11111, 'TA S1 quick', '2026-10-02T10:00', 10),
+      close(9500, 11111, 'TA S1 quick', '2026-09-30T09:00', -50),
+    ],
+  };
+  const acct = { balance: 1000, currency: 'USD' };
+  const el = id => document.getElementById(id);
+  const show = (ea, from, dd = null, h = hist) => {
+    probe.setReport(h, acct, dd);
+    el('rpt-ea').value = ea;
+    probe.rptFillPicker();
+    el('rpt-ea').value = ea;
+    el('rpt-from').value = from;
+    probe.renderReport();
+    return { tiles: el('rpttiles').innerHTML, tilesHidden: el('rpttiles').hidden, note: el('rptnote').innerHTML,
+             empty: el('rptempty').innerHTML, emptyHidden: el('rptempty').hidden,
+             comments: el('rptcomments').innerHTML, bt: el('rptbt').innerHTML, chart: el('rptchart').innerHTML,
+             legend: el('rptlegend').innerHTML };
+  };
+  const tile = (html, k, v) => html.includes(`<dt>${k}</dt><dd class="${v[0]}">${v[1]}</dd>`);
+  try {
+    localStorage.removeItem('radar.report.start.Test EA Alpha');
+    localStorage.setItem('radar.report.bt.Test EA Alpha', JSON.stringify({ pf: 3.5 }));
+    localStorage.setItem('radar.report.mode', JSON.stringify('demo'));
+    const a = show('Test EA Alpha', '2026-10-01');
+    localStorage.setItem('radar.report.mode', JSON.stringify('challenge'));
+    const chNone = show('Test EA Alpha', '2026-10-01');
+    localStorage.setItem('radar.report.lim.day.Test EA Alpha', JSON.stringify(5));
+    localStorage.setItem('radar.report.lim.max.Test EA Alpha', JSON.stringify(10));
+    const ch = show('Test EA Alpha', '2026-10-01');
+    localStorage.setItem('radar.report.lim.day.Test EA Alpha', JSON.stringify(0.3));
+    const chTight = show('Test EA Alpha', '2026-10-01');
+    localStorage.removeItem('radar.report.lim.day.Test EA Alpha');
+    localStorage.removeItem('radar.report.lim.max.Test EA Alpha');
+    localStorage.setItem('radar.report.mode', JSON.stringify('demo'));
+    localStorage.setItem('radar.report.start.Test EA Alpha', JSON.stringify(1015));
+    const typed = show('Test EA Alpha', '2026-10-01');
+    localStorage.removeItem('radar.report.start.Test EA Alpha');
+    const b = show('Test EA Beta', '2026-10-01');
+    const none = show('Test EA Alpha', '2026-10-20');
+    const ddOf = o => ({ ea: 'Test EA Alpha', from: '2026-10-01', hours: 720, by: { 'Test EA Alpha': o } });
+    const dRebuilt = show('Test EA Alpha', '2026-10-01',
+      ddOf({ dd: 12.5, dd_method: 'rebuilt', dd_trusted: true, dd_partial: false, dd_from: '2026-10-01T00:00' }));
+    const dPartial = show('Test EA Alpha', '2026-10-01', ddOf({ dd: 12.5, dd_method: 'rebuilt', dd_trusted: true, dd_partial: true }));
+    const dClosed = show('Test EA Alpha', '2026-10-01', ddOf({ dd: 9, dd_method: 'closed trades only', dd_trusted: true }));
+    const dUntrusted = show('Test EA Alpha', '2026-10-01', ddOf({ dd: 12.5, dd_method: 'rebuilt', dd_trusted: false }));
+    const dNoHours = show('Test EA Alpha', '2026-10-01', { ea: 'Test EA Alpha', from: '2026-10-01',
+      by: { 'Test EA Alpha': { dd: 12.5, dd_method: 'rebuilt', dd_trusted: true } } });
+    const bigHist = { ...hist, closed: Array.from({ length: 2000 }, (_, i) => close(100000 + i, 11111, 'TA S1 quick', '2026-10-02T11:00', 1)) };
+    const cap = show('Test EA Alpha', '2026-10-01', null, bigHist);
+    localStorage.setItem('radar.report.bt.Test EA Alpha', JSON.stringify({ pf: 2.9, win: 50.5, ddPct: 0.9 }));
+    const dir = show('Test EA Alpha', '2026-10-01');
+    localStorage.setItem('radar.report.bt.Test EA Alpha', JSON.stringify({ pf: 3.5 }));
+    const prompt = show('Test EA Alpha', '');
+    const st = probe.reportStats(hist.closed, ['11111', '11112'], '2026-10-01', 877);
+    const pcSum = st.perComment.reduce((s, r) => s + r.net, 0);
+    const all = [a, ch, chNone, chTight, typed, b, none, prompt, dRebuilt, dPartial, dClosed, dUntrusted, dNoHours, cap, dir].map(r => Object.values(r).join(' ')).join(' ');
+    const checks = [
+      [tile(a.tiles, 'Trades', ['', '4']), 'a position closed in two parts counts as one trade (4 trades)'],
+      [tile(a.tiles, 'Profit factor', ['', '2.92']), 'profit factor is gross profit / gross loss per position (2.92)'],
+      [tile(a.tiles, 'Net profit', ['pos', '+$23.00']), 'net sums only this EA, only since the start (+$23.00)'],
+      [tile(a.tiles, 'Win %', ['', '50.0%']), 'win % is winning positions / positions (50.0%)'],
+      [tile(a.tiles, 'Worst day 3 Oct', ['neg', '-$4.00']),
+       'a close five minutes after server midnight lands on the next server day'],
+      [tile(a.tiles, 'Max DD $', ['', '$8.00']) && tile(a.tiles, 'Max DD %', ['', '0.9%']),
+       'closed drawdown is peak-to-trough on the closes, % of the peak over the derived start'],
+      [a.note.includes('Start $877.00 derived'), 'the start balance is derived (balance now minus all closes since) and says so'],
+      [typed.note.includes('Start $1,015.00 yours') && tile(typed.tiles, 'Max DD %', ['', '0.8%']),
+       'a typed start balance replaces the derived one, says "typed" and moves DD %'],
+      [tile(a.tiles, 'DD incl. open', ['', '<span class="rpt__na">n/a</span>']),
+       'the open-trade drawdown reads n/a when the agent has not reported it'],
+      [tile(b.tiles, 'Trades', ['', '1']) && tile(b.tiles, 'Profit factor', ['', '<span class="rpt__na">n/a</span>'])
+        && tile(b.tiles, 'Avg loss', ['', '<span class="rpt__na">n/a</span>']),
+       'another EA on the same symbol is kept apart; no losing trade gives PF and avg loss n/a, not 0'],
+      [!a.comments.includes('>TB<') && a.comments.includes('TA S1 quick') && a.comments.includes('+$35.00')
+        && a.comments.includes('-$12.00') && Math.abs(pcSum - st.net) < 0.005,
+       'per-comment rows use the raw comment and sum back to the EA total'],
+      [a.bt.includes('value="3.5"') && a.bt.includes('-0.58') && (a.bt.match(/placeholder="not entered" value=""/g) || []).length === 5,
+       'the typed backtest PF sits beside the live one with its difference; empty fields read "not entered"'],
+      [!a.tiles.includes('Daily loss used') && tile(ch.tiles, 'Daily loss used', ['', '0.5% of 5%'])
+        && tile(ch.tiles, 'Max loss used', ['', '0.0% of 10%']) && ch.chart.includes('rpt__limit')
+        && ch.chart.includes('>-10%</span>'),
+       'Challenge with the owner\'s limits adds the daily / max loss tiles and the limit line; Demo does not'],
+      [!chNone.tiles.includes('loss used') && !chNone.chart.includes('rpt__limit') && !chNone.legend.includes('max loss'),
+       'Challenge with no limit typed shows no used tile, no limit line and no legend entry'],
+      [tile(chTight.tiles, 'Daily loss used', ['neg', '0.5% of 0.3%']) && !tile(ch.tiles, 'Daily loss used', ['neg', '0.5% of 5%']),
+       'a used tile is red only when used reaches the owner\'s limit'],
+      [a.chart.includes('<path d="M0 ') && a.chart.includes('rpt__ddmark'), 'the balance curve and its DD marker are drawn'],
+      [!a.tilesHidden && a.emptyHidden, 'with trades the tiles show and the empty card hides'],
+      [none.tilesHidden && none.empty.includes('No trades yet') && none.empty.includes('since 20 Oct 2026'),
+       'a start date with no trades says so, with no tiles'],
+      [prompt.tilesHidden && prompt.empty.includes('Pick an EA and a start date'), 'no start date asks for one'],
+      [dRebuilt.tiles.includes('$12.50<span class="rpt__sub">rebuilt</span>') && dRebuilt.tiles.includes('built as rebuilt')
+        && dClosed.tiles.includes('$9.00<span class="rpt__sub">closed only</span>'),
+       'DD incl. open names its method in the tile itself (rebuilt, closed only)'],
+      [dPartial.tiles.includes('<span class="rpt__sub">rebuilt · partial</span>') && !dRebuilt.tiles.includes('partial'),
+       'a partial rebuild says partial in the tile'],
+      [tile(dUntrusted.tiles, 'DD incl. open', ['', '<span class="rpt__na">n/a</span>']),
+       'an untrusted DD incl. open reads n/a'],
+      [dRebuilt.tiles.includes('window last 30 days') && dNoHours.tiles.includes('window n/a') && !dNoHours.tiles.includes('last 0'),
+       'a missing dd_hours reads window n/a, never last 0 days'],
+      [cap.note.includes('may be cut') && !a.note.includes('may be cut'),
+       'the 2000-row cap warns that older closes are missing; a normal list does not'],
+      [/data-diff="win"><span class="rpt__tone--warn">-0\.50 pts/.test(dir.bt) && /data-diff="pf"><span class="rpt__tone--good">\+0\.02/.test(dir.bt)
+        && /data-diff="ddPct"><span class="rpt__tone--(good|warn)">/.test(dir.bt),
+       'the backtest diff is the plain difference coloured by direction alone, with no threshold'],
+      [/pace \(\d+ d\)/.test(a.bt), 'the live monthly pace says how many days it is based on'],
+      [!/NaN|undefined|Infinity/.test(all), 'no NaN, undefined or Infinity anywhere in the report'],
+    ];
+    for (const [ok, what] of checks) {
+      if (ok) console.log(`  PASS  ${what}`);
+      else { failed = true; console.log(`  FAIL  ${what}`); }
+    }
+  } catch (err) {
+    failed = true;
+    console.log(`  FAIL  the Report tab threw while rendering: ${err.stack || err.message}`);
+  }
+}
+
 // -- only the MT5 control panel is left ------------------------------------
 // The EA catalog and MQL5 Market tabs were shut down on 2026-10-23. An old link
 // (?tab=market, ?tab=eas) or a tab remembered from before must land on the
@@ -451,21 +589,25 @@ if (probe) {
     try {
       runPage();
     } catch (err) {
-      return { tab: `threw: ${err.message}`, mt5: false, myea: false };
+      return { tab: `threw: ${err.message}`, mt5: false, myea: false, report: false };
     }
-    return { tab: globalThis.__probe.tab(),
-             mt5: !nodes.get('view-mt5').hidden, myea: !nodes.get('view-myea').hidden };
+    return { tab: globalThis.__probe.tab(), mt5: !nodes.get('view-mt5').hidden,
+             myea: !nodes.get('view-myea').hidden, report: !nodes.get('view-report').hidden };
   };
   const fresh = landOn('', null);
   const market = landOn('?tab=market', 'myea');
   const eas = landOn('?tab=eas', 'myea');
   const remembered = landOn('', 'market');
   const myea = landOn('?tab=myea', null);
-  const shown = r => `${r.tab}, mt5 ${r.mt5 ? 'shown' : 'hidden'}, myea ${r.myea ? 'shown' : 'hidden'}`;
-  const onMt5 = r => r.tab === 'mt5' && r.mt5 && !r.myea;
+  const report = landOn('?tab=report', null);
+  const reportKept = landOn('', 'report');
+  const shown = r => `${r.tab}, mt5 ${r.mt5 ? 'shown' : 'hidden'}, myea ${r.myea ? 'shown' : 'hidden'}`
+    + `, report ${r.report ? 'shown' : 'hidden'}`;
+  const onMt5 = r => r.tab === 'mt5' && r.mt5 && !r.myea && !r.report;
+  const onReport = r => r.tab === 'report' && r.report && !r.mt5 && !r.myea;
   const checks = [
-    [JSON.stringify(tabIds) === JSON.stringify(['tab-mt5', 'tab-myea']),
-     `the only tabs are My MT5 and My EA (got ${tabIds.join(', ')})`],
+    [JSON.stringify(tabIds) === JSON.stringify(['tab-mt5', 'tab-myea', 'tab-report']),
+     `the only tabs are My MT5, My EA and Report (got ${tabIds.join(', ')})`],
     [!ids.has('view-eas') && !ids.has('view-market'), 'the catalog and Market views are gone'],
     [!/Nothing crawled yet|>EA catalog<|>MQL5 Market</.test(html),
      'no catalog or Market tab text is left in the page'],
@@ -473,7 +615,9 @@ if (probe) {
     [onMt5(market), `?tab=market lands on My MT5, not the remembered tab (${shown(market)})`],
     [onMt5(eas), `?tab=eas lands on My MT5 (${shown(eas)})`],
     [onMt5(remembered), `a remembered Market tab lands on My MT5 (${shown(remembered)})`],
-    [myea.tab === 'myea' && myea.myea && !myea.mt5, `?tab=myea still opens My EA (${shown(myea)})`],
+    [myea.tab === 'myea' && myea.myea && !myea.mt5 && !myea.report, `?tab=myea still opens My EA (${shown(myea)})`],
+    [onReport(report), `?tab=report opens the Report tab (${shown(report)})`],
+    [onReport(reportKept), `a remembered Report tab opens again (${shown(reportKept)})`],
   ];
   for (const [ok, what] of checks) {
     if (ok) console.log(`  PASS  ${what}`);

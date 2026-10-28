@@ -322,8 +322,13 @@ def run_once(run_no: int, port: int) -> None:
         check('id="tab-eas"' not in html and 'id="view-eas"' not in html
               and 'id="tab-market"' not in html and 'id="view-market"' not in html,
               "the catalog and Market tabs are gone")
-        check("const TABS = ['mt5', 'myea'];" in html,
-              "My MT5 and My EA are the only tabs")
+        check("const TABS = ['mt5', 'myea', 'report'];" in html,
+              "My MT5, My EA and Report are the only tabs")
+        # the Report tab reads; it must have no way to send anything
+        rpt = html.rsplit("/* ── Report tab", 1)[-1].split("/* ── tabs ──", 1)[0]   # the script, not the CSS
+        check(len(rpt) < len(html) and "loadReport" in rpt
+              and not any(w in rpt for w in ("POST", "method:", "managerPost", "managerAction", "/api/manager")),
+              "the Report tab only GETs (no POST, no manager call)")
         check('id="sync"' not in html and "'/api/sync'" not in html,
               "no manual catalog sync control")
         check("prefers-reduced-motion" in html, "dashboard respects reduced motion")
