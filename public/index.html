@@ -597,6 +597,10 @@ footer { max-width: 1600px; margin: 0 auto; padding: 0 var(--space-4) var(--spac
 .rpt__note { margin: var(--space-3) 0 0; }
 #rpttiles .mt5cell { margin: 0; }
 .rpt__na { color: var(--color-muted-fg); }
+.rpt__lims[hidden] { display: none; }
+.rpt__lims:not([hidden]) { display: inline-flex; gap: var(--space-3); flex-wrap: wrap; }
+.rpt__lim { width: 64px; }
+.rpt__sub { display: block; font-size: 11px; font-weight: 400; color: var(--color-muted-fg); }
 .rpt__tone--good { color: var(--color-accent); }
 .rpt__tone--warn, .mt5cell dd.rpt__tone--warn { color: var(--color-warn); }
 .rpt__tone--none { color: var(--color-muted-fg); }
@@ -654,7 +658,13 @@ table.mt5 tr.rpt__total td { background: var(--color-muted); font-weight: 600; }
   .rpt__chart { padding-left: 56px; padding-right: var(--space-3); }
   .rpt__field--ea { flex: 1 1 100%; }
   #rpt-ea { flex: 1 1 auto; max-width: none; }
+  table.mt5.rpt__table { min-width: 0; font-size: 12px; }
+  table.mt5.rpt__table th, table.mt5.rpt__table td { padding-inline: 6px; }
+  table.mt5.rpt__table td:first-child, table.mt5.rpt__bttable td { white-space: normal; }
 }
+@media (max-width: 360px) { #rpttiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rpt__bt { width: 64px; }
+  table.mt5.rpt__table { font-size: 10px; } table.mt5.rpt__table th, table.mt5.rpt__table td { padding-inline: 3px; letter-spacing: 0; }
+  table.mt5.rpt__table th { font-size: 9px; } }
 </style>
 </head>
 <body>
@@ -707,6 +717,14 @@ table.mt5 tr.rpt__total td { background: var(--color-muted); font-weight: 600; }
           <button class="btn" id="rpt-demo" aria-pressed="true">Demo</button>
           <button class="btn" id="rpt-chal" aria-pressed="false">Challenge</button>
         </div>
+        <span class="rpt__lims" id="rpt-lims" hidden>
+          <span class="rpt__field"><label class="rpt__lbl" for="rpt-lim-day">Daily limit %</label>
+            <input id="rpt-lim-day" class="rpt__num rpt__lim" inputmode="decimal" placeholder="not set"
+                   title="Your own daily loss limit, typed by you, kept in this browser"></span>
+          <span class="rpt__field"><label class="rpt__lbl" for="rpt-lim-max">Max limit %</label>
+            <input id="rpt-lim-max" class="rpt__num rpt__lim" inputmode="decimal" placeholder="not set"
+                   title="Your own max loss limit, typed by you, kept in this browser"></span>
+        </span>
         <span class="toolbar__spacer"></span>
         <span class="mt5bar__stats" id="rptstats"></span>
       </div>
@@ -725,7 +743,7 @@ table.mt5 tr.rpt__total td { background: var(--color-muted); font-weight: 600; }
     <section class="mt5sect" id="rptcurvewrap" hidden>
       <div class="rpt__sechead"><h2>Balance</h2><span class="toolbar__spacer"></span><span id="rptlegend"></span></div>
       <div class="rpt__chart" id="rptchart"></div>
-      <p class="hint">Balance after each closed trade of this EA, open losses not included.</p>
+      <p class="hint">Closed trades only</p>
     </section>
 
     <div class="rpt__pair" id="rptpair" hidden>
@@ -737,7 +755,6 @@ table.mt5 tr.rpt__total td { background: var(--color-muted); font-weight: 600; }
       <section class="mt5sect">
         <div class="rpt__sechead"><h2>Per comment</h2></div>
         <div class="wrap" id="rptcomments"></div>
-        <p class="hint">Grouped by the trade comment exactly as MT5 shows it.</p>
       </section>
     </div>
   </div>
@@ -4466,7 +4483,7 @@ function rptStart(hist, acct, from, typed) {
 }
 
 /* ── the balance curve: inline SVG, closes only ─────────────────────────── */
-function rptChart(st, start, from, cur, limit) {
+function rptChart(st, start, from, cur, limit, limPct) {
   const base = start == null ? 0 : start;
   const pts = [{ t: from, b: base }];
   let b = base;
@@ -4486,7 +4503,9 @@ function rptChart(st, start, from, cur, limit) {
   const grid = [0, 1, 2, 3].map(k => lo + ((hi - lo) * (k + 0.5)) / 4);
   const ylab = grid.map(v => `<span class="rpt__y num" style="top:${Y(v).toFixed(1)}%">`
     + `${esc(Math.round(v).toLocaleString())}</span>`).join('');
-  const ticks = n ? [...new Set([0, 1, 2, 3, 4].map(k => Math.round((n * k) / 4)))] : [0];
+  const narrow = typeof window !== 'undefined' && window.innerWidth <= 520;
+  const steps = narrow ? [0, 2, 4] : [0, 1, 2, 3, 4];
+  const ticks = n ? [...new Set(steps.map(k => Math.round((n * k) / 4)))] : [0];
   const xlab = ticks.map(i => `<span class="num" style="left:${(n ? (100 * i) / n : 0).toFixed(1)}%">`
     + `${esc(rptDate(rptDay(pts[i].t)))}</span>`).join('');
   const ddMark = st.dd > 0 && st.ddAt
@@ -4497,7 +4516,7 @@ function rptChart(st, start, from, cur, limit) {
     + (start == null ? '' : hline(start, 'rpt__start'))
     + (limit == null ? '' : hline(limit, 'rpt__limit'))
     + `<path d="${d}" class="rpt__line"/></svg>
-    ${ylab}${limit == null ? '' : `<span class="rpt__limlab num" style="top:${Y(limit).toFixed(1)}%">-10%</span>`}${ddMark}
+    ${ylab}${limit == null ? '' : `<span class="rpt__limlab num" style="top:${Y(limit).toFixed(1)}%">-${esc(String(limPct))}%</span>`}${ddMark}
     <span class="rpt__guide" hidden></span><span class="badge rpt__tip" hidden></span>
   </div><div class="rpt__x">${xlab}</div>`;
 }
@@ -4523,38 +4542,35 @@ function rptHoverEnd() {
 }
 
 /* ── owner's backtest, typed into this browser ─────────────────────────── */
-// key, label, live value, format, verdict (good / warn / neutral), diff unit
+// key, label, live value, format, which direction is better (hi / lo / '' = no claim), diff unit
 const RPT_BT = [
-  ['pf', 'Profit factor', s => s.pf, v => v.toFixed(2),
-   (l, b) => (l >= b ? 'good' : l < 0.8 * b ? 'warn' : ''), ''],
-  ['ddPct', 'Max DD % (closed)', s => s.ddPct, v => v.toFixed(1) + '%',
-   (l, b) => (l <= b ? 'good' : l > 1.25 * b ? 'warn' : ''), ' pts'],
-  ['win', 'Win %', s => s.winPct, v => v.toFixed(1) + '%',
-   (l, b) => (l >= b ? 'good' : l < b - 8 ? 'warn' : ''), ' pts'],
-  ['netMonth', 'Net % / month', s => s.netMonth, v => v.toFixed(1) + '%', () => '', ' pts'],
-  ['avgWin', 'Avg win', s => s.avgWin, v => v.toFixed(2), () => '', ''],
-  ['avgLoss', 'Avg loss (size)', s => (s.avgLoss == null ? null : -s.avgLoss), v => v.toFixed(2), () => '', ''],
+  ['pf', 'Profit factor', s => s.pf, v => v.toFixed(2), 'hi', ''],
+  ['ddPct', 'Max DD % (closed)', s => s.ddPct, v => v.toFixed(1) + '%', 'lo', ' pts'],
+  ['win', 'Win %', s => s.winPct, v => v.toFixed(1) + '%', 'hi', ' pts'],
+  ['netMonth', 'Net % / month', s => s.netMonth, (v, s) => `${v.toFixed(1)}% pace (${s.paceDays} d)`, 'hi', ' pts'],
+  ['avgWin', 'Avg win', s => s.avgWin, v => v.toFixed(2), 'hi', ''],
+  ['avgLoss', 'Avg loss (size)', s => (s.avgLoss == null ? null : -s.avgLoss), v => v.toFixed(2), '', ''],
 ];
-function rptBtCells(row, st, bt, few) {
-  const [k, , live, fmt, verdict, unit] = row;
+function rptBtCells(row, st, bt) {
+  const [k, , live, fmt, better, unit] = row;
   const l = live(st), b = bt[k];
   const known = l != null && Number.isFinite(l) && b != null;
-  const tone = known && !few ? verdict(l, b) : '';
   const diff = known ? l - b : null;
+  // the colour is the direction of the difference and nothing more: no threshold
+  const tone = known && better && diff !== 0 ? ((better === 'hi') === (diff > 0) ? 'good' : 'warn') : '';
   return {
     live: `<i class="rpt__dot rpt__dot--${tone || 'none'}"></i>`
-      + (l == null || !Number.isFinite(l) ? rptNA : esc(fmt(l))),
+      + (l == null || !Number.isFinite(l) ? rptNA : esc(fmt(l, st))),
     diff: diff == null ? '<span class="rpt__na">-</span>'
       : `<span class="rpt__tone--${tone || 'none'}">${diff > 0 ? '+' : ''}${esc(diff.toFixed(2))}${unit}</span>`,
   };
 }
 function rptBtHtml(st, ea) {
   const bt = rptGet('bt.' + ea, {}) || {};
-  const few = st.count < 20;
   return `<table class="mt5 rpt__table rpt__bttable"><thead><tr><th>Metric</th><th class="n">Live</th>
       <th class="n" title="Typed by owner">Backtest*</th><th class="n">Diff</th></tr></thead><tbody>`
     + RPT_BT.map(row => {
-      const c = rptBtCells(row, st, bt, few);
+      const c = rptBtCells(row, st, bt);
       const v = bt[row[0]];
       return `<tr><td>${row[1]}</td><td class="n" data-live="${row[0]}">${c.live}</td>
         <td class="n"><label class="sr-only" for="rpt-bt-${row[0]}">Backtest ${row[1]}</label>
@@ -4572,7 +4588,7 @@ function rptBtInput(ev) {
   if (v == null) delete bt[k]; else bt[k] = v;
   rptSet('bt.' + ea, Object.keys(bt).length ? bt : null);
   if (!RPT_ST) return;
-  const c = rptBtCells(RPT_BT.find(r => r[0] === k), RPT_ST, bt, RPT_ST.count < 20);
+  const c = rptBtCells(RPT_BT.find(r => r[0] === k), RPT_ST, bt);
   const box = document.getElementById('rptbt');
   const live = box.querySelector(`[data-live="${k}"]`), diff = box.querySelector(`[data-diff="${k}"]`);
   if (live) live.innerHTML = c.live;
@@ -4607,6 +4623,10 @@ function rptLoadPrefs() {
   document.getElementById('rpt-from').value = rptGet('from.' + ea, '') || '';
   const typed = rptGet('start.' + ea, null);
   document.getElementById('rpt-start').value = typed == null ? '' : String(typed);
+  for (const [id, k] of [['rpt-lim-day', 'day'], ['rpt-lim-max', 'max']]) {
+    const v = rptGet(`lim.${k}.${ea}`, null);
+    document.getElementById(id).value = v == null ? '' : String(v);
+  }
   rptCheckDate();
 }
 
@@ -4623,9 +4643,11 @@ function rptPaintMode() {
   for (const [id, v] of [['rpt-demo', 'demo'], ['rpt-chal', 'challenge']]) {
     document.getElementById(id).setAttribute('aria-pressed', String(rptMode() === v));
   }
+  document.getElementById('rpt-lims').hidden = rptMode() !== 'challenge';
 }
 
 function renderReport() {
+  rptPaintMode();
   const stats = document.getElementById('rptstats');
   document.getElementById('rpterr').hidden = !RPT_ERR;
   if (RPT_ERR) document.getElementById('rpterrmsg').textContent = "Can't load report · " + RPT_ERR;
@@ -4653,19 +4675,36 @@ function renderReport() {
     return;
   }
   // net % of the start balance per 30.44 days; an extrapolation on a short run
-  const span = Math.max(1, (Date.now() - Date.parse(from + 'T00:00:00Z')) / 86400000);
-  st.netMonth = sb.v ? (100 * st.net / sb.v) / (span / 30.44) : null;
+  st.paceDays = Math.floor((Date.now() - Date.parse(from + 'T00:00:00Z')) / 86400000);
+  st.netMonth = sb.v && st.paceDays >= 1 ? (100 * st.net / sb.v) / (st.paceDays / 30.44) : null;
 
   const challenge = rptMode() === 'challenge';
   const dayLoss = st.worstDay.net < 0 ? -st.worstDay.net : 0;
+  const limOf = k => { const v = rptNum(rptGet(`lim.${k}.${ea}`, null)); return v != null && v > 0 ? v : null; };
+  const limDay = limOf('day'), limMax = limOf('max');
   const used = (v, lim) => {
     if (v == null || !sb.v) return [rptNA, ''];
     const p = 100 * v / sb.v;
-    return [esc(`${p.toFixed(1)}% of ${lim}%`), p >= 0.9 * lim ? 'neg' : p >= 0.6 * lim ? 'rpt__tone--warn' : ''];
+    return [esc(`${p.toFixed(1)}% of ${lim}%`), p >= lim ? 'neg' : ''];
   };
   const fdd = RPT_DD && RPT_DD.ea === ea && RPT_DD.from === from ? (RPT_DD.by || {})[ea] : null;
-  const fddOk = fdd && fdd.dd_method && fdd.dd_method !== 'failed' && fdd.dd != null;
-  const fddCell = fddOk ? [esc(mt5Money(fdd.dd, cur)), '']
+  const fddOk = fdd && fdd.dd_method && fdd.dd_method !== 'failed' && fdd.dd != null && fdd.dd_trusted !== false;
+  const ddBits = [];
+  if (fdd) {
+    ddBits.push(`built as ${fdd.dd_method || 'unknown'}`);
+    if (fdd.dd_method === 'failed') ddBits.push(fdd.dd_why || '');
+    ddBits.push((Number.isFinite(RPT_DD.hours) && RPT_DD.hours > 0 ? `window last ${Math.round(RPT_DD.hours / 24)} days` : 'window n/a')
+      + (fdd.dd_from ? ` from ${String(fdd.dd_from).slice(0, 10)}` : '')
+      + ', may include this EA before the start');
+    if (fdd.dd_trusted === false) {
+      ddBits.push('not trusted' + (fdd.dd_off_by != null ? ` (off by ${mt5Money(fdd.dd_off_by, cur)})` : ''));
+    } else if (fdd.dd_trusted === true) ddBits.push('self-check passed');
+    if (fdd.dd_partial) ddBits.push('partial');
+  } else if (!RPT_DD_BUSY) ddBits.push('n/a, the agent did not report it for this EA');
+  const ddTitle = ddBits.filter(Boolean).join(', ');
+  const ddQual = !fdd ? '' : (fdd.dd_method === 'closed trades only' ? 'closed only' : String(fdd.dd_method || ''))
+    + (fdd.dd_partial ? ' · partial' : '');
+  const fddCell = fddOk ? [esc(mt5Money(fdd.dd, cur)) + `<span class="rpt__sub">${esc(ddQual)}</span>`, '']
     : RPT_DD_BUSY ? ['<span class="rpt__na">loading…</span>', ''] : [rptNA, ''];
   const T = [
     ['Net profit', ...rptOr(rptMoney(st.net, cur, true), mt5Cls(st.net))],
@@ -4679,44 +4718,31 @@ function renderReport() {
     [`Worst day ${esc(rptDate(st.worstDay.day))}`, ...rptOr(rptMoney(st.worstDay.net, cur, true), mt5Cls(st.worstDay.net)),
      'server day, closed trades'],
     ['Days traded', esc(String(st.daysTraded)), '', 'server days with a close'],
-    ['DD incl. open', ...fddCell, 'from the agent, see the note below'],
+    ['DD incl. open', ...fddCell, ddTitle],
     ['Largest win', ...rptOr(rptMoney(st.best, cur, true), 'pos')],
     ['Largest loss', ...rptOr(rptMoney(st.worst, cur), 'neg')],
     ['Losses in a row', esc(String(st.lossStreak)), '', 'most losing positions in a row'],
-    [`Best day ${esc(rptDate(st.bestDay.day))}`, ...rptOr(rptMoney(st.bestDay.net, cur, true), mt5Cls(st.bestDay.net)),
-     'server day, closed trades'],
   ];
-  if (challenge) {
-    T.push(['Daily loss used', ...used(dayLoss, 5),
-            'worst server day of closed trades / start balance; FTMO also counts open losses']);
-    T.push(['Max loss used', ...used(st.maxLoss, 10), 'lowest closed balance under the start / start balance']);
+  if (challenge && limDay != null) {
+    T.push(['Daily loss used', ...used(dayLoss, limDay),
+            "worst server day of closed trades / start balance, against your limit; open losses not counted"]);
+  }
+  if (challenge && limMax != null) {
+    T.push(['Max loss used', ...used(st.maxLoss, limMax), 'lowest closed balance under the start / start balance, against your limit']);
   }
   setHtml('rpttiles', T.map(([k, v, c, t]) => rptTile(k, v, c, t)).join(''));
   stats.innerHTML = `<b>${st.count}</b> trade${st.count === 1 ? '' : 's'} · since ${esc(rptDate(from, true))}`;
 
-  const notes = [sb.v == null ? `Start balance n/a: ${esc(sb.why)}. Type it in Start $.`
-    : sb.how === 'typed' ? `Start balance ${esc(mt5Money(sb.v, cur))}, typed.`
-    : `Start balance ${esc(mt5Money(sb.v, cur))}, derived, assumes no deposits or withdrawals since start.`,
-    'Days are broker server days.'];
-  if (fdd) {
-    const bits = [`DD incl. open: ${esc(fdd.dd_method || 'unknown')}`];
-    if (fdd.dd_method === 'failed') bits.push(esc(fdd.dd_why || ''));
-    bits.push(`window last ${Math.round((RPT_DD.hours || 0) / 24)} days`
-      + (fdd.dd_from ? ` from ${esc(String(fdd.dd_from).slice(0, 10))}` : '')
-      + ', may include this EA before the start');
-    if (fdd.dd_trusted === false) {
-      bits.push('not trusted' + (fdd.dd_off_by != null ? ` (off by ${esc(mt5Money(fdd.dd_off_by, cur))})` : ''));
-    } else if (fdd.dd_trusted === true) bits.push('self-check passed');
-    if (fdd.dd_partial) bits.push('partial');
-    notes.push(bits.join(', ') + '.');
-  } else if (!RPT_DD_BUSY) notes.push('DD incl. open: n/a, the agent did not report it for this EA.');
+  const notes = [sb.v == null ? `Start $ n/a: ${esc(sb.why)}. Type it in Start $.`
+    : sb.how === 'typed' ? `Start ${esc(mt5Money(sb.v, cur))} yours`
+    : `Start ${esc(mt5Money(sb.v, cur))} derived · server days`];
   if (capped) notes.push('<span class="rpt__tone--warn">The agent list may be cut (2000 closes or 365 days): older closes are missing.</span>');
   setHtml('rptnote', notes.join(' '));
 
-  const limit = challenge && sb.v != null ? sb.v * 0.9 : null;
-  setHtml('rptchart', rptChart(st, sb.v, from, cur, limit));
+  const limit = challenge && sb.v != null && limMax != null ? sb.v * (1 - limMax / 100) : null;
+  setHtml('rptchart', rptChart(st, sb.v, from, cur, limit, limMax));
   setHtml('rptlegend', `<span class="chip as-text"><i class="rpt__key"></i>${sb.v == null ? 'Net since start' : 'Balance'}</span>`
-    + (limit == null ? '' : '<span class="chip as-text"><i class="rpt__key rpt__key--lim"></i>Max loss -10%</span>'));
+    + (limit == null ? '' : `<span class="chip as-text"><i class="rpt__key rpt__key--lim"></i>Your max loss -${esc(String(limMax))}%</span>`));
 
   setHtml('rptfew', st.count < 20 ? '<span class="badge">few trades</span>' : '');
   setHtml('rptbt', rptBtHtml(st, ea));
@@ -4805,6 +4831,15 @@ document.getElementById('rpt-start').onchange = () => {
   rptSet('start.' + ea, v != null && v > 0 ? v : null);
   renderReport();
 };
+for (const [id, k] of [['rpt-lim-day', 'day'], ['rpt-lim-max', 'max']]) {
+  document.getElementById(id).onchange = () => {
+    const ea = document.getElementById('rpt-ea').value;
+    if (!ea) return;
+    const v = rptNum(document.getElementById(id).value);
+    rptSet(`lim.${k}.${ea}`, v != null && v > 0 ? v : null);
+    renderReport();
+  };
+}
 document.getElementById('rpt-demo').onclick = () => { rptSet('mode', 'demo'); rptPaintMode(); renderReport(); };
 document.getElementById('rpt-chal').onclick = () => { rptSet('mode', 'challenge'); rptPaintMode(); renderReport(); };
 document.getElementById('rptbt').addEventListener('input', rptBtInput);
