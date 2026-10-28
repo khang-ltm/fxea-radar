@@ -977,7 +977,8 @@ def read_history(days: int = 30, tz_minutes: int = 0, with_dd: bool = False) -> 
         net = round(float(d.get("profit") or 0) + float(d.get("swap") or 0)
                     + float(d.get("commission") or 0) + float(d.get("fee") or 0), 2)
         when = datetime.fromtimestamp(int(d.get("time") or 0), tz=timezone.utc)
-        magic = int(d.get("magic") or 0) or magic_of_position.get(int(d.get("position_id") or 0), 0)
+        pid = int(d.get("position_id") or 0)
+        magic = int(d.get("magic") or 0) or magic_of_position.get(pid, 0)
 
         e = by_ea.setdefault(magic, {"magic": magic, "trades": 0, "wins": 0, "losses": 0,
                                      "profit": 0.0, "symbols": [], "comments": []})
@@ -992,7 +993,6 @@ def read_history(days: int = 30, tz_minutes: int = 0, with_dd: bool = False) -> 
         sym = d.get("symbol")
         if sym and sym not in e["symbols"]:
             e["symbols"].append(sym)
-        pid = int(d.get("position_id") or 0)
         cm = comment_of_position.get(pid) or (d.get("comment") or "").strip()
         close_reason = (d.get("comment") or "").strip()
         if cm and cm not in e["comments"]:
