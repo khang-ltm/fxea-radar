@@ -397,6 +397,7 @@ def run_once(run_no: int, port: int) -> None:
         check_close_cancel_tickets()
         check_contract_size()
         check_bars()
+        check_first_leg()
         check_no_control_chars()
 
         status, tagged = http_json(f"http://127.0.0.1:{port}/api/posts?ea=0&group=0&kind=all&tag=has-ea-file")
@@ -1187,6 +1188,43 @@ def check_contract_size() -> None:
         ag._cache.update(at=0.0, data=None)
         for sym in fake.symbols:
             ag._digits_cache.pop(sym, None)
+
+
+def check_first_leg() -> None:
+    """A position closed in two chunks counts once, whatever order the deals arrive in."""
+    from types import SimpleNamespace
+    from app import mt5_agent as ag
+
+    def deal(pos, entry, typ, profit, magic, t):
+        return SimpleNamespace(**{"position_id": pos, "entry": entry, "type": typ, "profit": profit, "swap": 0.0,
+                "commission": 0.0, "fee": 0.0, "magic": magic, "symbol": "TESTSYM", "volume": 0.1,
+                "price": 1.0, "comment": "", "time": t})
+
+    base = int(time.time()) - 3600
+    deals = [
+        deal(9001, 0, 0, 0.0, 777, base),            # open A
+        deal(9002, 0, 0, 0.0, 777, base + 1),        # open B
+        deal(9001, 1, 1, 10.0, 0, base + 10),        # A closes part 1
+        deal(9001, 1, 1, -4.0, 0, base + 20),        # A closes part 2, net +6
+        deal(9002, 1, 1, 2.0, 0, base + 30),         # B closes whole, net +2
+    ]
+
+    class Fake:
+        def history_deals_get(self, *a):
+            return deals
+
+    old, old_owners = ag._connect, ag.magic_owners
+    ag._connect = lambda: Fake()
+    ag.magic_owners = lambda: {}
+    ag._hist_cache.update(at=0.0, days=0, data=None)
+    try:
+        out = ag.read_history(days=7)
+    finally:
+        ag._connect, ag.magic_owners = old, old_owners
+        ag._hist_cache.update(at=0.0, days=0, data=None)
+    ea = next((e for e in out.get("by_ea", []) if e.get("magic") == 777), {})
+    got = (ea.get("trades"), ea.get("wins"), ea.get("losses"))
+    check(got == (2, 2, 0), f"a partly closed position counts once in by_ea (trades, wins, losses = {got})")
 
 
 def check_bars() -> None:
