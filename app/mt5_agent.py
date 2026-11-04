@@ -7,9 +7,9 @@ SAFETY - this module can never open a trade, or place or modify an order:
     position. All three need the PIN; tests/e2e.py fails on any other request.
     None adds volume. SLTP can widen or remove a stop, which is more risk on that
     position - the owner's accepted risk (2026-10-22), behind the PIN
-  * never launches a terminal: MetaTrader5.initialize() is called WITHOUT a path,
-    and only after a terminal64 process is confirmed running, so it can never
-    start a second instance or take over a fresh one
+  * never launches a terminal: MetaTrader5.initialize() is only given the path of
+    a terminal64 process that is ALREADY running (so it attaches, never starts
+    one), and only after that process is confirmed running
   * never calls anything that closes or restarts the terminal; mt5.shutdown()
     only drops this process's IPC pipe, and is called just once at exit
   * the IPC connection attaches to the already-logged-in terminal, so no broker
@@ -79,6 +79,43 @@ def _terminal_running() -> bool:
         return False
 
 
+def _running_terminal_paths() -> list[str]:
+    """Full exe paths of the running terminal64 processes. Empty if unreadable."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "Get-Process terminal64 -ErrorAction SilentlyContinue | ForEach-Object { $_.Path }"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout
+    except Exception:  # noqa: BLE001 - not on Windows, or powershell missing
+        return []
+    return list(dict.fromkeys(ln.strip() for ln in out.splitlines() if ln.strip()))
+
+
+def _choose_terminal_path(running: list[str], wanted: str = "") -> tuple[str | None, str | None]:
+    """(path, error) for initialize(). Only a path that is already running is ever chosen.
+
+    `wanted` is the optional MT5_TERMINAL_PATH. No running path readable -> (None, None),
+    meaning "call initialize() without a path" as before.
+    """
+    def norm(p: str) -> str:
+        return p.strip().strip('"').replace("/", "\\").casefold()
+
+    wanted = wanted.strip().strip('"')
+    if wanted:
+        for p in running:
+            if norm(p) == norm(wanted):
+                return p, None
+        return None, (f"MT5_TERMINAL_PATH is set to {wanted} but that terminal is not running. "
+                      f"Running: {'; '.join(running) or 'none readable'}")
+    if len(running) > 1:
+        return None, ("Several MT5 terminals are running: " + "; ".join(running) +
+                      ". Set MT5_TERMINAL_PATH to the full path of the one to use.")
+    return (running[0] if running else None), None
+
+
 def _connect():
     """Attach to the running terminal. Returns the module, or None with _init_error set."""
     global _mt5, _init_error
@@ -94,8 +131,14 @@ def _connect():
         _init_error = ("No terminal64.exe process found. Start MetaTrader 5 and log in first - "
                        "this agent will not launch one for you.")
         return None
-    # No path= argument on purpose: with a path, initialize() may START a terminal.
-    if not mt5.initialize():
+    # path= is only ever the exe of a process that is ALREADY running, so initialize()
+    # attaches to it and cannot start a terminal. Without it the package would pick its
+    # own default install, which may not be the terminal that is running.
+    path, err = _choose_terminal_path(_running_terminal_paths(), os.environ.get("MT5_TERMINAL_PATH", ""))
+    if err:
+        _init_error = err
+        return None
+    if not (mt5.initialize(path=path) if path else mt5.initialize()):
         _init_error = f"initialize() failed: {mt5.last_error()}"
         return None
     _mt5 = mt5
