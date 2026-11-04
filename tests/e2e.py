@@ -391,6 +391,7 @@ def run_once(run_no: int, port: int) -> None:
         check_version_report()
         check_manager_versions()
         check_bom_tolerant_sha()
+        check_terminal_path_choice()
         check_no_shadowed_locals()
         check_trade_path()
         check_setsltp()
@@ -488,6 +489,19 @@ def check_bom_tolerant_sha() -> None:
             check(ag._disk_sha() == "4a301af", "a version marker written by PowerShell (BOM, CRLF) reads cleanly")
         finally:
             _cfg.ROOT = old
+
+
+def check_terminal_path_choice() -> None:
+    from app import mt5_agent as ag
+    a = r"C:\Program Files\Example MT5\terminal64.exe"
+    b = r"D:\Other Example MT5\terminal64.exe"
+    check(ag._choose_terminal_path([a]) == (a, None), "one running terminal: its path is used")
+    check(ag._choose_terminal_path([a, b], b.lower()) == (b, None), "setting picks a running terminal, case-insensitive")
+    p, e = ag._choose_terminal_path([a, b])
+    check(p is None and a in e and b in e and "MT5_TERMINAL_PATH" in e, "several running, no setting: error lists them")
+    p, e = ag._choose_terminal_path([a], b)
+    check(p is None and bool(e), "setting naming a terminal that is not running is refused")
+    check(ag._choose_terminal_path([]) == (None, None), "no readable path: falls back to no path")
 
 
 def check_version_report() -> None:
