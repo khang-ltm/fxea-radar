@@ -399,6 +399,7 @@ def run_once(run_no: int, port: int) -> None:
         check_contract_size()
         check_bars()
         check_first_leg()
+        check_orphan_live_symbol()
         check_no_control_chars()
 
         status, tagged = http_json(f"http://127.0.0.1:{port}/api/posts?ea=0&group=0&kind=all&tag=has-ea-file")
@@ -1239,6 +1240,51 @@ def check_first_leg() -> None:
     ea = next((e for e in out.get("by_ea", []) if e.get("magic") == 777), {})
     got = (ea.get("trades"), ea.get("wins"), ea.get("losses"))
     check(got == (2, 2, 0), f"a partly closed position counts once in by_ea (trades, wins, losses = {got})")
+
+
+def check_orphan_live_symbol() -> None:
+    """An order is abandoned only when no EA is running on its symbol.
+
+    One EA on two charts may offset its magic on the second symbol. Its orders
+    there sit outside the block its magic input claims, and they were being
+    offered for deletion while the EA was still managing them.
+    """
+    from types import SimpleNamespace
+    from app import mt5_agent as ag
+
+    def order(ticket, magic, symbol):
+        return SimpleNamespace(**{"ticket": ticket, "magic": magic, "symbol": symbol, "type": 5,
+                                  "comment": "ZZ one", "time_setup": int(time.time()) - 60})
+
+    charts = [
+        {"chart": 1, "symbol": "TESTAAA", "expert": "", "magic": 0, "is_manager": True},
+        {"chart": 2, "symbol": "TESTBBB", "expert": "SampleEA", "magic": 5001},
+        {"chart": 3, "symbol": "TESTCCC", "expert": "SampleEA", "magic": 5001},
+    ]
+    orders = [
+        order(101, 5003, "TESTBBB"),     # in the chart's own block: claimed
+        order(102, 6003, "TESTCCC"),     # another block, but an EA runs on this symbol
+        order(103, 6003, "TESTDDD"),     # another block and no EA on this symbol
+    ]
+
+    class Fake:
+        def orders_get(self, *a, **k):
+            return orders
+
+    old_conn, old_charts = ag._connect, ag.read_charts
+    ag._connect = lambda: Fake()
+    ag.read_charts = lambda: {"ok": True, "attached": True, "charts": charts}
+    try:
+        out = ag.orphan_pendings()
+    finally:
+        ag._connect, ag.read_charts = old_conn, old_charts
+    orphans = sorted(o["ticket"] for o in out.get("orphans", []))
+    unsure = sorted(o["ticket"] for o in out.get("uncertain", []))
+    check(out.get("ok") is True and orphans == [103],
+          f"only the order on a symbol with no EA is called abandoned (orphans = {orphans})")
+    check(unsure == [102],
+          f"an order on a symbol with a running EA is left alone, not offered for deletion (uncertain = {unsure})")
+    check(out.get("count") == 1, f"the orphan count matches the list (count = {out.get('count')})")
 
 
 def check_bars() -> None:
