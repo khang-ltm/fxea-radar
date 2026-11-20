@@ -2925,6 +2925,15 @@ def orphan_pendings() -> dict:
                 or "FxeaManager is not reporting, so nothing can be judged orphaned"}
 
     claims, unknown = _chart_claims(status.get("charts") or [])
+    # An EA can number its orders differently from the magic it shows as an
+    # input - one that runs on two symbols and offsets the second so the two
+    # can be told apart, say. Its chart then claims a block the orders are not
+    # in. While an EA is running on an order's own symbol, that order is not
+    # known to be abandoned, so it is not offered for deletion.
+    ea_on_symbol = {}
+    for c in status.get("charts") or []:
+        if not c.get("is_manager") and c.get("expert"):
+            ea_on_symbol.setdefault(_sym_key(c.get("symbol")), str(c.get("expert")))
     with _ipc_lock:
         mt5 = _connect()
         if mt5 is None:
@@ -2961,6 +2970,12 @@ def orphan_pendings() -> dict:
         if named:
             # the comment carries a running EA's name: not something to offer up
             row["why"] = f"the comment reads like {named}, which is running"
+            uncertain.append(row)
+            continue
+        running = ea_on_symbol.get(_sym_key(row["symbol"]))
+        if running:
+            row["why"] = (f"{running} is running on this symbol and may number "
+                          "its orders differently from its magic input")
             uncertain.append(row)
             continue
         orphans.append(row)
